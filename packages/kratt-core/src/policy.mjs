@@ -190,7 +190,7 @@ export function createRequestBoundApprovalVerifier({verifySignature, consumeNonc
     try {
       if (verifySignature(payload, artifact.signature, artifact) !== true) return false;
       // This must be an atomic durable compare-and-consume operation.
-      if (consumeNonce(artifact.nonce, artifact.approval_id, artifact.expires_at) !== true) return false;
+      if (consumeNonce(artifact.nonce, artifact.approval_id, artifact.expires_at, artifact.key_id) !== true) return false;
       return true;
     } catch { return false; }
   };
