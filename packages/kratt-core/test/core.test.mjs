@@ -197,6 +197,12 @@ test("ambiguous policy rules fail closed",()=>{
  const rules=[...context().policies,{...context().policies[0],required_authority:"different.authority"}];
  assert.equal(evaluatePolicy(task(),[],context({policies:rules}),{now}).decision,"BLOCKED");
 });
+test("policy evaluator fails closed when trusted time is absent or invalid",()=>{
+ const validTask=task(), validContext=context();
+ assert.equal(evaluatePolicy(validTask,[],validContext,{}).decision,"BLOCKED");
+ assert.equal(evaluatePolicy(validTask,[],validContext,{now:Number.NaN}).decision,"BLOCKED");
+ assert.equal(evaluatePolicy(validTask,[],validContext,{now:"not-a-number"}).decision,"BLOCKED");
+});
 test("expired trusted context blocks",()=>{
  assert.equal(evaluatePolicy(task(),[],context({evaluated_at:"2026-11-04T06:00:00Z"}),{now}).decision,"BLOCKED");
 });
