@@ -194,3 +194,17 @@ test("expired trusted context blocks",()=>{
 test("memory ledger rejects duplicate IDs and verifies entries",()=>{const m=new MemoryLedger();assert.equal(m.append({id:"m1",kind:"finding",createdAt:at,payload:{sha:"abc"}}).ok,true);assert.equal(m.append({id:"m1",kind:"finding",createdAt:at,payload:{sha:"x"}}).reason,"DUPLICATE_MEMORY_ID");assert.equal(m.verify().ok,true);});
 test("Saga state machine rejects invalid transitions",()=>{let s=createSaga({id:"s1",goal:"audit",createdAt:at});s=transitionSaga(s,"RUNNING",{id:"e1",at,kind:"start"}).value;assert.equal(transitionSaga(s,"PENDING",{id:"e2",at,kind:"rewind"}).reason,"INVALID_STATE_TRANSITION");});
 test("agent registry prevents privilege escalation",()=>{const a=new AgentRegistry();assert.equal(a.registerAgent({id:"builder",scopes:["repository.read"],status:"active"}).ok,true);assert.equal(a.registerAgent({id:"root",scopes:["production.deploy"],status:"active"}).reason,"INVALID_AGENT");a.registerTool({name:"read",requiredScopes:["repository.read"]});assert.equal(a.authorize("builder","read","repository.read").allowed,true);assert.equal(a.authorize("builder","read","production.deploy").allowed,false);});
+
+test("request-bound approval verifier fails closed when its trusted clock throws",()=>{
+ const verifier=createRequestBoundApprovalVerifier({
+  now:()=>{throw new Error("clock unavailable");},
+  verifySignature:()=>true,
+  consumeNonce:()=>true
+ });
+ const artifact=approvalArtifact();
+ assert.equal(verifier(artifact,{
+  task_id:artifact.task_id,actor:artifact.actor,provider:artifact.provider,
+  operation:artifact.operation,target:artifact.target,authority:artifact.authority,
+  request_digest:artifact.request_digest
+ }),false);
+});
