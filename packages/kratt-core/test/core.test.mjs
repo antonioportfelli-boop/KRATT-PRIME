@@ -70,6 +70,14 @@ test("approval binding rejects wrong task, actor, provider, operation and target
  ];
  for(const [t,approval] of cases) assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:verify,approval}).decision,"DENY");
 });
+test("approval authority must match the policy authority",()=>{
+ const t=writeTask(),c=writeContext(),a=approvalArtifact({authority:"unrelated.authority"});
+ const verify=createRequestBoundApprovalVerifier({
+  now:()=>now,verifySignature:(payload,signature)=>signature==="test-signature" && payload===canonicalApprovalPayload(a),
+  consumeNonce:()=>true
+ });
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:verify,approval:a}).decision,"DENY");
+});
 test("approval expiry, excessive lifetime and missing provider fail closed",()=>{
  const c=writeContext(), expired=approvalArtifact({expires_at:"2026-11-04T06:59:59Z"});
  assert.equal(evaluatePolicy(writeTask(),[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(expired),approval:expired}).decision,"DENY");
