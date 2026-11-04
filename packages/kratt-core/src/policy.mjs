@@ -139,6 +139,7 @@ function isApprovalArtifact(value) {
       .every(v => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(v)) &&
     typeof target.resource_type === "string" && target.resource_type.length > 0 &&
     typeof target.resource_id === "string" && target.resource_id.length > 0 &&
+    typeof value.request_digest === "string" && /^sha256:[0-9a-f]{64}$/.test(value.request_digest) &&
     timestamp(value.issued_at) && timestamp(value.expires_at) &&
     value.decision === "APPROVE" &&
     typeof value.signature === "string" && value.signature.length > 0 && value.signature.length <= 8192;
