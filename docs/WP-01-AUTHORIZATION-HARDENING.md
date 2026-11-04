@@ -43,7 +43,7 @@ Scope: `packages/kratt-core/src/` and its tests only. No platform adapters, prod
 
 ## WP-01A — Trusted Approval Engine
 
-The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySignature, consumeNonce, now })` and `canonicalApprovalPayload(artifact)`.
+The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySignature, consumeNonce, now })`, `canonicalApprovalPayload(artifact)`, and the server-side `createTrustedAuthorizationRuntime({ trustedApprovalKeys, nonceStore, verifyEvidence, now })` composition root.
 
 - Approval artifacts bind schema version, approval ID, task ID, actor, provider, exact operation, exact resource target, SHA-256 digest of the complete canonical task envelope (including constraints), nonce, issue/expiry timestamps, decision, approver, authority, and signature.
 - The verifier rejects malformed objects, mismatched bindings, non-APPROVE decisions, expired/future approvals, and approval lifetimes longer than five minutes.
@@ -53,12 +53,22 @@ The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySigna
 - Actions without an explicit side-effect class are treated as read-only only when their terminal action is in a narrow read-only allowlist; every other unknown action defaults to EXTERNAL_WRITE.
 - Test fixtures use a deliberately synthetic signature callback and in-memory nonce set. They validate the policy boundary, not production cryptography, durable replay protection, or deployment readiness.
 
+## WP-01B — Trusted Composition Root
+
+- The trusted runtime accepts a deployment-controlled Ed25519 public-key registry. Each key is bound to one approver identity and an explicit list of approval authorities; unknown keys, unknown authorities, wrong approver identities, malformed signatures, and invalid key types fail closed.
+- Approval artifacts now include a signed `key_id`, so key selection is part of the canonical approval payload and cannot be swapped without invalidating the signature.
+- Signature verification uses Node.js `crypto.verify` with Ed25519 and canonical UTF-8 approval payload bytes. The runtime does not generate or provision keys and stores no private key material.
+- The composition root requires explicit trusted key configuration, a trusted evidence verifier, an injected clock, and a nonce-store adapter. There is no default approval keyring or default nonce store.
+- The current policy evaluator is synchronous. The nonce adapter must synchronously perform an atomic durable shared-store consume operation; Promise-returning adapters are rejected. No production database adapter is included yet.
+- Keyring configuration is snapshotted at runtime creation. Rotation or revocation requires rebuilding the runtime from the authoritative deployment-controlled key registry; hot reload and revocation propagation remain open.
+- Runtime tests generate ephemeral Ed25519 keys only inside test fixtures. They do not provision production keys or establish operational key custody.
+
 ## Implementation boundaries
 
 - Do not treat caller-supplied evidence as verified merely because its enum says `VERIFIED`.
 - Introduce a verifier boundary whose trusted result is produced outside the request payload.
 - Keep pure policy evaluation deterministic and injectable with a trusted clock.
-- Production composition roots must supply real signature verification, key rotation/revocation policy, trusted time, and atomic durable nonce storage before any external write can be enabled.
+- Production composition roots must supply the Ed25519 key registry, key rotation/revocation lifecycle, trusted time, independent evidence verification, and atomic durable nonce storage before any external write can be enabled.
 - Preserve the existing task/evidence schema during the first hardening increment where feasible.
 - Any schema migration must be additive, versioned, tested, and documented.
 - Do not enable external write execution as part of WP-01.
