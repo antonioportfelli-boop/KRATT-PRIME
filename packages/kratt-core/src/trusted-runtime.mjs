@@ -1,5 +1,5 @@
 import { createPublicKey, verify as verifySignature } from "node:crypto";
-import { evaluatePolicy, canonicalApprovalPayload } from "./policy.mjs";
+import { evaluatePolicy, canonicalApprovalPayload, createRequestBoundApprovalVerifier } from "./policy.mjs";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 
@@ -70,33 +70,36 @@ export function createTrustedAuthorizationRuntime({
     }));
   }
 
-  const approvalVerifier = (artifact, binding) => {
+  const verifyTrustedSignature = (payload, signature, artifact) => {
     const trustedKey = keyring.get(artifact?.key_id);
     if (!trustedKey ||
         artifact.approved_by !== trustedKey.approverId ||
         !trustedKey.authorities.has(artifact.authority) ||
-        typeof artifact.signature !== "string") return false;
-
-    let signature;
-    try {
-      signature = Buffer.from(artifact.signature, "base64url");
-      if (signature.length !== 64 || signature.toString("base64url") !== artifact.signature) return false;
-      const payload = canonicalApprovalPayload(artifact);
-      if (typeof payload !== "string") return false;
-      if (verifySignature(null, Buffer.from(payload, "utf8"), trustedKey.publicKey, signature) !== true) return false;
-    } catch {
-      return false;
-    }
+        typeof signature !== "string") return false;
 
     try {
-      // A Promise is rejected: the sync evaluator cannot safely await it.
-      const consumed = consumeNonce(artifact.key_id, artifact.nonce, artifact.approval_id, artifact.expires_at);
-      if (consumed && typeof consumed.then === "function") return false;
-      return consumed === true;
+      const bytes = Buffer.from(signature, "base64url");
+      if (bytes.length !== 64 || bytes.toString("base64url") !== signature) return false;
+      return verifySignature(null, Buffer.from(payload, "utf8"), trustedKey.publicKey, bytes) === true;
     } catch {
       return false;
     }
   };
+
+  const approvalVerifier = createRequestBoundApprovalVerifier({
+    now,
+    verifySignature: verifyTrustedSignature,
+    consumeNonce: (nonce, approvalId, expiresAt, keyId) => {
+      try {
+        // A Promise is rejected: the synchronous evaluator cannot safely await it.
+        const consumed = consumeNonce(keyId, nonce, approvalId, expiresAt);
+        if (consumed && typeof consumed.then === "function") return false;
+        return consumed === true;
+      } catch {
+        return false;
+      }
+    }
+  });
 
   function evaluate(task, evidence, trustedContext, { approval } = {}) {
     const current = now();
