@@ -106,6 +106,15 @@ test("trusted composition root rejects forged signatures, unknown keys and appro
  const wrongSigned={...wrongApprover,signature:sign(null,Buffer.from(wrongPayload,"utf8"),privateKey).toString("base64url")};
  assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:wrongSigned}).decision,"DENY");
 });
+test("trusted runtime rejects a clock that throws or returns non-finite values at construction",()=>{
+ const {publicKey}=generateKeyPairSync("ed25519");
+ const key={key_id:"clock-init-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]};
+ const dependencies={trustedApprovalKeys:[key],nonceStore:{consume:()=>true},verifyEvidence};
+ assert.throws(()=>createTrustedAuthorizationRuntime({...dependencies,now:()=>{throw new Error("clock unavailable");}}),/TRUSTED_CLOCK_UNAVAILABLE/);
+ assert.throws(()=>createTrustedAuthorizationRuntime({...dependencies,now:()=>Number.NaN}),/TRUSTED_CLOCK_UNAVAILABLE/);
+ assert.throws(()=>createTrustedAuthorizationRuntime({...dependencies,now:()=>"not-a-number"}),/TRUSTED_CLOCK_UNAVAILABLE/);
+});
+
 test("trusted composition root rejects asynchronous nonce adapters and missing trusted clock",()=>{
  const {publicKey,privateKey}=generateKeyPairSync("ed25519");
  const key={key_id:"clock-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]};
