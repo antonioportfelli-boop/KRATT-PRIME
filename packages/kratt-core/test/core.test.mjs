@@ -35,7 +35,7 @@ const writeContext = () => context({policies:[{action:"repo.write",required_auth
 const approvalArtifact = (overrides={}) => ({
  schema_version:KRATT_SCHEMA_VERSION,approval_id:"approval-1",task_id:"task-1",actor:"builder",
  provider:"github",operation:"repo.write",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},
- request_digest:canonicalTaskDigest(writeTask()),nonce:"nonce-1",issued_at:at,expires_at:"2026-11-04T07:04:00Z",decision:"APPROVE",
+ request_digest:canonicalTaskDigest(writeTask()),key_id:"test-ed25519",nonce:"nonce-1",issued_at:at,expires_at:"2026-11-04T07:04:00Z",decision:"APPROVE",
  approved_by:"security-owner",authority:"repository.approve",signature:"test-signature",...overrides
 });
 function approvalVerifierFor(artifact, consumed=new Set()) {
