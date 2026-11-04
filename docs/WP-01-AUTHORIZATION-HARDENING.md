@@ -57,7 +57,8 @@ The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySigna
 
 - Do not treat caller-supplied evidence as verified merely because its enum says `VERIFIED`.
 - Introduce a verifier boundary whose trusted result is produced outside the request payload.
-- Keep pure policy evaluation deterministic and injectable with a trusted clock.\n- Production composition roots must supply real signature verification, key rotation/revocation policy, trusted time, and atomic durable nonce storage before any external write can be enabled.
+- Keep pure policy evaluation deterministic and injectable with a trusted clock.
+- Production composition roots must supply real signature verification, key rotation/revocation policy, trusted time, and atomic durable nonce storage before any external write can be enabled.
 - Preserve the existing task/evidence schema during the first hardening increment where feasible.
 - Any schema migration must be additive, versioned, tested, and documented.
 - Do not enable external write execution as part of WP-01.
