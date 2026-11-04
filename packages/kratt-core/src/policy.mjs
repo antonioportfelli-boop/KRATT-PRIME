@@ -38,8 +38,10 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
     return decision(t.task_id,"INSUFFICIENT_EVIDENCE",["INVALID_EVIDENCE_SET"],[],evaluatedAt);
   if (!c.policies?.length) return decision(t.task_id,"BLOCKED",["MISSING_POLICY"],[],evaluatedAt);
 
-  const applicable = c.policies.filter(p => p.action === t.action);
-  if (applicable.length === 0) return decision(t.task_id,"DENY",["UNSUPPORTED_ACTION"],[],evaluatedAt);
+  const actionRules = c.policies.filter(p => p.action === t.action);
+  if (actionRules.length === 0) return decision(t.task_id,"DENY",["UNSUPPORTED_ACTION"],[],evaluatedAt);
+  const applicable = actionRules.filter(p => p.target_types.includes(t.target.resource_type));
+  if (applicable.length === 0) return decision(t.task_id,"DENY",["TARGET_TYPE_NOT_ALLOWED"],[],evaluatedAt);
   if (applicable.length !== 1) return decision(t.task_id,"BLOCKED",["POLICY_CONFLICT"],[],evaluatedAt);
   const rule = applicable[0];
 
@@ -54,14 +56,24 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   if (!Number.isFinite(now) || contextTime > now + 30_000 || now - contextTime > 5 * 60_000)
     return decision(t.task_id,"BLOCKED",["TRUSTED_CONTEXT_STALE"],[],evaluatedAt);
 
+  const sideEffect = rule.side_effect_class;
+  const writing = ["LOCAL_WRITE","EXTERNAL_WRITE","IRREVERSIBLE"].includes(sideEffect);
+  if (writing) {
+    const policyClaims = rule.required_claims ?? [];
+    if (policyClaims.length === 0)
+      return decision(t.task_id,"DENY",["WRITE_REQUIRES_POLICY_EVIDENCE"],[],evaluatedAt);
+    if (t.required_evidence.some(x => x.required && x.subject !== t.target.resource_id))
+      return decision(t.task_id,"DENY",["TASK_EVIDENCE_TARGET_MISMATCH"],[],evaluatedAt);
+    if (policyClaims.some(claim => !t.required_evidence.some(x =>
+      x.required && x.claim_type === claim && x.subject === t.target.resource_id)))
+      return decision(t.task_id,"DENY",["TASK_WEAKENS_POLICY_EVIDENCE"],[],evaluatedAt);
+  }
+
+  const requiresApproval = rule.approval_required === true ||
+    ["EXTERNAL_WRITE","IRREVERSIBLE"].includes(sideEffect);
   let approvalBinding = null;
-  const actionTail = t.action.split(/[.:_-]/).at(-1).toLowerCase();
-  const sideEffect = rule.side_effect_class ??
-    (/^(read|list|get|fetch|search|inspect|status|verify|compare)$/.test(actionTail) ? "READ_ONLY" : "EXTERNAL_WRITE");
-  if (["EXTERNAL_WRITE","IRREVERSIBLE"].includes(sideEffect)) {
-    if (t.required_evidence.length === 0 || !t.required_evidence.some(x => x.required))
-      return decision(t.task_id,"DENY",["WRITE_REQUIRES_EVIDENCE"],[],evaluatedAt);
-    if (rule.approval_required !== true || !rule.approval_authority || typeof options.approvalVerifier !== "function" ||
+  if (requiresApproval) {
+    if (!rule.approval_authority || typeof options.approvalVerifier !== "function" ||
         typeof t.constraints.provider !== "string" || !t.constraints.provider.trim() ||
         !options.approval || typeof options.approval !== "object")
       return decision(t.task_id,"DENY",["REQUEST_BOUND_APPROVAL_REQUIRED"],[],evaluatedAt);
@@ -87,12 +99,20 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   }
 
   const used = [], failures = [];
-  for (const req of t.required_evidence) {
-    if (!req.required) continue;
+  const evidenceRequirements = writing
+    ? [...t.required_evidence.filter(x => x.required), ...(rule.required_claims ?? []).map(claim_type => ({
+        claim_type, subject:t.target.resource_id, required:true, revision:null
+      }))]
+    : t.required_evidence.filter(x => x.required);
+  const requirements = [...new Map(evidenceRequirements.map(x => [
+    `${x.claim_type}:${x.subject}:${x.revision ?? ""}`, x
+  ])).values()];
+  for (const req of requirements) {
     const matches = records.filter(e => e.claim_type === req.claim_type && e.subject === req.subject);
     const found = req.revision === null ? matches[0] : matches.find(e => e.source.revision === req.revision);
-    if (found) used.push(found.evidence_id);
-    else failures.push(matches.length ? "EVIDENCE_REVISION_MISMATCH" : "MISSING_TRUSTED_EVIDENCE");
+    if (found) {
+      if (!used.includes(found.evidence_id)) used.push(found.evidence_id);
+    } else failures.push(matches.length ? "EVIDENCE_REVISION_MISMATCH" : "MISSING_TRUSTED_EVIDENCE");
   }
   if (failures.length) return decision(t.task_id,"INSUFFICIENT_EVIDENCE",[...new Set(failures),...notes],[],evaluatedAt);
   if (approvalBinding) {
