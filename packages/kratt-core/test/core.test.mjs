@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { KRATT_SCHEMA_VERSION, validateTaskEnvelope } from "../src/contracts.mjs";
-import { evaluatePolicy, createRequestBoundApprovalVerifier, canonicalApprovalPayload } from "../src/policy.mjs";
+import { evaluatePolicy, createRequestBoundApprovalVerifier, canonicalApprovalPayload, canonicalTaskDigest } from "../src/policy.mjs";
 import { MemoryLedger } from "../src/memory-ledger.mjs";
 import { createSaga, transitionSaga } from "../src/saga.mjs";
 import { AgentRegistry } from "../src/agent-registry.mjs";
@@ -35,7 +35,7 @@ const writeContext = () => context({policies:[{action:"repo.write",required_auth
 const approvalArtifact = (overrides={}) => ({
  schema_version:KRATT_SCHEMA_VERSION,approval_id:"approval-1",task_id:"task-1",actor:"builder",
  provider:"github",operation:"repo.write",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},
- nonce:"nonce-1",issued_at:at,expires_at:"2026-11-04T07:04:00Z",decision:"APPROVE",
+ request_digest:canonicalTaskDigest(writeTask()),nonce:"nonce-1",issued_at:at,expires_at:"2026-11-04T07:04:00Z",decision:"APPROVE",
  approved_by:"security-owner",authority:"repository.approve",signature:"test-signature",...overrides
 });
 function approvalVerifierFor(artifact, consumed=new Set()) {
@@ -69,6 +69,11 @@ test("approval binding rejects wrong task, actor, provider, operation and target
   [writeTask({target:{resource_type:"repository",resource_id:"OTHER"}}),a]
  ];
  for(const [t,approval] of cases) assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:verify,approval}).decision,"DENY");
+});
+test("approval is bound to the complete canonical task including constraints",()=>{
+ const t=writeTask({constraints:{provider:"github",branch:"release"}}),c=writeContext(),a=approvalArtifact();
+ const verify=approvalVerifierFor(a);
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:verify,approval:a}).decision,"DENY");
 });
 test("approval authority must match the policy authority",()=>{
  const t=writeTask(),c=writeContext(),a=approvalArtifact({authority:"unrelated.authority"});
