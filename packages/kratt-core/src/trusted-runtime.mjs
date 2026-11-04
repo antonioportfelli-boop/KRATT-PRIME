@@ -37,10 +37,23 @@ export function createTrustedAuthorizationRuntime({
   if (typeof now !== "function") {
     throw new TypeError("TRUSTED_CLOCK_REQUIRED");
   }
+  // Verify that the injected trusted clock is operational at composition time.
+  // A throwing, non-finite, or non-numeric clock must not create a runtime that
+  // later silently falls back to the host wall clock.
+  let initialTrustedTime;
+  try { initialTrustedTime = now(); } catch {
+    throw new TypeError("TRUSTED_CLOCK_UNAVAILABLE");
+  }
+  if (typeof initialTrustedTime !== "number" || !Number.isFinite(initialTrustedTime)) {
+    throw new TypeError("TRUSTED_CLOCK_UNAVAILABLE");
+  }
 
   const consumeNonce = nonceStore.consume.bind(nonceStore);
   const readTrustedTime = () => {
-    try { return now(); } catch { return Number.NaN; }
+    try {
+      const value = now();
+      return typeof value === "number" && Number.isFinite(value) ? value : Number.NaN;
+    } catch { return Number.NaN; }
   };
   const keyring = new Map();
   for (const entry of trustedApprovalKeys) {
