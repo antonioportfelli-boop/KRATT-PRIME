@@ -79,6 +79,17 @@ test("trusted composition root rejects forged signatures, unknown keys and appro
  const wrongSigned={...wrongApprover,signature:sign(null,Buffer.from(wrongPayload,"utf8"),privateKey).toString("base64url")};
  assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:wrongSigned}).decision,"DENY");
 });
+test("trusted composition root rejects asynchronous nonce adapters and missing trusted clock",()=>{
+ const {publicKey}=generateKeyPairSync("ed25519");
+ const key={key_id:"clock-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]};
+ assert.throws(()=>createTrustedAuthorizationRuntime({trustedApprovalKeys:[key],nonceStore:{consume:()=>true},verifyEvidence}),/TRUSTED_CLOCK_REQUIRED/);
+ const unsigned=approvalArtifact({key_id:"clock-key",nonce:"async-nonce",signature:"placeholder"});
+ const payload=canonicalApprovalPayload(unsigned);
+ const {privateKey}=generateKeyPairSync("ed25519");
+ const signed={...unsigned,signature:sign(null,Buffer.from(payload,"utf8"),privateKey).toString("base64url")};
+ const runtime=createTrustedAuthorizationRuntime({trustedApprovalKeys:[key],nonceStore:{consume:async()=>true},verifyEvidence,now:()=>now});
+ assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:signed}).decision,"DENY");
+});
 test("trusted composition root requires explicit keyring, nonce store and evidence verifier",()=>{
  assert.throws(()=>createTrustedAuthorizationRuntime({nonceStore:{consume:()=>true},verifyEvidence,now:()=>now}),/TRUSTED_APPROVAL_KEYRING_REQUIRED/);
  assert.throws(()=>createTrustedAuthorizationRuntime({trustedApprovalKeys:[],nonceStore:{consume:()=>true},verifyEvidence,now:()=>now}),/TRUSTED_APPROVAL_KEYRING_REQUIRED/);
