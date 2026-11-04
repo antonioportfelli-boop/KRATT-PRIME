@@ -36,7 +36,7 @@ const approvalArtifact = (overrides={}) => ({
  schema_version:KRATT_SCHEMA_VERSION,approval_id:"approval-1",task_id:"task-1",actor:"builder",
  provider:"github",operation:"repo.write",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},
  request_digest:canonicalTaskDigest(writeTask()),nonce:"nonce-1",issued_at:at,expires_at:"2026-11-04T07:04:00Z",decision:"APPROVE",
- approved_by:"security-owner",authority:"repository.approve",signature:"test-signature",...overrides
+ approved_by:"security-owner",authority:"repository.read",signature:"test-signature",...overrides
 });
 function approvalVerifierFor(artifact, consumed=new Set()) {
  return createRequestBoundApprovalVerifier({
@@ -48,13 +48,14 @@ function approvalVerifierFor(artifact, consumed=new Set()) {
 test("external write requires a request-bound signed approval artifact",()=>{
  const t=writeTask(), c=writeContext(), a=approvalArtifact();
  assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence}).decision,"DENY");
- assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>true,approval:a}).decision,"ALLOW");
- assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>false,approval:a}).decision,"DENY");
  assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"ALLOW");
+ const reject=createRequestBoundApprovalVerifier({now:()=>now,verifySignature:()=>false,consumeNonce:()=>true});
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:reject,approval:a}).decision,"DENY");
 });
 test("approval artifact cannot be substituted with a caller boolean or malformed object",()=>{
  const t=writeTask(),c=writeContext();
- assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>true,approval:{approved:true}}).decision,"DENY");
+ const valid=approvalArtifact(), verifier=approvalVerifierFor(valid);
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:verifier,approval:{approved:true}}).decision,"DENY");
  const a=approvalArtifact({signature:""});
  assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"DENY");
 });
