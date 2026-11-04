@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { createTrustedAuthorizationRuntime } from "../src/trusted-runtime.mjs";
 import { KRATT_SCHEMA_VERSION, validateTaskEnvelope } from "../src/contracts.mjs";
 import { evaluatePolicy, createRequestBoundApprovalVerifier, canonicalApprovalPayload, canonicalTaskDigest } from "../src/policy.mjs";
 import { MemoryLedger } from "../src/memory-ledger.mjs";
@@ -45,6 +47,44 @@ function approvalVerifierFor(artifact, consumed=new Set()) {
   consumeNonce:(nonce)=>{if(consumed.has(nonce))return false;consumed.add(nonce);return true;}
  });
 }
+test("trusted composition root verifies Ed25519 approval and enforces durable nonce adapter contract",()=>{
+ const {publicKey,privateKey}=generateKeyPairSync("ed25519");
+ const unsigned=approvalArtifact({key_id:"prod-test-key",signature:"placeholder"});
+ const payload=canonicalApprovalPayload(unsigned);
+ const signed={...unsigned,signature:sign(null,Buffer.from(payload,"utf8"),privateKey).toString("base64url")};
+ const used=new Set();
+ const runtime=createTrustedAuthorizationRuntime({
+  trustedApprovalKeys:[{key_id:"prod-test-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]}],
+  nonceStore:{consume:(keyId,nonce)=>{const id=keyId+":"+nonce;if(used.has(id))return false;used.add(id);return true;}},
+  verifyEvidence,
+  now:()=>now
+ });
+ assert.equal(runtime.keyCount,1);
+ assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:signed}).decision,"ALLOW");
+ assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:signed}).decision,"DENY");
+});
+test("trusted composition root rejects forged signatures, unknown keys and approver authority mismatches",()=>{
+ const {publicKey,privateKey}=generateKeyPairSync("ed25519");
+ const unsigned=approvalArtifact({key_id:"trusted-key",signature:"placeholder"});
+ const payload=canonicalApprovalPayload(unsigned);
+ const signed={...unsigned,signature:sign(null,Buffer.from(payload,"utf8"),privateKey).toString("base64url")};
+ const runtime=createTrustedAuthorizationRuntime({
+  trustedApprovalKeys:[{key_id:"trusted-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]}],
+  nonceStore:{consume:()=>true},verifyEvidence,now:()=>now
+ });
+ assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:{...signed,signature:"A".repeat(86)}}).decision,"DENY");
+ assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:{...signed,key_id:"unknown-key"}}).decision,"DENY");
+ const wrongApprover={...unsigned,approved_by:"untrusted-user"};
+ const wrongPayload=canonicalApprovalPayload(wrongApprover);
+ const wrongSigned={...wrongApprover,signature:sign(null,Buffer.from(wrongPayload,"utf8"),privateKey).toString("base64url")};
+ assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:wrongSigned}).decision,"DENY");
+});
+test("trusted composition root requires explicit keyring, nonce store and evidence verifier",()=>{
+ assert.throws(()=>createTrustedAuthorizationRuntime({nonceStore:{consume:()=>true},verifyEvidence,now:()=>now}),/TRUSTED_APPROVAL_KEYRING_REQUIRED/);
+ assert.throws(()=>createTrustedAuthorizationRuntime({trustedApprovalKeys:[],nonceStore:{consume:()=>true},verifyEvidence,now:()=>now}),/TRUSTED_APPROVAL_KEYRING_REQUIRED/);
+ assert.throws(()=>createTrustedAuthorizationRuntime({trustedApprovalKeys:[{key_id:"k",approver_id:"a",public_key_pem:"invalid",authorities:["repository.approve"]}],nonceStore:{consume:()=>true},verifyEvidence,now:()=>now}),/TRUSTED_APPROVAL_PUBLIC_KEY_INVALID/);
+ assert.throws(()=>createTrustedAuthorizationRuntime({trustedApprovalKeys:[{key_id:"k",approver_id:"a",public_key_pem:"invalid",authorities:["repository.approve"]}]}),/DURABLE_NONCE_STORE_REQUIRED/);
+});
 test("approval nonce is not consumed when required evidence is missing",()=>{
  const t=writeTask(),c=writeContext(),a=approvalArtifact(),used=new Set(),verifier=approvalVerifierFor(a,used);
  const result=evaluatePolicy(t,[],c,{now,approvalVerifier:verifier,approval:a});
