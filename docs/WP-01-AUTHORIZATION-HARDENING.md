@@ -59,9 +59,9 @@ The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySigna
 - Approval artifacts now include a signed `key_id`, so key selection is part of the canonical approval payload and cannot be swapped without invalidating the signature.
 - Signature verification uses Node.js `crypto.verify` with Ed25519 and canonical UTF-8 approval payload bytes. The runtime does not generate or provision keys and stores no private key material.
 - The composition root requires explicit trusted key configuration, a trusted evidence verifier, an injected clock, and a nonce-store adapter. There is no default approval keyring or default nonce store.
-- The current policy evaluator is synchronous. The nonce adapter must synchronously perform an atomic durable shared-store consume operation; Promise-returning adapters are rejected. No production database adapter is included yet.
+- The current policy evaluator is synchronous. `createSqliteNonceStore(database)` provides a synchronous SQLite adapter using unique constraints and atomic `INSERT OR IGNORE`; tests verify that claims survive closing and reopening the database. Use a file-backed SQLite database on durable local storage for a single-host runtime. Multi-host deployments must supply a shared transactional database adapter with the same synchronous contract or evolve the policy engine to an asynchronous authorization flow; Promise-returning adapters are rejected.
 - Keyring configuration is snapshotted at runtime creation. Rotation or revocation requires rebuilding the runtime from the authoritative deployment-controlled key registry; hot reload and revocation propagation remain open.
-- Runtime tests generate ephemeral Ed25519 keys only inside test fixtures. They do not provision production keys or establish operational key custody.
+- Runtime tests generate ephemeral Ed25519 keys only inside test fixtures and exercise a temporary SQLite database. They do not provision production keys or establish operational key custody, production database backup, or multi-host consistency.
 - The main CI workflow now invokes `npm test` so the KRATT core contract suite is included alongside typecheck and build when GitHub runners execute jobs.
 
 ## Implementation boundaries
