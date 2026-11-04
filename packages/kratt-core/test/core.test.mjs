@@ -208,3 +208,14 @@ test("request-bound approval verifier fails closed when its trusted clock throws
   request_digest:artifact.request_digest
  }),false);
 });
+
+test("Saga event history is deeply immutable after transitions",()=>{
+ let s=createSaga({id:"s2",goal:"audit",createdAt:at});
+ s=transitionSaga(s,"RUNNING",{id:"e2",at,kind:"start",meta:{source:"telegram"}}).value;
+ assert.equal(Object.isFrozen(s),true);
+ assert.equal(Object.isFrozen(s.events),true);
+ assert.equal(Object.isFrozen(s.events[0]),true);
+ assert.equal(Object.isFrozen(s.events[0].meta),true);
+ assert.throws(()=>s.events.push({id:"e3",at,kind:"tamper"}),TypeError);
+ assert.throws(()=>{s.events[0].meta.source="tampered";},TypeError);
+});
