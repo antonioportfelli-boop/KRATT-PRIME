@@ -22,6 +22,8 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
+      - name: Contract tests
+        run: npm test
       - name: Typecheck
         run: npm run typecheck
       - name: Build
