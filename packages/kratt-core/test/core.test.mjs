@@ -45,6 +45,12 @@ function approvalVerifierFor(artifact, consumed=new Set()) {
   consumeNonce:(nonce)=>{if(consumed.has(nonce))return false;consumed.add(nonce);return true;}
  });
 }
+test("approval nonce is not consumed when required evidence is missing",()=>{
+ const t=writeTask(),c=writeContext(),a=approvalArtifact(),used=new Set(),verifier=approvalVerifierFor(a,used);
+ const result=evaluatePolicy(t,[],c,{now,approvalVerifier:verifier,approval:a});
+ assert.equal(result.decision,"INSUFFICIENT_EVIDENCE");
+ assert.equal(used.size,0);
+});
 test("external write requires a request-bound signed approval artifact",()=>{
  const t=writeTask(), c=writeContext(), a=approvalArtifact();
  assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence}).decision,"DENY");
