@@ -57,10 +57,12 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   if (["EXTERNAL_WRITE","IRREVERSIBLE"].includes(sideEffect)) {
     if (t.required_evidence.length === 0 || !t.required_evidence.some(x => x.required))
       return decision(t.task_id,"DENY",["WRITE_REQUIRES_EVIDENCE"],[],evaluatedAt);
-    if (rule.approval_required !== true || typeof options.approvalVerifier !== "function")
+    if (rule.approval_required !== true || typeof options.approvalVerifier !== "function" ||
+        typeof t.constraints.provider !== "string" || !t.constraints.provider.trim() ||
+        !options.approval || typeof options.approval !== "object")
       return decision(t.task_id,"DENY",["REQUEST_BOUND_APPROVAL_REQUIRED"],[],evaluatedAt);
     let approved = false;
-    try { approved = options.approvalVerifier(Object.freeze({
+    try { approved = options.approvalVerifier(options.approval, Object.freeze({
       task_id:t.task_id, actor:t.actor, provider:t.constraints.provider,
       operation:t.action, target:Object.freeze({...t.target}), now
     })) === true; } catch { approved = false; }
