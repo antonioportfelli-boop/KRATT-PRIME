@@ -31,7 +31,7 @@ test("external write with empty evidence is denied",()=>{
  assert.equal(evaluatePolicy(t,[],c,{now,approvalVerifier:()=>true}).decision,"DENY");
 });
 const writeTask = (overrides={}) => task({action:"repo.write",constraints:{provider:"github"},required_evidence:[{claim_type:"TESTS_PASSED",subject:"repo-1",required:true,revision:null}],...overrides});
-const writeContext = () => context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true}]});
+const writeContext = () => context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true,approval_authority:"repository.approve"}]});
 const approvalArtifact = (overrides={}) => ({
  schema_version:KRATT_SCHEMA_VERSION,approval_id:"approval-1",task_id:"task-1",actor:"builder",
  provider:"github",operation:"repo.write",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},
