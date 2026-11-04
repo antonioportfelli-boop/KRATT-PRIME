@@ -39,6 +39,9 @@ export function createTrustedAuthorizationRuntime({
   }
 
   const consumeNonce = nonceStore.consume.bind(nonceStore);
+  const readTrustedTime = () => {
+    try { return now(); } catch { return Number.NaN; }
+  };
   const keyring = new Map();
   for (const entry of trustedApprovalKeys) {
     if (!entry || typeof entry !== "object" ||
@@ -87,7 +90,7 @@ export function createTrustedAuthorizationRuntime({
   };
 
   const approvalVerifier = createRequestBoundApprovalVerifier({
-    now,
+    now: readTrustedTime,
     verifySignature: verifyTrustedSignature,
     consumeNonce: (nonce, approvalId, expiresAt, keyId) => {
       try {
@@ -102,7 +105,7 @@ export function createTrustedAuthorizationRuntime({
   });
 
   function evaluate(task, evidence, trustedContext, { approval } = {}) {
-    const current = now();
+    const current = readTrustedTime();
     if (!Number.isFinite(current)) {
       return evaluatePolicy(task, evidence, trustedContext, { now: Number.NaN });
     }
