@@ -22,7 +22,7 @@ export function createTrustedAuthorizationRuntime({
   trustedApprovalKeys,
   nonceStore,
   verifyEvidence,
-  now = () => Date.now()
+  now
 } = {}) {
   if (!Array.isArray(trustedApprovalKeys) || trustedApprovalKeys.length === 0 ||
       trustedApprovalKeys.length > 128) {
@@ -38,16 +38,17 @@ export function createTrustedAuthorizationRuntime({
     throw new TypeError("TRUSTED_CLOCK_REQUIRED");
   }
 
+  const consumeNonce = nonceStore.consume.bind(nonceStore);
   const keyring = new Map();
   for (const entry of trustedApprovalKeys) {
     if (!entry || typeof entry !== "object" ||
-        !ID.test(entry.key_id ?? "") ||
-        !ID.test(entry.approver_id ?? "") ||
+        typeof entry.key_id !== "string" || !ID.test(entry.key_id) ||
+        typeof entry.approver_id !== "string" || !ID.test(entry.approver_id) ||
         typeof entry.public_key_pem !== "string" ||
         entry.public_key_pem.length === 0 || entry.public_key_pem.length > 8192 ||
         !Array.isArray(entry.authorities) || entry.authorities.length === 0 ||
         entry.authorities.length > 32 ||
-        entry.authorities.some(authority => !ID.test(authority)) ||
+        entry.authorities.some(authority => typeof authority !== "string" || !ID.test(authority)) ||
         keyring.has(entry.key_id)) {
       throw new TypeError("TRUSTED_APPROVAL_KEY_CONFIG_INVALID");
     }
@@ -89,7 +90,7 @@ export function createTrustedAuthorizationRuntime({
 
     try {
       // A Promise is rejected: the sync evaluator cannot safely await it.
-      const consumed = nonceStore.consume(artifact.key_id, artifact.nonce, artifact.approval_id, artifact.expires_at);
+      const consumed = consumeNonce(artifact.key_id, artifact.nonce, artifact.approval_id, artifact.expires_at);
       if (consumed && typeof consumed.then === "function") return false;
       return consumed === true;
     } catch {
