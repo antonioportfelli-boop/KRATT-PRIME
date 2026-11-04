@@ -53,7 +53,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   if (!Number.isFinite(now) || contextTime > now + 30_000 || now - contextTime > 5 * 60_000)
     return decision(t.task_id,"BLOCKED",["TRUSTED_CONTEXT_STALE"],[],evaluatedAt);
 
-  const sideEffect = rule.side_effect_class ?? "READ_ONLY";
+  const sideEffect = rule.side_effect_class ?? (/\\b(write|push|merge|delete|deploy|create|update|send|post)\\b/i.test(t.action) ? "EXTERNAL_WRITE" : "READ_ONLY");
   if (["EXTERNAL_WRITE","IRREVERSIBLE"].includes(sideEffect)) {
     if (t.required_evidence.length === 0 || !t.required_evidence.some(x => x.required))
       return decision(t.task_id,"DENY",["WRITE_REQUIRES_EVIDENCE"],[],evaluatedAt);
