@@ -3,7 +3,7 @@
 Status: WP-01 IMPLEMENTED ON FEATURE BRANCH; RUNTIME TESTS NOT YET VERIFIED
 Baseline: `ed31e746d1820228cd8339b86e8957a6820dbc21`
 Branch: `feature/wp01-authorization-hardening`
-Scope: `packages/kratt-core/src/` and its tests only. No platform adapters, production executors, external writes, credentials, or deployments.
+Scope: `packages/kratt-core/src/`, its tests, and the pull-request CI test invocation. No platform adapters, production executors, external writes, credentials, or deployments.
 
 ## Threats addressed
 
@@ -62,6 +62,7 @@ The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySigna
 - The current policy evaluator is synchronous. The nonce adapter must synchronously perform an atomic durable shared-store consume operation; Promise-returning adapters are rejected. No production database adapter is included yet.
 - Keyring configuration is snapshotted at runtime creation. Rotation or revocation requires rebuilding the runtime from the authoritative deployment-controlled key registry; hot reload and revocation propagation remain open.
 - Runtime tests generate ephemeral Ed25519 keys only inside test fixtures. They do not provision production keys or establish operational key custody.
+- The main CI workflow now invokes `npm test` so the KRATT core contract suite is included alongside typecheck and build when GitHub runners execute jobs.
 
 ## Implementation boundaries
 
