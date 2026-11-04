@@ -12,7 +12,7 @@ export const SIDE_EFFECT_CLASSES = Object.freeze(["READ_ONLY", "LOCAL_WRITE", "E
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
-const ISO_UTC = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$/;
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
 function plainObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
