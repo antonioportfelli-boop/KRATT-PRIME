@@ -4,7 +4,8 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+let DatabaseSync = null;
+try { ({ DatabaseSync } = await import("node:sqlite")); } catch { /* SQLite runtime unavailable on this Node build. */ }
 import { createTrustedAuthorizationRuntime } from "../src/trusted-runtime.mjs";
 import { createSqliteNonceStore } from "../src/sqlite-nonce-store.mjs";
 import { KRATT_SCHEMA_VERSION, validateTaskEnvelope } from "../src/contracts.mjs";
@@ -52,7 +53,7 @@ function approvalVerifierFor(artifact, consumed=new Set()) {
   consumeNonce:(nonce)=>{if(consumed.has(nonce))return false;consumed.add(nonce);return true;}
  });
 }
-test("SQLite nonce store persists atomic one-time claims across connections",()=>{
+test("SQLite nonce store persists atomic one-time claims across connections",{skip:!DatabaseSync},()=>{
  const directory=mkdtempSync(join(tmpdir(),"kratt-nonce-"));
  const path=join(directory,"nonce.sqlite");
  try {
