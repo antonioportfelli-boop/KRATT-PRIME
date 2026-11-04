@@ -37,6 +37,15 @@ export function createTrustedAuthorizationRuntime({
   if (typeof now !== "function") {
     throw new TypeError("TRUSTED_CLOCK_REQUIRED");
   }
+  // Validate the trusted clock at composition time. Do not construct a runtime
+  // that silently substitutes wall-clock time when its configured clock fails.
+  let initialTrustedTime;
+  try { initialTrustedTime = now(); } catch {
+    throw new TypeError("TRUSTED_CLOCK_UNAVAILABLE");
+  }
+  if (typeof initialTrustedTime !== "number" || !Number.isFinite(initialTrustedTime)) {
+    throw new TypeError("TRUSTED_CLOCK_UNAVAILABLE");
+  }
   // Verify that the injected trusted clock is operational at composition time.
   // A throwing, non-finite, or non-numeric clock must not create a runtime that
   // later silently falls back to the host wall clock.
