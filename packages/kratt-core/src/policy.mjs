@@ -66,7 +66,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
     let approved = false;
     try { approved = options.approvalVerifier(options.approval, Object.freeze({
       task_id:t.task_id, actor:t.actor, provider:t.constraints.provider,
-      operation:t.action, target:Object.freeze({...t.target}), now
+      operation:t.action, target:Object.freeze({...t.target}), authority:rule.required_authority, now
     })) === true; } catch { approved = false; }
     if (!approved) return decision(t.task_id,"DENY",["APPROVAL_INVALID_OR_MISSING"],[],evaluatedAt);
   }
@@ -160,7 +160,7 @@ export function createRequestBoundApprovalVerifier({verifySignature, consumeNonc
         artifact.provider !== binding.provider || artifact.operation !== binding.operation ||
         artifact.target.resource_type !== binding.target?.resource_type ||
         artifact.target.resource_id !== binding.target?.resource_id ||
-        artifact.decision !== "APPROVE") return false;
+        artifact.authority !== binding.authority || artifact.decision !== "APPROVE") return false;
     const payload = canonicalApprovalPayload(artifact);
     try {
       if (verifySignature(payload, artifact.signature, artifact) !== true) return false;
