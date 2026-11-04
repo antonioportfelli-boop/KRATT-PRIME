@@ -92,10 +92,10 @@ export function createTrustedAuthorizationRuntime({
   const approvalVerifier = createRequestBoundApprovalVerifier({
     now: readTrustedTime,
     verifySignature: verifyTrustedSignature,
-    consumeNonce: (nonce, approvalId, expiresAt, keyId) => {
+    consumeNonce: (nonce, approvalId, expiresAt, keyId, nowMs) => {
       try {
         // A Promise is rejected: the synchronous evaluator cannot safely await it.
-        const consumed = consumeNonce(keyId, nonce, approvalId, expiresAt);
+        const consumed = consumeNonce(keyId, nonce, approvalId, expiresAt, nowMs);
         if (consumed && typeof consumed.then === "function") return false;
         return consumed === true;
       } catch {
