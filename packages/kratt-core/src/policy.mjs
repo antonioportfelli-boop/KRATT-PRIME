@@ -35,6 +35,7 @@ function safelyVerify(verifier, ...args) {
  * options: { now, maxContextAgeMs, approval, verifyApproval, verifyEvidence }
  */
 export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, options = {}) {
+  const trustedOptions = options && typeof options === "object" ? options : {};
   const task = validateTaskEnvelope(taskInput);
   const taskId = task.ok ? task.value.task_id : "invalid";
   const context = validateTrustedContext(trustedContextInput);
@@ -43,9 +44,9 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   if (!context.ok) return decision(taskId, "BLOCKED", ["INVALID_TRUSTED_CONTEXT"], [], null);
 
   const t = task.value, c = context.value;
-  const now = Number.isFinite(options.now) ? options.now : Date.now();
-  const maxContextAgeMs = Number.isFinite(options.maxContextAgeMs) && options.maxContextAgeMs >= 0
-    ? options.maxContextAgeMs : 5 * 60 * 1000;
+  const now = Number.isFinite(trustedOptions.now) ? trustedOptions.now : Date.now();
+  const maxContextAgeMs = Number.isFinite(trustedOptions.maxContextAgeMs) && trustedOptions.maxContextAgeMs >= 0
+    ? trustedOptions.maxContextAgeMs : 5 * 60 * 1000;
 
   if (t.status !== "PENDING")
     return decision(t.task_id, "DENY", [t.status === "CANCELLED" ? "TASK_CANCELLED" : "TASK_NOT_PENDING"], [], evaluatedAt);
@@ -72,8 +73,8 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   const target = c.allowed_targets.find(x =>
     x.resource_type === t.target.resource_type &&
     x.resource_id === t.target.resource_id &&
-    (t.constraints.branch === undefined || x.branch === t.constraints.branch) &&
-    (t.constraints.path === undefined || x.path === t.constraints.path)
+    (x.branch === undefined ? t.constraints.branch === undefined : x.branch === t.constraints.branch) &&
+    (x.path === undefined ? t.constraints.path === undefined : x.path === t.constraints.path)
   );
   if (!rule.target_types.includes(t.target.resource_type) || !target)
     return decision(t.task_id, "DENY", ["TARGET_OUT_OF_SCOPE"], [], evaluatedAt);
@@ -98,7 +99,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
       e.result === "VERIFIED" &&
       e.claim_type === req.claim_type &&
       e.subject === req.subject &&
-      safelyVerify(options.verifyEvidence, e, t, c)
+      safelyVerify(trustedOptions.verifyEvidence, e, t, c)
     );
     const found = req.revision === null
       ? matches[0]
@@ -111,7 +112,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
 
   // A missing side_effect declaration is deliberately treated as a write.
   if ((rule.side_effect ?? "EXTERNAL_WRITE") === "EXTERNAL_WRITE") {
-    const parsedApproval = validateApprovalArtifact(options.approval);
+    const parsedApproval = validateApprovalArtifact(trustedOptions.approval);
     if (!parsedApproval.ok)
       return decision(t.task_id, "DENY", ["MISSING_OR_INVALID_REQUEST_BOUND_APPROVAL"], [], evaluatedAt);
     const a = parsedApproval.value;
@@ -124,7 +125,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
       a.target.resource_id === t.target.resource_id &&
       Date.parse(a.issued_at) <= now &&
       Date.parse(a.expires_at) > now;
-    if (!approvalMatches || !safelyVerify(options.verifyApproval, a, t, c))
+    if (!approvalMatches || !safelyVerify(trustedOptions.verifyApproval, a, t, c))
       return decision(t.task_id, "DENY", ["APPROVAL_NOT_BOUND_OR_NOT_TRUSTED"], [], evaluatedAt);
   }
 

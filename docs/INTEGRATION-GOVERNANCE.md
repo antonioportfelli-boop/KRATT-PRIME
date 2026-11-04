@@ -1,10 +1,12 @@
 # KRATT PRIME — Integration Governance
 
-Status: DESIGN BASELINE / NOT PRODUCTION ENABLED
+Status: DESIGN BASELINE / IMPLEMENTATION IN PROGRESS
 
 ## Governing boundary
 
-KRATT PRIME is the only repository in scope for implementation changes. AURA, STEEL, FRAME.9, GOLIATH OS and external services remain read-only sources unless a separately approved change explicitly says otherwise. The `main` branch is not a development target. External write actions, production deployment, credential changes and account-permission changes are denied by default.
+KRATT PRIME is the central governance and integration layer for the 3XTRINITY ecosystem. Within this KRATT-PRIME repository, existing AURA, STEEL, FRAME.9, GOLIATH OS, CERBERUS and Trinity Edge / EdgeFlow code may be inspected, modified and extended as part of the unified KRATT PRIME development effort. Their separate repositories remain independent project histories and are not automatically modified by changes here.
+
+The `main` branch is not a development target. Work is performed on scoped feature branches and integrated through reviewed pull requests. Production deployment, public release, credential changes and account-permission changes are denied by default.
 
 ## Integration lifecycle
 
@@ -23,7 +25,7 @@ A connector being present in the tool catalogue is not proof that the user's acc
 ## Authorization invariants
 
 1. The authorization plane is deterministic and outside model-generated plans.
-2. Missing, malformed, stale or contradictory trusted context returns deny.
+2. Missing, malformed, stale or contradictory trusted context returns deny/block.
 3. Request-supplied authority claims never grant authority.
 4. Effective scope is the intersection of principal, agent, connector, resource and task scopes.
 5. Read scopes never imply write scopes.
@@ -67,23 +69,27 @@ Default side-effect class is `EXTERNAL_WRITE`, therefore denied absent exact app
 | WPVibe | Account connected, no sites registered | No WordPress site connection to audit |
 | Consensus | Search tool available | Research only; not an execution adapter |
 | Parallel Search | Search/fetch tool available | Research only |
-| Exa | Search/fetch tool available | Research only |
+| Exa | Search/fetch tool available | Search/fetch tools available |
 | Higgsfield | Account identity verified | No KRATT runtime adapter implemented or exercised |
 
 This inventory describes connector observations, not production readiness.
 
 ## Acceptance tests required before write enablement
 
-- no trusted context => DENY;
+- no trusted context => BLOCKED;
+- stale or expired trusted context => BLOCKED;
 - connector absent/unverified => DENY;
 - read-only capability asked to write => DENY;
 - agent scope broader than principal scope => DENY;
 - wrong provider, target, operation or expired approval => DENY;
-- revoked approval or active kill switch => DENY;
+- revoked/replayed approval or active kill switch => DENY;
 - valid request-bound approval => permit only the exact operation;
+- unverified imported evidence cannot satisfy required verified evidence;
 - secrets never appear in audit payloads;
 - each execution and decision references a source revision and evidence digest.
 
 ## Deferred implementation
 
-This document does not claim durable storage, signed approvals, an external credential broker, live provider adapters, production policy enforcement or completed red-team verification. These require separate code, tests and connector-level acceptance evidence.
+The policy evaluator now validates request-bound approval shape and exact binding, but cryptographic approval verification, revocation/replay storage, trusted-context signing, durable audit storage, external credential brokering, live provider adapters and production policy enforcement still require a server-owned integration layer and separate acceptance evidence. The evaluator's verifier callbacks must only be supplied by that trusted server-side composition root.
+
+This document does not claim durable storage, production isolation, a completed red-team exercise or security certification.

@@ -92,9 +92,9 @@ test("ambiguous policy rules fail closed",()=>{
   const c=context({policies:[...context().policies,{action:"repo.read",required_authority:"repository.write",target_types:["repository"],side_effect:"READ_ONLY"}]});
   assert.equal(evaluatePolicy(task(),[],c,options()).reasons[0],"POLICY_CONFLICT");
 });
-test("branch and path constraints must intersect trusted target scope",()=>{
-  const t=task({constraints:{branch:"main"}});
-  assert.equal(evaluatePolicy(t,[],context(),options()).reasons[0],"TARGET_OUT_OF_SCOPE");
+test("branch and path constraints must exactly intersect trusted target scope",()=>{
+  assert.equal(evaluatePolicy(task({constraints:{branch:"main"}}),[],context(),options()).reasons[0],"TARGET_OUT_OF_SCOPE");
+  assert.equal(evaluatePolicy(task({constraints:{}}),[],context(),options()).reasons[0],"TARGET_OUT_OF_SCOPE");
 });
 test("external write without request-bound approval is denied even with no required evidence",()=>{
   const t=task({action:"repo.write"});
