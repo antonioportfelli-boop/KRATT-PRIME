@@ -93,6 +93,74 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   return decision(t.task_id,"ALLOW",["ALL_CONDITIONS_SATISFIED",...notes],used,evaluatedAt);
 }
 
+
+const APPROVAL_MAX_AGE_MS = 5 * 60_000;
+const APPROVAL_CLOCK_SKEW_MS = 30_000;
+const APPROVAL_KEYS = ["schema_version","approval_id","task_id","actor","provider","operation","target","nonce","issued_at","expires_at","decision","approved_by","authority","signature"];
+
+function isApprovalArtifact(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Reflect.ownKeys(value);
+  if (keys.some(k => typeof k !== "string" || !APPROVAL_KEYS.includes(k)) ||
+      APPROVAL_KEYS.some(k => !Object.hasOwn(value,k))) return false;
+  const target = value.target;
+  return value.schema_version === "kratt-prime/v0.1" &&
+    [value.approval_id,value.task_id,value.actor,value.provider,value.operation,value.nonce,value.approved_by,value.authority]
+      .every(v => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(v)) &&
+    target && typeof target === "object" && !Array.isArray(target) &&
+    Object.keys(target).length === 2 &&
+    typeof target.resource_type === "string" && typeof target.resource_id === "string" &&
+    target.resource_type.length > 0 && target.resource_id.length > 0 &&
+    typeof value.issued_at === "string" && Number.isFinite(Date.parse(value.issued_at)) &&
+    typeof value.expires_at === "string" && Number.isFinite(Date.parse(value.expires_at)) &&
+    value.decision === "APPROVE" &&
+    typeof value.signature === "string" && value.signature.length > 0 && value.signature.length <= 8192;
+}
+
+/** Stable signed representation. Signature is deliberately excluded from its own payload. */
+export function canonicalApprovalPayload(artifact) {
+  if (!isApprovalArtifact(artifact)) return null;
+  return JSON.stringify({
+    schema_version:artifact.schema_version, approval_id:artifact.approval_id,
+    task_id:artifact.task_id, actor:artifact.actor, provider:artifact.provider,
+    operation:artifact.operation, target:{resource_type:artifact.target.resource_type,resource_id:artifact.target.resource_id},
+    nonce:artifact.nonce, issued_at:artifact.issued_at, expires_at:artifact.expires_at,
+    decision:artifact.decision, approved_by:artifact.approved_by, authority:artifact.authority
+  });
+}
+
+/**
+ * Build a synchronous trusted approval verifier.
+ * verifySignature(payload, signature, artifact) must validate a real signature
+ * against provisioned trusted public-key material. consumeNonce must atomically
+ * consume a nonce in durable shared storage and return true exactly once.
+ * Missing, asynchronous, throwing, or false dependencies fail closed.
+ */
+export function createRequestBoundApprovalVerifier({verifySignature, consumeNonce, now = () => Date.now()} = {}) {
+  if (typeof verifySignature !== "function" || typeof consumeNonce !== "function" || typeof now !== "function")
+    throw new TypeError("TRUSTED_APPROVAL_DEPENDENCIES_REQUIRED");
+  return (artifact, binding) => {
+    if (!isApprovalArtifact(artifact) || !binding || typeof binding !== "object") return false;
+    const current = now();
+    const issued = Date.parse(artifact.issued_at), expires = Date.parse(artifact.expires_at);
+    if (!Number.isFinite(current) || issued > current + APPROVAL_CLOCK_SKEW_MS ||
+        expires <= current || expires <= issued || expires - issued > APPROVAL_MAX_AGE_MS ||
+        current - issued > APPROVAL_MAX_AGE_MS) return false;
+    if (artifact.task_id !== binding.task_id || artifact.actor !== binding.actor ||
+        artifact.provider !== binding.provider || artifact.operation !== binding.operation ||
+        artifact.target.resource_type !== binding.target?.resource_type ||
+        artifact.target.resource_id !== binding.target?.resource_id ||
+        artifact.decision !== "APPROVE") return false;
+    const payload = canonicalApprovalPayload(artifact);
+    try {
+      if (verifySignature(payload, artifact.signature, artifact) !== true) return false;
+      // This must be an atomic durable compare-and-consume operation.
+      if (consumeNonce(artifact.nonce, artifact.approval_id, artifact.expires_at) !== true) return false;
+      return true;
+    } catch { return false; }
+  };
+}
+
 export function isPolicyDecision(value) {
   return value && POLICY_DECISIONS.includes(value.decision);
 }
