@@ -101,20 +101,26 @@ const APPROVAL_CLOCK_SKEW_MS = 30_000;
 const APPROVAL_KEYS = ["schema_version","approval_id","task_id","actor","provider","operation","target","nonce","issued_at","expires_at","decision","approved_by","authority","signature"];
 
 function isApprovalArtifact(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      ![Object.prototype,null].includes(Object.getPrototypeOf(value))) return false;
   const keys = Reflect.ownKeys(value);
   if (keys.some(k => typeof k !== "string" || !APPROVAL_KEYS.includes(k)) ||
-      APPROVAL_KEYS.some(k => !Object.hasOwn(value,k))) return false;
+      APPROVAL_KEYS.some(k => !Object.hasOwn(value,k)) ||
+      keys.some(k => { const d=Object.getOwnPropertyDescriptor(value,k); return !d || !("value" in d) || d.get || d.set; })) return false;
   const target = value.target;
+  if (!target || typeof target !== "object" || Array.isArray(target) ||
+      ![Object.prototype,null].includes(Object.getPrototypeOf(target)) ||
+      Object.keys(target).length !== 2 || !Object.hasOwn(target,"resource_type") ||
+      !Object.hasOwn(target,"resource_id") ||
+      Object.keys(target).some(k => { const d=Object.getOwnPropertyDescriptor(target,k); return !d || !("value" in d) || d.get || d.set; })) return false;
+  const timestamp = v => typeof v === "string" &&
+    /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$/.test(v) && Number.isFinite(Date.parse(v));
   return value.schema_version === "kratt-prime/v0.1" &&
     [value.approval_id,value.task_id,value.actor,value.provider,value.operation,value.nonce,value.approved_by,value.authority]
       .every(v => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(v)) &&
-    target && typeof target === "object" && !Array.isArray(target) &&
-    Object.keys(target).length === 2 &&
-    typeof target.resource_type === "string" && typeof target.resource_id === "string" &&
-    target.resource_type.length > 0 && target.resource_id.length > 0 &&
-    typeof value.issued_at === "string" && Number.isFinite(Date.parse(value.issued_at)) &&
-    typeof value.expires_at === "string" && Number.isFinite(Date.parse(value.expires_at)) &&
+    typeof target.resource_type === "string" && target.resource_type.length > 0 &&
+    typeof target.resource_id === "string" && target.resource_id.length > 0 &&
+    timestamp(value.issued_at) && timestamp(value.expires_at) &&
     value.decision === "APPROVE" &&
     typeof value.signature === "string" && value.signature.length > 0 && value.signature.length <= 8192;
 }
