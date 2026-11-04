@@ -7,6 +7,7 @@ export const EVIDENCE_CLAIMS = Object.freeze([
   "SECURITY_CONTROL_VERIFIED", "ARTIFACT_CREATED",
   "DEPLOYMENT_COMPLETED", "INTEGRATION_VERIFIED"
 ]);
+export const SIDE_EFFECT_CLASSES = Object.freeze(["READ_ONLY", "EXTERNAL_WRITE"]);
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -74,18 +75,39 @@ export function validateEvidenceRecord(input) {
   return errors.length ? {ok:false, errors} : {ok:true, value:Object.freeze(structuredClone(input))};
 }
 
+export function validateApprovalArtifact(input) {
+  const required = ["approval_id","task_id","actor","provider","operation","target","issued_at","expires_at","status","nonce"];
+  if (!exactKeys(input, required)) return {ok:false, errors:["APPROVAL_SHAPE_INVALID"]};
+  const errors = [];
+  if (![input.approval_id,input.task_id,input.actor,input.provider,input.operation,input.nonce].every(validId)) errors.push("APPROVAL_IDENTIFIER_INVALID");
+  if (!exactKeys(input.target,["resource_type","resource_id"]) ||
+      !validId(input.target.resource_type) || typeof input.target.resource_id !== "string" ||
+      input.target.resource_id.length < 1 || input.target.resource_id.length > 512) errors.push("APPROVAL_TARGET_INVALID");
+  if (!validTime(input.issued_at) || !validTime(input.expires_at) ||
+      Date.parse(input.expires_at) <= Date.parse(input.issued_at)) errors.push("APPROVAL_TIME_INVALID");
+  if (input.status !== "APPROVED") errors.push("APPROVAL_NOT_APPROVED");
+  return errors.length ? {ok:false, errors} : {ok:true, value:Object.freeze(structuredClone(input))};
+}
+
 export function validateTrustedContext(input) {
-  const keys = ["schema_version","authorities","allowed_targets","policies","evaluated_at"];
+  const keys = ["schema_version","authorities","allowed_targets","policies","evaluated_at","expires_at","kill_switch"];
   if (!exactKeys(input, keys)) return {ok:false, errors:["TRUSTED_CONTEXT_SHAPE_INVALID"]};
   const errors = [];
   if (input.schema_version !== KRATT_SCHEMA_VERSION) errors.push("TRUSTED_CONTEXT_SCHEMA_UNSUPPORTED");
   if (!Array.isArray(input.authorities) || input.authorities.length > 32 || input.authorities.some(x => !validId(x))) errors.push("TRUSTED_AUTHORITIES_INVALID");
   if (!Array.isArray(input.allowed_targets) || input.allowed_targets.length > 64 ||
-      input.allowed_targets.some(t => !exactKeys(t,["resource_type","resource_id"]) || !validId(t.resource_type) || typeof t.resource_id !== "string")) errors.push("TRUSTED_TARGETS_INVALID");
-  if (input.policies !== null && (!Array.isArray(input.policies) || input.policies.length > 64 ||
-      input.policies.some(p => !exactKeys(p,["action","required_authority","target_types"]) ||
+      input.allowed_targets.some(t => !exactKeys(t,["resource_type","resource_id"],["branch","path"]) ||
+        !validId(t.resource_type) || typeof t.resource_id !== "string" ||
+        (t.branch !== undefined && !validId(t.branch)) ||
+        (t.path !== undefined && (typeof t.path !== "string" || !t.path.startsWith("/") || t.path.includes(".."))))) errors.push("TRUSTED_TARGETS_INVALID");
+  if (!Array.isArray(input.policies) || input.policies.length > 64 ||
+      input.policies.some(p => !exactKeys(p,["action","required_authority","target_types"],["side_effect","provider"]) ||
         !validId(p.action) || !validId(p.required_authority) || !Array.isArray(p.target_types) ||
-        p.target_types.some(x => !validId(x))))) errors.push("TRUSTED_POLICIES_INVALID");
-  if (!validTime(input.evaluated_at)) errors.push("TRUSTED_CONTEXT_TIME_INVALID");
+        p.target_types.some(x => !validId(x)) ||
+        (p.side_effect !== undefined && !SIDE_EFFECT_CLASSES.includes(p.side_effect)) ||
+        (p.provider !== undefined && !validId(p.provider)))) errors.push("TRUSTED_POLICIES_INVALID");
+  if (!validTime(input.evaluated_at) || !validTime(input.expires_at) ||
+      Date.parse(input.expires_at) <= Date.parse(input.evaluated_at)) errors.push("TRUSTED_CONTEXT_TIME_INVALID");
+  if (typeof input.kill_switch !== "boolean") errors.push("TRUSTED_KILL_SWITCH_INVALID");
   return errors.length ? {ok:false, errors} : {ok:true, value:structuredClone(input)};
 }
