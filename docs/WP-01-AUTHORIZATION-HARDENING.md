@@ -45,7 +45,7 @@ Scope: `packages/kratt-core/src/`, its tests, and the pull-request CI test invoc
 
 The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySignature, consumeNonce, now })`, `canonicalApprovalPayload(artifact)`, and the server-side `createTrustedAuthorizationRuntime({ trustedApprovalKeys, nonceStore, verifyEvidence, now })` composition root.
 
-- Approval artifacts bind schema version, approval ID, task ID, actor, provider, exact operation, exact resource target, SHA-256 digest of the complete canonical task envelope (including constraints), nonce, issue/expiry timestamps, decision, approver, authority, and signature.
+- Approval artifacts bind schema version, approval ID, task ID, actor, provider, exact operation, exact resource target, SHA-256 digest of the complete canonical task envelope (including constraints), nonce, issue/expiry timestamps, decision, approver, authority, signing key ID, and signature.
 - The verifier rejects malformed objects, mismatched bindings, non-APPROVE decisions, expired/future approvals, and approval lifetimes longer than five minutes.
 - Signature verification is delegated to a trusted synchronous `verifySignature` callback. It must validate a real signature against provisioned trusted key material; the repository does not provision keys or claim to implement a production cryptographic verifier.
 - Replay protection is delegated to a trusted synchronous `consumeNonce` callback. Production must implement atomic, durable, shared nonce consumption; missing, failed, or replayed nonce consumption denies approval.
