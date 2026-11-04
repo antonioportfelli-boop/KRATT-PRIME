@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createTrustedAuthorizationRuntime } from "../src/trusted-runtime.mjs";
+import { createSqliteNonceStore } from "../src/sqlite-nonce-store.mjs";
 import { KRATT_SCHEMA_VERSION, validateTaskEnvelope } from "../src/contracts.mjs";
 import { evaluatePolicy, createRequestBoundApprovalVerifier, canonicalApprovalPayload, canonicalTaskDigest } from "../src/policy.mjs";
 import { MemoryLedger } from "../src/memory-ledger.mjs";
@@ -47,6 +52,25 @@ function approvalVerifierFor(artifact, consumed=new Set()) {
   consumeNonce:(nonce)=>{if(consumed.has(nonce))return false;consumed.add(nonce);return true;}
  });
 }
+test("SQLite nonce store persists atomic one-time claims across connections",()=>{
+ const directory=mkdtempSync(join(tmpdir(),"kratt-nonce-"));
+ const path=join(directory,"nonce.sqlite");
+ try {
+  const firstDb=new DatabaseSync(path);
+  const first=createSqliteNonceStore(firstDb);
+  assert.equal(first.consume("key-a","nonce-a","approval-a","2026-11-04T07:04:00Z",now),true);
+  assert.equal(first.consume("key-a","nonce-a","approval-b","2026-11-04T07:04:00Z",now),false);
+  assert.equal(first.consume("key-a","nonce-b","approval-a","2026-11-04T07:04:00Z",now),false);
+  firstDb.close();
+  const secondDb=new DatabaseSync(path);
+  const second=createSqliteNonceStore(secondDb);
+  assert.equal(second.consume("key-a","nonce-a","approval-a","2026-11-04T07:04:00Z",now),false);
+  assert.equal(second.consume("key-b","nonce-a","approval-a","2026-11-04T07:04:00Z",now),true);
+  secondDb.close();
+ } finally {
+  rmSync(directory,{recursive:true,force:true});
+ }
+});
 test("trusted composition root verifies Ed25519 approval and enforces durable nonce adapter contract",()=>{
  const {publicKey,privateKey}=generateKeyPairSync("ed25519");
  const unsigned=approvalArtifact({key_id:"prod-test-key",signature:"placeholder"});
