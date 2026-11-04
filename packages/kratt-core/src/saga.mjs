@@ -6,6 +6,15 @@ const NEXT = Object.freeze({
   SUCCEEDED:[], FAILED:[], CANCELLED:[]
 });
 
+function deepFreeze(value, seen = new WeakSet()) {
+  if (value && typeof value === "object" && !seen.has(value)) {
+    seen.add(value);
+    for (const key of Reflect.ownKeys(value)) deepFreeze(value[key], seen);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /** Pure state transition helper; it does not execute steps or call external systems. */
 export function transitionSaga(saga, nextState, event) {
   if (!saga || !STATES.includes(saga.state) || !NEXT[saga.state].includes(nextState))
@@ -14,14 +23,18 @@ export function transitionSaga(saga, nextState, event) {
     return {ok:false, reason:"INVALID_EVENT"};
   if (!Array.isArray(saga.events) || saga.events.some(e => e.id === event.id))
     return {ok:false, reason:"DUPLICATE_OR_INVALID_EVENT"};
+  const events = [
+    ...saga.events.map(entry => structuredClone(entry)),
+    structuredClone(event)
+  ];
   const updated = {
     ...structuredClone(saga),
     state:nextState,
     version:(Number.isInteger(saga.version) ? saga.version : 0)+1,
     updatedAt:event.at,
-    events:[...saga.events, structuredClone(event)]
+    events
   };
-  return {ok:true, value:Object.freeze(updated)};
+  return {ok:true, value:deepFreeze(updated)};
 }
 
 export function createSaga({id, goal, createdAt}) {
@@ -29,7 +42,7 @@ export function createSaga({id, goal, createdAt}) {
       typeof createdAt !== "string" || !Number.isFinite(Date.parse(createdAt))) {
     throw new TypeError("INVALID_SAGA_INPUT");
   }
-  return Object.freeze({id, goal, state:"PENDING", version:0, createdAt, updatedAt:createdAt, events:[]});
+  return deepFreeze({id, goal, state:"PENDING", version:0, createdAt, updatedAt:createdAt, events:[]});
 }
 
 export function sagaStates() { return [...STATES]; }
