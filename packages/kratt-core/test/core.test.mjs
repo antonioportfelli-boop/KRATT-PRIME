@@ -17,8 +17,8 @@ import { AgentRegistry } from "../src/agent-registry.mjs";
 const at = "2026-11-04T07:00:00Z";
 const now = Date.parse(at);
 const task = (overrides={}) => ({schema_version:KRATT_SCHEMA_VERSION,task_id:"task-1",actor:"builder",action:"repo.read",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},constraints:{branch:"integration"},required_evidence:[],created_at:at,requested_authority:["admin"],status:"PENDING",...overrides});
-const context = (overrides={}) => ({schema_version:KRATT_SCHEMA_VERSION,authorities:["repository.read"],allowed_targets:[{resource_type:"repository",resource_id:"KRATT-PRIME"}],policies:[{action:"repo.read",required_authority:"repository.read",target_types:["repository"]}],evaluated_at:at,...overrides});
-const evidence = () => ({schema_version:KRATT_SCHEMA_VERSION,evidence_id:"ev-1",subject:"repo-1",claim_type:"TESTS_PASSED",source:{source_type:"github",source_id:"run-1",revision:"0123456789012345678901234567890123456789"},observed_at:at,verification_method:"signed-attestation",result:"VERIFIED",artifact_digest:null,metadata:{}});
+const context = (overrides={}) => ({schema_version:KRATT_SCHEMA_VERSION,authorities:["repository.read"],allowed_targets:[{resource_type:"repository",resource_id:"KRATT-PRIME"}],policies:[{action:"repo.read",required_authority:"repository.read",target_types:["repository"],side_effect_class:"READ_ONLY"}],evaluated_at:at,...overrides});
+const evidence = () => ({schema_version:KRATT_SCHEMA_VERSION,evidence_id:"ev-1",subject:"KRATT-PRIME",claim_type:"TESTS_PASSED",source:{source_type:"github",source_id:"run-1",revision:"0123456789012345678901234567890123456789"},observed_at:at,verification_method:"signed-attestation",result:"VERIFIED",artifact_digest:null,metadata:{}});
 const verifyEvidence = record => record.source.source_type === "github" && record.verification_method === "signed-attestation";
 
 test("task contract rejects unrecognized privilege fields",()=>{assert.equal(validateTaskEnvelope(task()).ok,true);assert.equal(validateTaskEnvelope({...task(),admin:true}).ok,false);});
