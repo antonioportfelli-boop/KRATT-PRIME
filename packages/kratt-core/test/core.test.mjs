@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { KRATT_SCHEMA_VERSION, validateTaskEnvelope } from "../src/contracts.mjs";
-import { evaluatePolicy } from "../src/policy.mjs";
+import { evaluatePolicy, createRequestBoundApprovalVerifier, canonicalApprovalPayload } from "../src/policy.mjs";
 import { MemoryLedger } from "../src/memory-ledger.mjs";
 import { createSaga, transitionSaga } from "../src/saga.mjs";
 import { AgentRegistry } from "../src/agent-registry.mjs";
@@ -30,12 +30,59 @@ test("external write with empty evidence is denied",()=>{
  const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true}]});
  assert.equal(evaluatePolicy(t,[],c,{now,approvalVerifier:()=>true}).decision,"DENY");
 });
-test("external write requires exact approval verifier",()=>{
- const t=task({action:"repo.write",constraints:{provider:"github"},required_evidence:[{claim_type:"TESTS_PASSED",subject:"repo-1",required:true,revision:null}]});
- const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true}]});
+const writeTask = (overrides={}) => task({action:"repo.write",constraints:{provider:"github"},required_evidence:[{claim_type:"TESTS_PASSED",subject:"repo-1",required:true,revision:null}],...overrides});
+const writeContext = () => context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true}]});
+const approvalArtifact = (overrides={}) => ({
+ schema_version:KRATT_SCHEMA_VERSION,approval_id:"approval-1",task_id:"task-1",actor:"builder",
+ provider:"github",operation:"repo.write",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},
+ nonce:"nonce-1",issued_at:at,expires_at:"2026-11-04T07:04:00Z",decision:"APPROVE",
+ approved_by:"security-owner",authority:"repository.approve",signature:"test-signature",...overrides
+});
+function approvalVerifierFor(artifact, consumed=new Set()) {
+ return createRequestBoundApprovalVerifier({
+  now:()=>now,
+  verifySignature:(payload,signature)=>signature==="test-signature" && payload===canonicalApprovalPayload(artifact),
+  consumeNonce:(nonce)=>{if(consumed.has(nonce))return false;consumed.add(nonce);return true;}
+ });
+}
+test("external write requires a request-bound signed approval artifact",()=>{
+ const t=writeTask(), c=writeContext(), a=approvalArtifact();
  assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence}).decision,"DENY");
- assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>true}).decision,"ALLOW");
- assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>false}).decision,"DENY");
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>true,approval:a}).decision,"ALLOW");
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>false,approval:a}).decision,"DENY");
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"ALLOW");
+});
+test("approval artifact cannot be substituted with a caller boolean or malformed object",()=>{
+ const t=writeTask(),c=writeContext();
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:()=>true,approval:{approved:true}}).decision,"DENY");
+ const a=approvalArtifact({signature:""});
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"DENY");
+});
+test("approval binding rejects wrong task, actor, provider, operation and target",()=>{
+ const c=writeContext(), a=approvalArtifact();
+ const verify=approvalVerifierFor(a);
+ const cases=[
+  [writeTask({task_id:"task-other"}),a],
+  [writeTask({actor:"other-actor"}),a],
+  [writeTask({constraints:{provider:"gitlab"}}),a],
+  [writeTask({action:"repo.delete"}),a],
+  [writeTask({target:{resource_type:"repository",resource_id:"OTHER"}}),a]
+ ];
+ for(const [t,approval] of cases) assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:verify,approval}).decision,"DENY");
+});
+test("approval expiry, excessive lifetime and missing provider fail closed",()=>{
+ const c=writeContext(), expired=approvalArtifact({expires_at:"2026-11-04T06:59:59Z"});
+ assert.equal(evaluatePolicy(writeTask(),[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(expired),approval:expired}).decision,"DENY");
+ const long=approvalArtifact({expires_at:"2026-11-04T07:06:00Z"});
+ assert.equal(evaluatePolicy(writeTask(),[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(long),approval:long}).decision,"DENY");
+ const a=approvalArtifact();
+ assert.equal(evaluatePolicy(writeTask({constraints:{}}),[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"DENY");
+});
+test("approval nonce is consumed once and replay is denied",()=>{
+ const t=writeTask(),c=writeContext(),a=approvalArtifact(),used=new Set(),approvalVerifier=approvalVerifierFor(a,used);
+ const options={now,verifyEvidence,approvalVerifier,approval:a};
+ assert.equal(evaluatePolicy(t,[evidence()],c,options).decision,"ALLOW");
+ assert.equal(evaluatePolicy(t,[evidence()],c,options).decision,"DENY");
 });
 test("cancelled task overrides an otherwise valid policy",()=>{
  assert.equal(evaluatePolicy(task({status:"CANCELLED"}),[],context(),{now}).decision,"DENY");
