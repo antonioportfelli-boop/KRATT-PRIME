@@ -11,7 +11,7 @@ export const EVIDENCE_CLAIMS = Object.freeze([
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
-const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+const ISO_UTC = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$/;
 
 function plainObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -81,11 +81,16 @@ export function validateTrustedContext(input) {
   if (input.schema_version !== KRATT_SCHEMA_VERSION) errors.push("TRUSTED_CONTEXT_SCHEMA_UNSUPPORTED");
   if (!Array.isArray(input.authorities) || input.authorities.length > 32 || input.authorities.some(x => !validId(x))) errors.push("TRUSTED_AUTHORITIES_INVALID");
   if (!Array.isArray(input.allowed_targets) || input.allowed_targets.length > 64 ||
-      input.allowed_targets.some(t => !exactKeys(t,["resource_type","resource_id"]) || !validId(t.resource_type) || typeof t.resource_id !== "string")) errors.push("TRUSTED_TARGETS_INVALID");
+      input.allowed_targets.some(t => !exactKeys(t,["resource_type","resource_id"]) || !validId(t.resource_type) || typeof t.resource_id !== "string" || !t.resource_id)) errors.push("TRUSTED_TARGETS_INVALID");
+  const policyOptional = ["side_effect_class","allowed_branches","allowed_paths","max_context_age_ms"];
   if (input.policies !== null && (!Array.isArray(input.policies) || input.policies.length > 64 ||
-      input.policies.some(p => !exactKeys(p,["action","required_authority","target_types"]) ||
+      input.policies.some(p => !exactKeys(p,["action","required_authority","target_types"],policyOptional) ||
         !validId(p.action) || !validId(p.required_authority) || !Array.isArray(p.target_types) ||
-        p.target_types.some(x => !validId(x))))) errors.push("TRUSTED_POLICIES_INVALID");
+        p.target_types.some(x => !validId(x)) ||
+        (p.side_effect_class !== undefined && !["READ_ONLY","WRITE","IRREVERSIBLE"].includes(p.side_effect_class)) ||
+        (p.allowed_branches !== undefined && (!Array.isArray(p.allowed_branches) || p.allowed_branches.some(x => typeof x !== "string" || !x || x.length > 255))) ||
+        (p.allowed_paths !== undefined && (!Array.isArray(p.allowed_paths) || p.allowed_paths.some(x => typeof x !== "string" || !x || x.length > 512))) ||
+        (p.max_context_age_ms !== undefined && (!Number.isSafeInteger(p.max_context_age_ms) || p.max_context_age_ms < 1 || p.max_context_age_ms > 300000))))) errors.push("TRUSTED_POLICIES_INVALID");
   if (!validTime(input.evaluated_at)) errors.push("TRUSTED_CONTEXT_TIME_INVALID");
   return errors.length ? {ok:false, errors} : {ok:true, value:structuredClone(input)};
 }
