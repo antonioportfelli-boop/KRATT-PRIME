@@ -60,6 +60,8 @@ test("trusted composition root verifies Ed25519 approval and enforces durable no
   now:()=>now
  });
  assert.equal(runtime.keyCount,1);
+ assert.equal(runtime.evaluate(writeTask({constraints:{provider:"github",branch:"other"}}),[evidence()],writeContext(),{approval:signed}).decision,"DENY");
+ assert.equal(used.size,0);
  assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:signed}).decision,"ALLOW");
  assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:signed}).decision,"DENY");
 });
