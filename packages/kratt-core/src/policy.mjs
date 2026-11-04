@@ -122,7 +122,7 @@ export function canonicalTaskDigest(taskInput) {
 
 const APPROVAL_MAX_AGE_MS = 5 * 60_000;
 const APPROVAL_CLOCK_SKEW_MS = 30_000;
-const APPROVAL_KEYS = ["schema_version","approval_id","task_id","actor","provider","operation","target","request_digest","nonce","issued_at","expires_at","decision","approved_by","authority","signature"];
+const APPROVAL_KEYS = ["schema_version","approval_id","task_id","actor","provider","operation","target","request_digest","key_id","nonce","issued_at","expires_at","decision","approved_by","authority","signature"];
 
 function isApprovalArtifact(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
@@ -140,7 +140,7 @@ function isApprovalArtifact(value) {
   const timestamp = v => typeof v === "string" &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(v) && Number.isFinite(Date.parse(v));
   return value.schema_version === "kratt-prime/v0.1" &&
-    [value.approval_id,value.task_id,value.actor,value.provider,value.operation,value.nonce,value.approved_by,value.authority]
+    [value.approval_id,value.task_id,value.actor,value.provider,value.operation,value.key_id,value.nonce,value.approved_by,value.authority]
       .every(v => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(v)) &&
     typeof target.resource_type === "string" && target.resource_type.length > 0 &&
     typeof target.resource_id === "string" && target.resource_id.length > 0 &&
@@ -157,7 +157,7 @@ export function canonicalApprovalPayload(artifact) {
     schema_version:artifact.schema_version, approval_id:artifact.approval_id,
     task_id:artifact.task_id, actor:artifact.actor, provider:artifact.provider,
     operation:artifact.operation, target:{resource_type:artifact.target.resource_type,resource_id:artifact.target.resource_id},
-    request_digest:artifact.request_digest,
+    request_digest:artifact.request_digest, key_id:artifact.key_id,
     nonce:artifact.nonce, issued_at:artifact.issued_at, expires_at:artifact.expires_at,
     decision:artifact.decision, approved_by:artifact.approved_by, authority:artifact.authority
   });
