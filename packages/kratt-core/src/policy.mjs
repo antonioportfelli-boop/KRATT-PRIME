@@ -53,7 +53,9 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   if (!Number.isFinite(now) || contextTime > now + 30_000 || now - contextTime > 5 * 60_000)
     return decision(t.task_id,"BLOCKED",["TRUSTED_CONTEXT_STALE"],[],evaluatedAt);
 
-  const sideEffect = rule.side_effect_class ?? (/\b(write|push|merge|delete|deploy|create|update|send|post)\b/i.test(t.action) ? "EXTERNAL_WRITE" : "READ_ONLY");
+  const actionTail = t.action.split(/[.:_-]/).at(-1).toLowerCase();
+  const sideEffect = rule.side_effect_class ??
+    (/^(read|list|get|fetch|search|inspect|status|verify|compare)$/.test(actionTail) ? "READ_ONLY" : "EXTERNAL_WRITE");
   if (["EXTERNAL_WRITE","IRREVERSIBLE"].includes(sideEffect)) {
     if (t.required_evidence.length === 0 || !t.required_evidence.some(x => x.required))
       return decision(t.task_id,"DENY",["WRITE_REQUIRES_EVIDENCE"],[],evaluatedAt);
@@ -114,7 +116,7 @@ function isApprovalArtifact(value) {
       !Object.hasOwn(target,"resource_id") ||
       Object.keys(target).some(k => { const d=Object.getOwnPropertyDescriptor(target,k); return !d || !("value" in d) || d.get || d.set; })) return false;
   const timestamp = v => typeof v === "string" &&
-    /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$/.test(v) && Number.isFinite(Date.parse(v));
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(v) && Number.isFinite(Date.parse(v));
   return value.schema_version === "kratt-prime/v0.1" &&
     [value.approval_id,value.task_id,value.actor,value.provider,value.operation,value.nonce,value.approved_by,value.authority]
       .every(v => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(v)) &&
