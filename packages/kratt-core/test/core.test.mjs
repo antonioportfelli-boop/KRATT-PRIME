@@ -27,7 +27,7 @@ test("caller-provided VERIFIED flag is not trusted",()=>{
 });
 test("external write with empty evidence is denied",()=>{
  const t=task({action:"repo.write"});
- const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true}]});
+ const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true,approval_authority:"repository.approve"}]});
  assert.equal(evaluatePolicy(t,[],c,{now,approvalVerifier:()=>true}).decision,"DENY");
 });
 const writeTask = (overrides={}) => task({action:"repo.write",constraints:{provider:"github"},required_evidence:[{claim_type:"TESTS_PASSED",subject:"repo-1",required:true,revision:null}],...overrides});
@@ -36,7 +36,7 @@ const approvalArtifact = (overrides={}) => ({
  schema_version:KRATT_SCHEMA_VERSION,approval_id:"approval-1",task_id:"task-1",actor:"builder",
  provider:"github",operation:"repo.write",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},
  request_digest:canonicalTaskDigest(writeTask()),nonce:"nonce-1",issued_at:at,expires_at:"2026-11-04T07:04:00Z",decision:"APPROVE",
- approved_by:"security-owner",authority:"repository.read",signature:"test-signature",...overrides
+ approved_by:"security-owner",authority:"repository.approve",signature:"test-signature",...overrides
 });
 function approvalVerifierFor(artifact, consumed=new Set()) {
  return createRequestBoundApprovalVerifier({
