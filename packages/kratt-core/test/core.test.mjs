@@ -38,8 +38,8 @@ test("external write with empty evidence is denied",()=>{
  const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true,approval_authority:"repository.approve"}]});
  assert.equal(evaluatePolicy(t,[],c,{now,approvalVerifier:()=>true}).decision,"DENY");
 });
-const writeTask = (overrides={}) => task({action:"repo.write",constraints:{provider:"github"},required_evidence:[{claim_type:"TESTS_PASSED",subject:"repo-1",required:true,revision:null}],...overrides});
-const writeContext = () => context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true,approval_authority:"repository.approve"}]});
+const writeTask = (overrides={}) => task({action:"repo.write",constraints:{provider:"github"},required_evidence:[{claim_type:"TESTS_PASSED",subject:"KRATT-PRIME",required:true,revision:null}],...overrides});
+const writeContext = () => context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true,approval_authority:"repository.approve",required_claims:["TESTS_PASSED"]}]});
 const approvalArtifact = (overrides={}) => ({
  schema_version:KRATT_SCHEMA_VERSION,approval_id:"approval-1",task_id:"task-1",actor:"builder",
  provider:"github",operation:"repo.write",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},
@@ -218,4 +218,31 @@ test("Saga event history is deeply immutable after transitions",()=>{
  assert.equal(Object.isFrozen(s.events[0].meta),true);
  assert.throws(()=>s.events.push({id:"e3",at,kind:"tamper"}),TypeError);
  assert.throws(()=>{s.events[0].meta.source="tampered";},TypeError);
+});
+
+test("policy rules with the same action are scoped by target type",()=>{
+ const policies=[
+  {action:"resource.read",required_authority:"repository.read",target_types:["repository"],side_effect_class:"READ_ONLY"},
+  {action:"resource.read",required_authority:"telegram.read",target_types:["telegram_update"],side_effect_class:"READ_ONLY"}
+ ];
+ const t=task({action:"resource.read"});
+ assert.equal(evaluatePolicy(t,[],context({policies}),{now}).decision,"ALLOW");
+ const wrong=task({action:"resource.read",target:{resource_type:"file",resource_id:"KRATT-PRIME"}});
+ assert.equal(evaluatePolicy(wrong,[],context({policies}),{now}).reasons[0],"TARGET_TYPE_NOT_ALLOWED");
+});
+test("LOCAL_WRITE honours policy approval requirement",()=>{
+ const t=writeTask();
+ const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"LOCAL_WRITE",approval_required:true,approval_authority:"repository.approve",required_claims:["TESTS_PASSED"]}]});
+ const a=approvalArtifact();
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence}).decision,"DENY");
+ assert.equal(evaluatePolicy(t,[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"ALLOW");
+});
+test("write evidence requirements come from trusted policy and bind to target",()=>{
+ const t=writeTask(), c=writeContext(), a=approvalArtifact();
+ const wrongSubject={...evidence(),subject:"another-repository"};
+ assert.equal(evaluatePolicy(t,[wrongSubject],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"DENY");
+ const weakened={...t,required_evidence:[]};
+ assert.equal(evaluatePolicy(weakened,[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"DENY");
+ const noPolicyClaim={...c,policies:[{...c.policies[0],required_claims:[]}]};
+ assert.equal(evaluatePolicy(t,[evidence()],noPolicyClaim,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"BLOCKED");
 });
