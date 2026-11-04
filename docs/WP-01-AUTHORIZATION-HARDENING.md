@@ -1,6 +1,6 @@
 # KRATT PRIME — WP-01 Authorization Hardening
 
-Status: IMPLEMENTATION PLAN / ACCEPTANCE GATES
+Status: WP-01 IMPLEMENTED ON FEATURE BRANCH; RUNTIME TESTS NOT YET VERIFIED
 Baseline: `ed31e746d1820228cd8339b86e8957a6820dbc21`
 Branch: `feature/wp01-authorization-hardening`
 Scope: `packages/kratt-core/src/` and its tests only. No platform adapters, production executors, external writes, credentials, or deployments.
@@ -41,11 +41,23 @@ Scope: `packages/kratt-core/src/` and its tests only. No platform adapters, prod
 | WP01-17 | Saga event history mutated | DETECT |
 | WP01-18 | Valid request-bound approval | ALLOW only for the exact bound operation |
 
+## WP-01A — Trusted Approval Engine
+
+The feature branch now exposes `createRequestBoundApprovalVerifier({ verifySignature, consumeNonce, now })` and `canonicalApprovalPayload(artifact)`.
+
+- Approval artifacts bind schema version, approval ID, task ID, actor, provider, exact operation, exact resource target, nonce, issue/expiry timestamps, decision, approver, authority, and signature.
+- The verifier rejects malformed objects, mismatched bindings, non-APPROVE decisions, expired/future approvals, and approval lifetimes longer than five minutes.
+- Signature verification is delegated to a trusted synchronous `verifySignature` callback. It must validate a real signature against provisioned trusted key material; the repository does not provision keys or claim to implement a production cryptographic verifier.
+- Replay protection is delegated to a trusted synchronous `consumeNonce` callback. Production must implement atomic, durable, shared nonce consumption; missing, failed, or replayed nonce consumption denies approval.
+- The evaluator requires an explicit provider for external writes and accepts only the structured approval artifact. Caller booleans are not approval evidence.
+- Actions without an explicit side-effect class are treated as read-only only when their terminal action is in a narrow read-only allowlist; every other unknown action defaults to EXTERNAL_WRITE.
+- Test fixtures use a deliberately synthetic signature callback and in-memory nonce set. They validate the policy boundary, not production cryptography, durable replay protection, or deployment readiness.
+
 ## Implementation boundaries
 
 - Do not treat caller-supplied evidence as verified merely because its enum says `VERIFIED`.
 - Introduce a verifier boundary whose trusted result is produced outside the request payload.
-- Keep pure policy evaluation deterministic and injectable with a trusted clock.
+- Keep pure policy evaluation deterministic and injectable with a trusted clock.\n- Production composition roots must supply real signature verification, key rotation/revocation policy, trusted time, and atomic durable nonce storage before any external write can be enabled.
 - Preserve the existing task/evidence schema during the first hardening increment where feasible.
 - Any schema migration must be additive, versioned, tested, and documented.
 - Do not enable external write execution as part of WP-01.
