@@ -54,6 +54,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   if (!Number.isFinite(now) || contextTime > now + 30_000 || now - contextTime > 5 * 60_000)
     return decision(t.task_id,"BLOCKED",["TRUSTED_CONTEXT_STALE"],[],evaluatedAt);
 
+  let approvalBinding = null;
   const actionTail = t.action.split(/[.:_-]/).at(-1).toLowerCase();
   const sideEffect = rule.side_effect_class ??
     (/^(read|list|get|fetch|search|inspect|status|verify|compare)$/.test(actionTail) ? "READ_ONLY" : "EXTERNAL_WRITE");
@@ -64,12 +65,11 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
         typeof t.constraints.provider !== "string" || !t.constraints.provider.trim() ||
         !options.approval || typeof options.approval !== "object")
       return decision(t.task_id,"DENY",["REQUEST_BOUND_APPROVAL_REQUIRED"],[],evaluatedAt);
-    let approved = false;
-    try { approved = options.approvalVerifier(options.approval, Object.freeze({
+    approvalBinding = Object.freeze({
       task_id:t.task_id, actor:t.actor, provider:t.constraints.provider,
-      operation:t.action, target:Object.freeze({...t.target}), authority:rule.required_authority, request_digest:canonicalTaskDigest(t), now
-    })) === true; } catch { approved = false; }
-    if (!approved) return decision(t.task_id,"DENY",["APPROVAL_INVALID_OR_MISSING"],[],evaluatedAt);
+      operation:t.action, target:Object.freeze({...t.target}),
+      authority:rule.required_authority, request_digest:canonicalTaskDigest(t), now
+    });
   }
 
   const records = [], seen = new Set(), notes = [];
@@ -95,6 +95,11 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
     else failures.push(matches.length ? "EVIDENCE_REVISION_MISMATCH" : "MISSING_TRUSTED_EVIDENCE");
   }
   if (failures.length) return decision(t.task_id,"INSUFFICIENT_EVIDENCE",[...new Set(failures),...notes],[],evaluatedAt);
+  if (approvalBinding) {
+    let approved = false;
+    try { approved = options.approvalVerifier(options.approval, approvalBinding) === true; } catch { approved = false; }
+    if (!approved) return decision(t.task_id,"DENY",["APPROVAL_INVALID_OR_MISSING"],[],evaluatedAt);
+  }
   return decision(t.task_id,"ALLOW",["ALL_CONDITIONS_SATISFIED",...notes],used,evaluatedAt);
 }
 
