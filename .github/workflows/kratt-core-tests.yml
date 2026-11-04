@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - integration/source-reconciliation-2026-10
+      - feature/wp-01-authorization-hardening
   pull_request:
     branches:
       - main
