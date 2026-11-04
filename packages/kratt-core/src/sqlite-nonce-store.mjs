@@ -20,27 +20,27 @@ export function createSqliteNonceStore(database) {
       key_id TEXT NOT NULL,
       nonce TEXT NOT NULL,
       approval_id TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
+      expires_at_ms INTEGER NOT NULL,
       PRIMARY KEY (key_id, nonce),
       UNIQUE (key_id, approval_id)
     ) WITHOUT ROWID
   `);
 
   const purgeExpired = database.prepare(
-    "DELETE FROM kratt_approval_nonces WHERE expires_at <= ?"
+    "DELETE FROM kratt_approval_nonces WHERE expires_at_ms <= ?"
   );
   const insertClaim = database.prepare(
-    "INSERT OR IGNORE INTO kratt_approval_nonces (key_id, nonce, approval_id, expires_at) VALUES (?, ?, ?, ?)"
+    "INSERT OR IGNORE INTO kratt_approval_nonces (key_id, nonce, approval_id, expires_at_ms) VALUES (?, ?, ?, ?)"
   );
 
   function consume(keyId, nonce, approvalId, expiresAt, nowMs) {
     if (![keyId, nonce, approvalId].every(value => typeof value === "string" && ID.test(value)) ||
-        typeof expiresAt !== "string" || !ISO_UTC.test(expiresAt) ||
+        typeof expiresAt !== "string" || !ISO_UTC.test(expiresAt) || !Number.isFinite(Date.parse(expiresAt)) ||
         !Number.isFinite(nowMs)) return false;
 
     try {
-      purgeExpired.run(new Date(nowMs).toISOString());
-      const result = insertClaim.run(keyId, nonce, approvalId, expiresAt);
+      purgeExpired.run(nowMs);
+      const result = insertClaim.run(keyId, nonce, approvalId, Date.parse(expiresAt));
       return Number(result.changes) === 1;
     } catch {
       return false;
