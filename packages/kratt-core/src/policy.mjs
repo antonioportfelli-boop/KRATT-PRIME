@@ -175,7 +175,8 @@ export function createRequestBoundApprovalVerifier({verifySignature, consumeNonc
     throw new TypeError("TRUSTED_APPROVAL_DEPENDENCIES_REQUIRED");
   return (artifact, binding) => {
     if (!isApprovalArtifact(artifact) || !binding || typeof binding !== "object") return false;
-    const current = now();
+    let current;
+    try { current = now(); } catch { return false; }
     const issued = Date.parse(artifact.issued_at), expires = Date.parse(artifact.expires_at);
     if (!Number.isFinite(current) || issued > current + APPROVAL_CLOCK_SKEW_MS ||
         expires <= current || expires <= issued || expires - issued > APPROVAL_MAX_AGE_MS ||
