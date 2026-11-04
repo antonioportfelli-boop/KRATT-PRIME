@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { POLICY_DECISIONS, validateEvidenceRecord, validateTaskEnvelope, validateTrustedContext } from "./contracts.mjs";
 
 function decision(taskId, value, reasons, evidenceIds, evaluatedAt) {
@@ -66,7 +67,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
     let approved = false;
     try { approved = options.approvalVerifier(options.approval, Object.freeze({
       task_id:t.task_id, actor:t.actor, provider:t.constraints.provider,
-      operation:t.action, target:Object.freeze({...t.target}), authority:rule.required_authority, now
+      operation:t.action, target:Object.freeze({...t.target}), authority:rule.required_authority, request_digest:canonicalTaskDigest(t), now
     })) === true; } catch { approved = false; }
     if (!approved) return decision(t.task_id,"DENY",["APPROVAL_INVALID_OR_MISSING"],[],evaluatedAt);
   }
@@ -98,9 +99,25 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
 }
 
 
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** SHA-256 digest of the complete validated task envelope, including constraints. */
+export function canonicalTaskDigest(taskInput) {
+  const validated = validateTaskEnvelope(taskInput);
+  if (!validated.ok) return null;
+  return `sha256:${createHash("sha256").update(stableJson(validated.value), "utf8").digest("hex")}`;
+}
+
 const APPROVAL_MAX_AGE_MS = 5 * 60_000;
 const APPROVAL_CLOCK_SKEW_MS = 30_000;
-const APPROVAL_KEYS = ["schema_version","approval_id","task_id","actor","provider","operation","target","nonce","issued_at","expires_at","decision","approved_by","authority","signature"];
+const APPROVAL_KEYS = ["schema_version","approval_id","task_id","actor","provider","operation","target","request_digest","nonce","issued_at","expires_at","decision","approved_by","authority","signature"];
 
 function isApprovalArtifact(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
@@ -134,6 +151,7 @@ export function canonicalApprovalPayload(artifact) {
     schema_version:artifact.schema_version, approval_id:artifact.approval_id,
     task_id:artifact.task_id, actor:artifact.actor, provider:artifact.provider,
     operation:artifact.operation, target:{resource_type:artifact.target.resource_type,resource_id:artifact.target.resource_id},
+    request_digest:artifact.request_digest,
     nonce:artifact.nonce, issued_at:artifact.issued_at, expires_at:artifact.expires_at,
     decision:artifact.decision, approved_by:artifact.approved_by, authority:artifact.authority
   });
@@ -160,7 +178,8 @@ export function createRequestBoundApprovalVerifier({verifySignature, consumeNonc
         artifact.provider !== binding.provider || artifact.operation !== binding.operation ||
         artifact.target.resource_type !== binding.target?.resource_type ||
         artifact.target.resource_id !== binding.target?.resource_id ||
-        artifact.authority !== binding.authority || artifact.decision !== "APPROVE") return false;
+        artifact.authority !== binding.authority || artifact.request_digest !== binding.request_digest ||
+        artifact.decision !== "APPROVE") return false;
     const payload = canonicalApprovalPayload(artifact);
     try {
       if (verifySignature(payload, artifact.signature, artifact) !== true) return false;
