@@ -28,4 +28,3 @@ jobs:
         run: npm run typecheck
       - name: Build
         run: npm run build
-      # MISSING: no npm test script in package.json — add when tests exist
