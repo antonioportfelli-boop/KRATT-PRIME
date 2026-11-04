@@ -240,7 +240,7 @@ test("LOCAL_WRITE honours policy approval requirement",()=>{
 test("write evidence requirements come from trusted policy and bind to target",()=>{
  const t=writeTask(), c=writeContext(), a=approvalArtifact();
  const wrongSubject={...evidence(),subject:"another-repository"};
- assert.equal(evaluatePolicy(t,[wrongSubject],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"DENY");
+ assert.equal(evaluatePolicy(t,[wrongSubject],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"INSUFFICIENT_EVIDENCE");
  const weakened={...t,required_evidence:[]};
  assert.equal(evaluatePolicy(weakened,[evidence()],c,{now,verifyEvidence,approvalVerifier:approvalVerifierFor(a),approval:a}).decision,"DENY");
  const noPolicyClaim={...c,policies:[{...c.policies[0],required_claims:[]}]};
