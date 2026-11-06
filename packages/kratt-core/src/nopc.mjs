@@ -143,6 +143,7 @@ export function proposeAgentPlan({ tasks, agents, maxConcurrent = 4 } = {}) {
       completed.add(task.id);
       pending.delete(task.id);
     }
+    if (assignments.length >= maxConcurrent) break;
   }
 
   for (const id of pending) {
