@@ -107,6 +107,7 @@ export function proposeAgentPlan({ tasks, agents, maxConcurrent = 4 } = {}) {
   let rounds = 0;
 
   while (pending.size && rounds++ <= tasks.length) {
+    const pendingBeforeRound = pending.size;
     const ready = [...pending]
       .map(id => byId.get(id))
       .filter(task => task.dependsOn.every(dep => completed.has(dep)))
@@ -143,7 +144,7 @@ export function proposeAgentPlan({ tasks, agents, maxConcurrent = 4 } = {}) {
       completed.add(task.id);
       pending.delete(task.id);
     }
-    if (assignments.length >= maxConcurrent) break;
+    if (assignments.length >= maxConcurrent || pending.size === pendingBeforeRound) break;
   }
 
   for (const id of pending) {
