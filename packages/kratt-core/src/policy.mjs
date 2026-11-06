@@ -51,6 +51,8 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
     c.allowed_targets.some(x => x.resource_type === t.target.resource_type && x.resource_id === t.target.resource_id);
   if (!inScope) return decision(t.task_id,"DENY",["TARGET_OUT_OF_SCOPE"],[],evaluatedAt);
 
+  if (!options || typeof options !== "object" || !Number.isFinite(options.now))
+    return decision(t.task_id,"BLOCKED",["TRUSTED_CLOCK_UNAVAILABLE"],[],evaluatedAt);
   const now = options.now;
   const contextTime = Date.parse(c.evaluated_at);
   if (!Number.isFinite(now) || contextTime > now + 30_000 || now - contextTime > 5 * 60_000)
@@ -190,7 +192,7 @@ export function canonicalApprovalPayload(artifact) {
  * consume a nonce in durable shared storage and return true exactly once.
  * Missing, asynchronous, throwing, or false dependencies fail closed.
  */
-export function createRequestBoundApprovalVerifier({verifySignature, consumeNonce, now = () => Date.now()} = {}) {
+export function createRequestBoundApprovalVerifier({verifySignature, consumeNonce, now} = {}) {
   if (typeof verifySignature !== "function" || typeof consumeNonce !== "function" || typeof now !== "function")
     throw new TypeError("TRUSTED_APPROVAL_DEPENDENCIES_REQUIRED");
   return (artifact, binding) => {
