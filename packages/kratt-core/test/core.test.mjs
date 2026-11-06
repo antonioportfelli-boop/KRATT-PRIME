@@ -106,6 +106,15 @@ test("trusted composition root rejects forged signatures, unknown keys and appro
  const wrongSigned={...wrongApprover,signature:sign(null,Buffer.from(wrongPayload,"utf8"),privateKey).toString("base64url")};
  assert.equal(runtime.evaluate(writeTask(),[evidence()],writeContext(),{approval:wrongSigned}).decision,"DENY");
 });
+test("trusted runtime rejects a clock that throws or returns non-finite values at construction",()=>{
+ const {publicKey}=generateKeyPairSync("ed25519");
+ const key={key_id:"clock-init-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]};
+ const dependencies={trustedApprovalKeys:[key],nonceStore:{consume:()=>true},verifyEvidence};
+ assert.throws(()=>createTrustedAuthorizationRuntime({...dependencies,now:()=>{throw new Error("clock unavailable");}}),/TRUSTED_CLOCK_UNAVAILABLE/);
+ assert.throws(()=>createTrustedAuthorizationRuntime({...dependencies,now:()=>Number.NaN}),/TRUSTED_CLOCK_UNAVAILABLE/);
+ assert.throws(()=>createTrustedAuthorizationRuntime({...dependencies,now:()=>"not-a-number"}),/TRUSTED_CLOCK_UNAVAILABLE/);
+});
+
 test("trusted composition root rejects asynchronous nonce adapters and missing trusted clock",()=>{
  const {publicKey,privateKey}=generateKeyPairSync("ed25519");
  const key={key_id:"clock-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]};
@@ -188,12 +197,19 @@ test("ambiguous policy rules fail closed",()=>{
  const rules=[...context().policies,{...context().policies[0],required_authority:"different.authority"}];
  assert.equal(evaluatePolicy(task(),[],context({policies:rules}),{now}).decision,"BLOCKED");
 });
+test("policy evaluator fails closed when trusted time is absent or invalid",()=>{
+ const validTask=task(), validContext=context();
+ assert.equal(evaluatePolicy(validTask,[],validContext,{}).decision,"BLOCKED");
+ assert.equal(evaluatePolicy(validTask,[],validContext,{now:Number.NaN}).decision,"BLOCKED");
+ assert.equal(evaluatePolicy(validTask,[],validContext,{now:"not-a-number"}).decision,"BLOCKED");
+});
 test("expired trusted context blocks",()=>{
  assert.equal(evaluatePolicy(task(),[],context({evaluated_at:"2026-11-04T06:00:00Z"}),{now}).decision,"BLOCKED");
 });
 test("memory ledger rejects duplicate IDs and verifies entries",()=>{const m=new MemoryLedger();assert.equal(m.append({id:"m1",kind:"finding",createdAt:at,payload:{sha:"abc"}}).ok,true);assert.equal(m.append({id:"m1",kind:"finding",createdAt:at,payload:{sha:"x"}}).reason,"DUPLICATE_MEMORY_ID");assert.equal(m.verify().ok,true);});
 test("Saga state machine rejects invalid transitions",()=>{let s=createSaga({id:"s1",goal:"audit",createdAt:at});s=transitionSaga(s,"RUNNING",{id:"e1",at,kind:"start"}).value;assert.equal(transitionSaga(s,"PENDING",{id:"e2",at,kind:"rewind"}).reason,"INVALID_STATE_TRANSITION");});
 test("agent registry prevents privilege escalation",()=>{const a=new AgentRegistry();assert.equal(a.registerAgent({id:"builder",scopes:["repository.read"],status:"active"}).ok,true);assert.equal(a.registerAgent({id:"root",scopes:["production.deploy"],status:"active"}).reason,"INVALID_AGENT");a.registerTool({name:"read",requiredScopes:["repository.read"]});assert.equal(a.authorize("builder","read","repository.read").allowed,true);assert.equal(a.authorize("builder","read","production.deploy").allowed,false);});
+\ntest("request-bound approval verifier fails closed when its trusted clock throws",()=>{\n const verifier=createRequestBoundApprovalVerifier({\n  now:()=>{throw new Error("clock unavailable");},\n  verifySignature:()=>true,\n  consumeNonce:()=>true\n });\n const artifact=approvalArtifact();\n assert.equal(verifier(artifact,{\n  task_id:artifact.task_id,actor:artifact.actor,provider:artifact.provider,\n  operation:artifact.operation,target:artifact.target,authority:artifact.authority,\n  request_digest:artifact.request_digest\n }),false);\n});\n
 
 test("request-bound approval verifier fails closed when its trusted clock throws",()=>{
  const verifier=createRequestBoundApprovalVerifier({

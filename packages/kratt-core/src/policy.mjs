@@ -51,7 +51,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
     c.allowed_targets.some(x => x.resource_type === t.target.resource_type && x.resource_id === t.target.resource_id);
   if (!inScope) return decision(t.task_id,"DENY",["TARGET_OUT_OF_SCOPE"],[],evaluatedAt);
 
-  const now = typeof options.now === "number" ? options.now : Date.now();
+  const now = options.now;
   const contextTime = Date.parse(c.evaluated_at);
   if (!Number.isFinite(now) || contextTime > now + 30_000 || now - contextTime > 5 * 60_000)
     return decision(t.task_id,"BLOCKED",["TRUSTED_CONTEXT_STALE"],[],evaluatedAt);
