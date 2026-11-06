@@ -7,6 +7,7 @@ export const EVIDENCE_CLAIMS = Object.freeze([
   "SECURITY_CONTROL_VERIFIED", "ARTIFACT_CREATED",
   "DEPLOYMENT_COMPLETED", "INTEGRATION_VERIFIED"
 ]);
+export const SIDE_EFFECT_CLASSES = Object.freeze(["READ_ONLY", "LOCAL_WRITE", "EXTERNAL_WRITE", "IRREVERSIBLE"]);
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -83,9 +84,15 @@ export function validateTrustedContext(input) {
   if (!Array.isArray(input.allowed_targets) || input.allowed_targets.length > 64 ||
       input.allowed_targets.some(t => !exactKeys(t,["resource_type","resource_id"]) || !validId(t.resource_type) || typeof t.resource_id !== "string")) errors.push("TRUSTED_TARGETS_INVALID");
   if (input.policies !== null && (!Array.isArray(input.policies) || input.policies.length > 64 ||
-      input.policies.some(p => !exactKeys(p,["action","required_authority","target_types"]) ||
+      input.policies.some(p => !exactKeys(p,["action","required_authority","target_types","side_effect_class"],["approval_required","approval_authority","required_claims"]) ||
         !validId(p.action) || !validId(p.required_authority) || !Array.isArray(p.target_types) ||
-        p.target_types.some(x => !validId(x))))) errors.push("TRUSTED_POLICIES_INVALID");
+        p.target_types.length === 0 || p.target_types.some(x => !validId(x)) ||
+        !SIDE_EFFECT_CLASSES.includes(p.side_effect_class) ||
+        (p.approval_required !== undefined && typeof p.approval_required !== "boolean") ||
+        (p.approval_authority !== undefined && !validId(p.approval_authority)) ||
+        (p.required_claims !== undefined && (!Array.isArray(p.required_claims) || p.required_claims.length > 16 || p.required_claims.some(x => !EVIDENCE_CLAIMS.includes(x)) || new Set(p.required_claims).size !== p.required_claims.length)) ||
+        ((p.approval_required === true || ["EXTERNAL_WRITE","IRREVERSIBLE"].includes(p.side_effect_class)) && !p.approval_authority) ||
+        (["LOCAL_WRITE","EXTERNAL_WRITE","IRREVERSIBLE"].includes(p.side_effect_class) && (!Array.isArray(p.required_claims) || p.required_claims.length === 0))))) errors.push("TRUSTED_POLICIES_INVALID");
   if (!validTime(input.evaluated_at)) errors.push("TRUSTED_CONTEXT_TIME_INVALID");
   return errors.length ? {ok:false, errors} : {ok:true, value:structuredClone(input)};
 }
