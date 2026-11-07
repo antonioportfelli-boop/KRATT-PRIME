@@ -1,0 +1,28 @@
+name: GOLIATH numeric hardening checks
+
+on:
+  push:
+    branches:
+      - fix/p1-goliath-numeric-overflow-guards-2026-11-07
+    paths:
+      - "packages/goliath-kernel/src/lib.rs"
+      - ".github/workflows/goliath-numeric-hardening.yml"
+  pull_request:
+    branches:
+      - feature/hardware-aware-runtime-v0.2.0-2026-11-07
+    paths:
+      - "packages/goliath-kernel/src/lib.rs"
+      - ".github/workflows/goliath-numeric-hardening.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run GOLIATH unit tests
+        run: cargo test --manifest-path packages/goliath-kernel/Cargo.toml --locked
