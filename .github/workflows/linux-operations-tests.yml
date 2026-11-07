@@ -26,5 +26,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run Linux Operations contract tests
+      - name: Run focused Linux Operations contract tests
         run: node --test packages/kratt-core/test/linux-operations.test.mjs
+      - name: Run complete KRATT Core contract suite
+        run: node --test packages/kratt-core/test/*.test.mjs
+      - name: Syntax-check local diagnostics entry point
+        run: node --check packages/kratt-core/src/linux-diagnostics-cli.mjs
