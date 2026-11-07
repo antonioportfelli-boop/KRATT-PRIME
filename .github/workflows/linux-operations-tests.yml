@@ -1,0 +1,34 @@
+name: KRATT Linux Operations contract tests
+
+on:
+  push:
+    branches:
+      - feature/hardware-aware-runtime-v0.2.0-2026-11-07
+    paths:
+      - "packages/kratt-core/src/linux-operations.mjs"
+      - "packages/kratt-core/test/linux-operations.test.mjs"
+      - ".github/workflows/linux-operations-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/kratt-core/src/linux-operations.mjs"
+      - "packages/kratt-core/test/linux-operations.test.mjs"
+      - ".github/workflows/linux-operations-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-operations-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run focused Linux Operations contract tests
+        run: node --test packages/kratt-core/test/linux-operations.test.mjs
+      - name: Run complete KRATT Core contract suite
+        run: node --test packages/kratt-core/test/*.test.mjs
+      - name: Syntax-check local diagnostics entry point
+        run: node --check packages/kratt-core/src/linux-diagnostics-cli.mjs

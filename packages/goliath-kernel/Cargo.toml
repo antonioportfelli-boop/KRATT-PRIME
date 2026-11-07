@@ -1,0 +1,13 @@
+[package]
+name = "goliath-kernel"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Unprivileged packet-event model and kinetic telemetry engine for KRATT PRIME"
+
+[lib]
+name = "goliath_kernel"
+path = "src/lib.rs"
+
+[features]
+default = []
