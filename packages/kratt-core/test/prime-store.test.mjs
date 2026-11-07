@@ -1,0 +1,5 @@
+import test from "node:test"; import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises"; import { tmpdir } from "node:os"; import { join } from "node:path";
+import { PrimeStore } from "../src/prime-store.mjs";
+test("persists records and deduplicates idempotency keys", async()=>{const d=await mkdtemp(join(tmpdir(),"prime-store-"));try{const path=join(d,"journal.ndjson"),s=new PrimeStore({path});await s.put({idempotencyKey:"req-1",key:"memory.fact",value:{x:1}});assert.equal((await s.put({idempotencyKey:"req-1",key:"memory.fact",value:{x:2}})).duplicate,true);const reopened=new PrimeStore({path});assert.equal((await reopened.readAll()).length,1);}finally{await rm(d,{recursive:true,force:true});}});
+test("rejects malformed idempotency keys",async()=>{const d=await mkdtemp(join(tmpdir(),"prime-store-"));try{await assert.rejects(new PrimeStore({path:join(d,"j")}).put({idempotencyKey:"*",key:"k",value:1}),/STORE_KEY_INVALID/);}finally{await rm(d,{recursive:true,force:true});}});
