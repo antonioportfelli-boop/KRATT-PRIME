@@ -2,7 +2,6 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-#include <bpf/bpf_core_read.h>
 
 #define ETH_P_IP 0x0800
 #define ETH_P_IPV6 0x86DD
@@ -14,6 +13,8 @@
 #define STAT_PARSE_ERROR 3
 #define STAT_UNSUPPORTED 4
 #define STAT_RINGBUF_LOSS 5
+#define STAT_CONFIG_ERROR 6
+#define STAT_CONFIG_FILTER 7
 
 struct packet_event {
     __u64 ts_ns;
@@ -29,9 +30,9 @@ struct packet_event {
 
 struct config_t {
     __u32 version;
-    __u32 sampling_rate; /* Reserved: not applied by this initial parser. */
-    __u16 monitor_port;  /* Reserved: not applied by this initial parser. */
-    __u16 flags;
+    __u32 sampling_rate; /* 1 = every packet; bounded to 1..10000. */
+    __u16 monitor_port;  /* 0 = all TCP/UDP ports; otherwise either endpoint. */
+    __u16 flags;         /* Reserved; must be zero in schema v1. */
 };
 
 struct {
@@ -57,7 +58,7 @@ static __always_inline void count_stat(__u32 key)
 {
     __u64 *value = bpf_map_lookup_elem(&stats, &key);
     if (value)
-        *value += 1; /* Per-CPU map: no cross-CPU atomic operation required. */
+        *value += 1;
 }
 
 static __always_inline int parse_l4(void *hdr, void *data_end, __u8 proto,
@@ -91,6 +92,10 @@ int goliath_ingress_telemetry(struct xdp_md *ctx)
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
     struct packet_event event = {};
+    struct config_t *cfg;
+    __u32 zero = 0;
+    __u32 sample_rate = 1;
+    __u16 monitor_port = 0;
     __u16 eth_type;
 
     if ((void *)(eth + 1) > data_end) {
@@ -118,7 +123,7 @@ int goliath_ingress_telemetry(struct xdp_md *ctx)
         }
         frag_off = bpf_ntohs(iph->frag_off);
         if (frag_off & 0x1FFF) {
-            count_stat(STAT_UNSUPPORTED); /* Non-first fragment: no L4 ports. */
+            count_stat(STAT_UNSUPPORTED);
             return XDP_PASS;
         }
 
@@ -139,7 +144,7 @@ int goliath_ingress_telemetry(struct xdp_md *ctx)
             count_stat(STAT_PARSE_ERROR);
             return XDP_PASS;
         }
-        /* First slice supports only direct TCP/UDP next-header values.
+        /* First slice supports direct TCP/UDP next-header values only.
          * Extension headers and fragments are passed without event decoding. */
         if (ip6h->nexthdr != IPPROTO_TCP && ip6h->nexthdr != IPPROTO_UDP) {
             count_stat(STAT_UNSUPPORTED);
@@ -159,6 +164,24 @@ int goliath_ingress_telemetry(struct xdp_md *ctx)
         count_stat(STAT_UNSUPPORTED);
         return XDP_PASS;
     }
+
+    cfg = bpf_map_lookup_elem(&global_config, &zero);
+    if (cfg && cfg->version != 0) {
+        if (cfg->version != 1 || cfg->sampling_rate < 1 ||
+            cfg->sampling_rate > 10000 || cfg->flags != 0) {
+            count_stat(STAT_CONFIG_ERROR);
+            return XDP_PASS;
+        }
+        sample_rate = cfg->sampling_rate;
+        monitor_port = cfg->monitor_port;
+    }
+
+    if (monitor_port && event.sport != monitor_port && event.dport != monitor_port) {
+        count_stat(STAT_CONFIG_FILTER);
+        return XDP_PASS;
+    }
+    if (sample_rate > 1 && bpf_get_prandom_u32() % sample_rate != 0)
+        return XDP_PASS;
 
     count_stat(STAT_TOTAL);
     if (bpf_ringbuf_output(&events, &event, sizeof(event), 0) < 0)

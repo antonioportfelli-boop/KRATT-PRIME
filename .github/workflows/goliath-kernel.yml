@@ -1,0 +1,28 @@
+name: GOLIATH Kernel Rust checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/goliath-kernel/**"
+      - ".github/workflows/goliath-kernel.yml"
+  push:
+    branches:
+      - "feature/hardware-aware-runtime-v0.2.0-2026-11-07"
+    paths:
+      - "packages/goliath-kernel/**"
+      - ".github/workflows/goliath-kernel.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust-tests:
+    name: Rust unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run GOLIATH Kernel tests
+        run: cargo test --manifest-path packages/goliath-kernel/Cargo.toml --locked
