@@ -102,3 +102,45 @@ test("operation risk classes separate reads from side effects", () => {
   assert.equal(classifyLinuxAction("ip.route.flush"), "IRREVERSIBLE");
   assert.equal(classifyLinuxAction("unknown.shell.operation"), "IRREVERSIBLE");
 });
+
+
+test("capability probe failures degrade to unavailable instead of aborting collection", () => {
+  const report = collectLinuxDiagnostics({
+    platform: "linux",
+    commandAvailable: () => { throw new Error("PATH probe failed"); },
+    readFileSync: () => { throw new Error("os-release unavailable"); },
+    existsSync: () => { throw new Error("filesystem probe failed"); },
+    readdirSync: () => { throw new Error("directory probe failed"); }
+  });
+
+  assert.equal(report.state, "COLLECTED_READ_ONLY");
+  assert.ok(report.commands.every(item => item.state === "UNAVAILABLE"));
+  assert.deepEqual(report.packageManagers, []);
+  assert.deepEqual(report.editors, []);
+  assert.deepEqual(report.developerTools, []);
+  assert.equal(report.networkManagerConfig.mainConfigPresent, false);
+  assert.equal(report.networkManagerConfig.dropInDirectoryPresent, false);
+  assert.deepEqual(report.networkManagerConfig.dropInFiles, []);
+});
+
+test("one command runner exception is isolated to its diagnostic record", () => {
+  let calls = 0;
+  const report = collectLinuxDiagnostics({
+    platform: "linux",
+    commandAvailable: () => true,
+    runner: () => {
+      calls += 1;
+      if (calls === 1) throw new Error("simulated spawn failure");
+      return { status: 0, stdout: "ok", stderr: "", error: null };
+    },
+    readFileSync: () => "",
+    existsSync: () => false,
+    readdirSync: () => []
+  });
+
+  assert.equal(report.state, "COLLECTED_READ_ONLY");
+  assert.equal(report.commands[0].state, "ERROR");
+  assert.match(report.commands[0].stderr, /simulated spawn failure/);
+  assert.ok(report.commands.slice(1).every(item => item.state === "OK"));
+  assert.equal(report.commands.length, LINUX_DIAGNOSTIC_COMMANDS.length);
+});
