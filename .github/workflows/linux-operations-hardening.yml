@@ -1,0 +1,35 @@
+name: KRATT Linux Operations hardening checks
+
+on:
+  push:
+    branches:
+      - fix/p1-linux-collector-failure-isolation-2026-11-07
+    paths:
+      - "packages/kratt-core/src/linux-operations.mjs"
+      - "packages/kratt-core/test/linux-operations.test.mjs"
+      - ".github/workflows/linux-operations-hardening.yml"
+  pull_request:
+    branches:
+      - feature/hardware-aware-runtime-v0.2.0-2026-11-07
+    paths:
+      - "packages/kratt-core/src/linux-operations.mjs"
+      - "packages/kratt-core/test/linux-operations.test.mjs"
+      - ".github/workflows/linux-operations-hardening.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-operations-hardening:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax-check Linux Operations
+        run: node --check packages/kratt-core/src/linux-operations.mjs
+      - name: Run focused Linux Operations tests
+        run: node --test packages/kratt-core/test/linux-operations.test.mjs
+      - name: Run complete KRATT Core contract suite
+        run: node --test packages/kratt-core/test/*.test.mjs
