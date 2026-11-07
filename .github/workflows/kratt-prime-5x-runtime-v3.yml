@@ -6,12 +6,16 @@ on:
       - feature/kratt-prime-5x-runtime-v3-2026-11-07
     paths:
       - "packages/kratt-core/**"
+      - "packages/goliath-kernel/**"
+      - "docs/runtime/**"
       - ".github/workflows/kratt-prime-5x-runtime-v3.yml"
   pull_request:
     branches:
       - feature/hardware-aware-runtime-v0.2.0-2026-11-07
     paths:
       - "packages/kratt-core/**"
+      - "packages/goliath-kernel/**"
+      - "docs/runtime/**"
       - ".github/workflows/kratt-prime-5x-runtime-v3.yml"
 
 permissions:

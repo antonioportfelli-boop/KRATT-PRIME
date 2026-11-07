@@ -26,3 +26,18 @@ The initial BPF slice parses IPv4 options using IHL and IPv6 base headers with d
 `cargo test --manifest-path packages/goliath-kernel/Cargo.toml`
 
 The eBPF C object is not built by this crate's Cargo workflow. It requires a Linux BPF toolchain, generated `vmlinux.h`, target-specific build steps, and verifier testing on supported kernels.
+## Kernel and BPF compatibility gates
+
+- The ring-buffer map used by this sample requires Linux kernel 5.8 or later. Capacity must be a power of two and satisfy the target page-size constraints.
+- There is no Perf Event Array fallback in this slice. On kernels without ring-buffer support, a loader must report telemetry as unavailable.
+- CO-RE requires compatible BTF data, normally exposed at /sys/kernel/btf/vmlinux. BTF portability does not guarantee that every helper, map type or XDP attach mode exists on the target kernel.
+- Verifier acceptance is required for each supported kernel/configuration. It is not a substitute for kernel patching, threat review or runtime observation.
+- Common verifier constraints include a 512-byte BPF stack. The one-million complexity budget applies to kernels from 5.2 onward; older kernels have lower limits.
+- Newer Aya releases deprecate Bpf and BpfLogger in favour of Ebpf and EbpfLogger. A future loader must pin a reviewed Aya release and use its supported API.
+- Generic, native and offloaded XDP modes have different driver/hardware requirements. This sample only observes and returns XDP_PASS.
+
+References:
+- https://docs.kernel.org/bpf/ringbuf.html
+- https://docs.kernel.org/bpf/verifier.html
+- https://aya-rs.dev/book/
+- https://aya-rs.dev/book/programs/xdp.html
