@@ -1,0 +1,42 @@
+name: KRATT PRIME 5x Runtime v3 contract checks
+
+on:
+  push:
+    branches:
+      - feature/kratt-prime-5x-runtime-v3-2026-11-07
+    paths:
+      - "packages/kratt-core/**"
+      - "packages/goliath-kernel/**"
+      - "docs/runtime/**"
+      - ".github/workflows/kratt-prime-5x-runtime-v3.yml"
+  pull_request:
+    branches:
+      - feature/hardware-aware-runtime-v0.2.0-2026-11-07
+    paths:
+      - "packages/kratt-core/**"
+      - "packages/goliath-kernel/**"
+      - "docs/runtime/**"
+      - ".github/workflows/kratt-prime-5x-runtime-v3.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  core-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax-check new runtime modules
+        run: |
+          node --check packages/kratt-core/src/adapter-registry.mjs
+          node --check packages/kratt-core/src/evidence-ledger.mjs
+          node --check packages/kratt-core/src/template-registry.mjs
+          node --check packages/kratt-core/src/workflow-orchestrator.mjs
+          node --check packages/kratt-core/src/adaptive-bootstrap.mjs
+          node --check packages/kratt-core/src/runtime-orchestrator.mjs
+          node --check packages/kratt-core/src/metrics.mjs
+      - name: Run complete KRATT Core tests
+        run: node --test packages/kratt-core/test/*.test.mjs

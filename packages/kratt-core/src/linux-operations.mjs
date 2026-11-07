@@ -29,7 +29,11 @@ export const LINUX_DIAGNOSTIC_COMMANDS = Object.freeze([
   command("service.networkmanager", "systemctl", ["is-active", "NetworkManager"], "Read NetworkManager service state"),
   command("service.systemd_networkd", "systemctl", ["is-active", "systemd-networkd"], "Read systemd-networkd service state"),
   command("service.connman", "systemctl", ["is-active", "connman"], "Read ConnMan service state"),
-  command("netctl.version", "netctl", ["--version"], "Detect Arch netctl tool without listing private profile names")
+  command("netctl.version", "netctl", ["--version"], "Detect Arch netctl tool without listing private profile names"),
+  command("system.kernel", "uname", ["-srm"], "Read kernel identity"),
+  command("system.cpu_count", "getconf", ["_NPROCESSORS_ONLN"], "Read online CPU count"),
+  command("system.cpu.details", "lscpu", ["--json"], "Read CPU topology metadata"),
+  command("system.memory", "free", ["-b"], "Read memory capacity and availability")
 ]);
 
 export const LINUX_ACTION_POLICY = Object.freeze({
@@ -212,6 +216,7 @@ export function collectLinuxDiagnostics(options = {}) {
   return Object.freeze({
     schemaVersion: LINUX_OPERATIONS_VERSION,
     state: "COLLECTED_READ_ONLY",
+    collectedAt: new Date().toISOString(),
     platform,
     osRelease: readOsRelease(options.readFileSync),
     packageManagers: Object.freeze(packageManagers),
