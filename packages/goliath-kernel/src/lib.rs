@@ -89,12 +89,18 @@ impl KineticResonanceEngine {
 
     pub fn update_config(&mut self, config: DynamicConfig) -> Result<(), &'static str> {
         config.validate()?;
+        if !(config.beta * self.vortex_angle_diff).is_finite() {
+            return Err("vortex impact would overflow");
+        }
         self.config = config;
         Ok(())
     }
 
     pub fn update_vortex_angle_diff(&mut self, new_diff: f64) -> Result<(), &'static str> {
         if !new_diff.is_finite() { return Err("vortex angle difference must be finite"); }
+        if !(self.config.beta * new_diff).is_finite() {
+            return Err("vortex impact would overflow");
+        }
         self.vortex_angle_diff = new_diff;
         Ok(())
     }
@@ -107,6 +113,11 @@ impl KineticResonanceEngine {
         if !input.is_finite() { return Err("kinetic input overflowed"); }
         let next = self.config.alpha * self.kinetic_pressure + (1.0 - self.config.alpha) * input;
         if !next.is_finite() { return Err("kinetic pressure overflowed"); }
+        let modulation = (self.resonance_freq as f64).rem_euclid(self.config.modulation_const)
+            / self.config.modulation_const;
+        if !(next * (1.0 + modulation)).is_finite() {
+            return Err("resonance score overflowed");
+        }
         self.last_kinetic_pressure = self.kinetic_pressure;
         self.kinetic_pressure = next;
         Ok(())
@@ -174,6 +185,31 @@ mod tests {
     fn rejects_non_finite_input() {
         let mut engine = KineticResonanceEngine::new(1, DynamicConfig::default()).unwrap();
         assert!(engine.update_kinetic_pressure(f64::NAN, 1.0).is_err());
+    }
+
+
+
+    #[test]
+    fn rejects_vortex_impact_overflow_without_mutating_state() {
+        let config = DynamicConfig { beta: 2.0, ..Default::default() };
+        let mut engine = KineticResonanceEngine::new(128, config).unwrap();
+        assert!(engine.update_vortex_angle_diff(f64::MAX).is_err());
+        assert_eq!(engine.snapshot().vortex_impact, 0.0);
+
+        engine.update_vortex_angle_diff(2.0).unwrap();
+        let overflowing = DynamicConfig { beta: f64::MAX, ..Default::default() };
+        assert!(engine.update_config(overflowing).is_err());
+        assert_eq!(engine.snapshot().vortex_impact, 4.0);
+    }
+
+    #[test]
+    fn rejects_resonance_score_overflow_before_committing_pressure() {
+        let config = DynamicConfig { alpha: 0.0, ..Default::default() };
+        let mut engine = KineticResonanceEngine::new(1023, config).unwrap();
+        assert!(engine.update_kinetic_pressure(1.0e308, 1.2).is_err());
+        assert_eq!(engine.snapshot().kinetic_pressure, 0.0);
+        assert_eq!(engine.snapshot().previous_pressure, 0.0);
+        assert!(engine.snapshot().resonance_score.is_finite());
     }
 
     #[test]
