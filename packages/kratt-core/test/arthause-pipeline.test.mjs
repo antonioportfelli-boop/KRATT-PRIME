@@ -1,0 +1,3 @@
+import test from "node:test"; import assert from "node:assert/strict"; import { ArthausePipeline } from "../src/arthause-pipeline.mjs";
+test("prepares a typed non-executable template job",()=>{const p=new ArthausePipeline();const result=p.prepare({jobId:"job-001",templateId:"workflow-task.v1",values:{taskId:"task-1",role:"designer",objective:"create asset",sourceRevision:"abc123",dependencies:[],acceptanceCriteria:["review"],sideEffectClass:"READ_ONLY"}});assert.equal(result.ok,true);assert.equal(result.manifest.generationStarted,false);});
+test("rejects unsafe source references",()=>{const r=new ArthausePipeline().prepare({jobId:"job-001",templateId:"workflow-task.v1",values:{},sourceRefs:["https://evil"]});assert.equal(r.ok,false);});
