@@ -127,15 +127,21 @@ function readOsRelease(readFileSync = fs.readFileSync) {
 function readNetworkManagerConfigMetadata(existsSync = fs.existsSync, readdirSync = fs.readdirSync) {
   const main = "/etc/NetworkManager/NetworkManager.conf";
   const dropin = "/etc/NetworkManager/conf.d";
+  const safeExists = target => {
+    try { return Boolean(existsSync(target)); } catch { return false; }
+  };
   let dropins = [];
   try {
-    dropins = readdirSync(dropin).filter(name => name.endsWith(".conf")).sort().slice(0, 100);
+    dropins = readdirSync(dropin)
+      .filter(name => typeof name === "string" && name.endsWith(".conf"))
+      .sort()
+      .slice(0, 100);
   } catch {
-    // A missing or inaccessible directory is represented as an empty list.
+    // A missing, inaccessible, or failing directory probe is represented as empty.
   }
   return Object.freeze({
-    mainConfigPresent: existsSync(main),
-    dropInDirectoryPresent: existsSync(dropin),
+    mainConfigPresent: safeExists(main),
+    dropInDirectoryPresent: safeExists(dropin),
     dropInFiles: Object.freeze(dropins),
     contentsRead: false,
     connectionProfilesRead: false
@@ -165,7 +171,11 @@ export function collectLinuxDiagnostics(options = {}) {
   }
 
   const env = options.env ?? process.env;
-  const commandAvailable = options.commandAvailable ?? ((name) => defaultCommandAvailable(name, env));
+  const availabilityProbe = options.commandAvailable ?? ((name) => defaultCommandAvailable(name, env));
+  // One broken capability probe must not abort the complete read-only report.
+  const commandAvailable = name => {
+    try { return Boolean(availabilityProbe(name)); } catch { return false; }
+  };
   const runner = options.runner ?? ((executable, args) => spawnSync(executable, args, {
     encoding: "utf8",
     shell: false,
