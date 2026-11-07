@@ -50,6 +50,7 @@ test("collector invokes only fixed commands with shell-free runner", () => {
   assert.equal(report.privilegedOperationsPerformed, false);
   assert.equal(report.osRelease.ID, "debian");
   assert.equal(report.osRelease.VERSION_ID, "13");
+  assert.ok(Array.isArray(report.developerTools));
   assert.deepEqual(report.networkManagerConfig.dropInFiles, ["10-goliath.conf"]);
   assert.equal(report.networkManagerConfig.contentsRead, false);
   assert.equal(report.commands.length, LINUX_DIAGNOSTIC_COMMANDS.length);

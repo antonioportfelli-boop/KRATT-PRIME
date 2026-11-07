@@ -206,6 +206,8 @@ export function collectLinuxDiagnostics(options = {}) {
     .filter(available);
   const editors = ["nano", "micro", "vim", "vi"]
     .filter(available);
+  const developerTools = ["bash", "shellcheck", "tmux", "man", "tldr"]
+    .filter(available);
 
   return Object.freeze({
     schemaVersion: LINUX_OPERATIONS_VERSION,
@@ -214,6 +216,7 @@ export function collectLinuxDiagnostics(options = {}) {
     osRelease: readOsRelease(options.readFileSync),
     packageManagers: Object.freeze(packageManagers),
     editors: Object.freeze(editors),
+    developerTools: Object.freeze(developerTools),
     networkManagerConfig: readNetworkManagerConfigMetadata(options.existsSync, options.readdirSync),
     commands: Object.freeze(commands),
     privacy: Object.freeze({
