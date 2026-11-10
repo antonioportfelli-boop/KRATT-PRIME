@@ -80,15 +80,21 @@ export function createTelegramControlPlane({
   allowedArchitectUserIds = [],
   webhookSecret,
   verifyApproval,
-  persistIntake = async () => true,
-  persistDecision = async () => true,
+  store,
+  persistIntake,
+  persistDecision,
 } = {}) {
   if (typeof now !== "function") throw new TypeError("TELEGRAM_TRUSTED_CLOCK_REQUIRED");
   if (!Array.isArray(allowedArchitectUserIds) ||
       !allowedArchitectUserIds.every(id => typeof id === "string" && /^[0-9]{1,24}$/.test(id))) {
     throw new TypeError("TELEGRAM_ARCHITECT_ALLOWLIST_INVALID");
   }
-  if (typeof persistIntake !== "function" || typeof persistDecision !== "function") throw new TypeError("TELEGRAM_PERSISTENCE_ADAPTER_INVALID");
+  if (store && (!["claimUpdate","persistIntake","completeUpdate","releaseUpdate","saveReviewRequest","getReviewRequest","claimReviewRequest","releaseReviewRequest","cancelReviewRequest","persistDecision","appendAuditEvent","snapshot"].every(key => typeof store[key] === "function"))) {
+    throw new TypeError("TELEGRAM_DURABLE_STORE_INVALID");
+  }
+  const saveIntake = persistIntake ?? store?.persistIntake?.bind(store);
+  const saveDecision = persistDecision ?? store?.persistDecision?.bind(store);
+  if (typeof saveIntake !== "function" || typeof saveDecision !== "function") throw new TypeError("TELEGRAM_PERSISTENCE_ADAPTER_REQUIRED");
 
   const architects = new Set(allowedArchitectUserIds);
   const configuredWebhookSecret = typeof webhookSecret === "string" && webhookSecret.length > 0 ? webhookSecret : null;
@@ -118,6 +124,7 @@ export function createTelegramControlPlane({
     };
     body.hash = digest(body);
     journal.push(frozen(body));
+    if (store && store.appendAuditEvent(body) !== true) throw new Error("TELEGRAM_AUDIT_PERSISTENCE_FAILED");
     return body;
   }
 
@@ -128,20 +135,32 @@ export function createTelegramControlPlane({
     const normalized = normalizeTelegramUpdate(update);
     if (normalized.status !== "OK") return normalized;
     const item = normalized.envelope;
-    const prior = updates.get(item.updateId);
-    if (prior) {
-      if (prior.payloadDigest !== item.payloadDigest) {
-        emit("TELEGRAM_UPDATE_REPLAY_MISMATCH", { updateId: item.updateId }, `telegram-update-${item.updateId}`);
-        return outcome("BLOCKED", "TELEGRAM_UPDATE_ID_PAYLOAD_MISMATCH");
-      }
-      return prior.result === null
-        ? outcome("PENDING", "TELEGRAM_UPDATE_PROCESSING", { updateId: item.updateId })
-        : outcome("DUPLICATE", "TELEGRAM_UPDATE_ALREADY_PROCESSED", { updateId: item.updateId, original: prior.result });
-    }
-
     const correlationId = `telegram-update-${item.updateId}`;
     const record = frozen({ ...item, receivedAt: timestamp(), correlationId, authenticationStatus: "VERIFIED" });
-    updates.set(item.updateId, { payloadDigest: item.payloadDigest, result: null });
+    let leaseToken = null;
+    if (store) {
+      const claim = store.claimUpdate(item.updateId, item.payloadDigest, record.receivedAt, Date.parse(record.receivedAt));
+      if (claim.status === "DUPLICATE") return outcome("DUPLICATE", "TELEGRAM_UPDATE_ALREADY_PROCESSED", { updateId: item.updateId, original: claim.result });
+      if (claim.status === "PENDING") return outcome("PENDING", "TELEGRAM_UPDATE_PROCESSING", { updateId: item.updateId });
+      if (claim.status === "MISMATCH") {
+        emit("TELEGRAM_UPDATE_REPLAY_MISMATCH", { updateId: item.updateId }, correlationId);
+        return outcome("BLOCKED", "TELEGRAM_UPDATE_ID_PAYLOAD_MISMATCH");
+      }
+      if (claim.status !== "CLAIMED") return outcome("ERROR", "TELEGRAM_UPDATE_DURABLE_CLAIM_FAILED");
+      leaseToken = claim.leaseToken;
+    } else {
+      const prior = updates.get(item.updateId);
+      if (prior) {
+        if (prior.payloadDigest !== item.payloadDigest) {
+          emit("TELEGRAM_UPDATE_REPLAY_MISMATCH", { updateId: item.updateId }, correlationId);
+          return outcome("BLOCKED", "TELEGRAM_UPDATE_ID_PAYLOAD_MISMATCH");
+        }
+        return prior.result === null
+          ? outcome("PENDING", "TELEGRAM_UPDATE_PROCESSING", { updateId: item.updateId })
+          : outcome("DUPLICATE", "TELEGRAM_UPDATE_ALREADY_PROCESSED", { updateId: item.updateId, original: prior.result });
+      }
+      updates.set(item.updateId, { payloadDigest: item.payloadDigest, result: null });
+    }
     if (item.text !== null && ["message", "channel_post", "edited_message", "business_message"].includes(item.updateKind)) {
       const intake = frozen({
         schemaVersion: "kratt-telegram-intake/v1",
@@ -158,9 +177,12 @@ export function createTelegramControlPlane({
         networkAccess: false,
       });
       let intakePersisted = false;
-      try { intakePersisted = await persistIntake(intake) === true; } catch { intakePersisted = false; }
+      try {
+        intakePersisted = await saveIntake(intake, { updateId: item.updateId, payloadDigest: item.payloadDigest, leaseToken }) === true;
+      } catch { intakePersisted = false; }
       if (!intakePersisted) {
-        updates.delete(item.updateId);
+        if (store) store.releaseUpdate({ updateId: item.updateId, leaseToken });
+        else updates.delete(item.updateId);
         return outcome("ERROR", "TELEGRAM_INTAKE_PERSISTENCE_FAILED");
       }
       intakes.push(intake);
@@ -169,9 +191,13 @@ export function createTelegramControlPlane({
       updates.get(item.updateId).result = result;
       return result;
     }
-    emit("TELEGRAM_UPDATE_ROUTED", { updateId: item.updateId, updateKind: item.updateKind }, correlationId);
     const result = outcome("OK", "TELEGRAM_UPDATE_ROUTED", { envelope: record });
-    updates.get(item.updateId).result = result;
+    if (store && store.completeUpdate({ updateId: item.updateId, payloadDigest: item.payloadDigest, leaseToken, result }) !== true) {
+      store.releaseUpdate({ updateId: item.updateId, leaseToken });
+      return outcome("ERROR", "TELEGRAM_UPDATE_COMPLETION_PERSISTENCE_FAILED");
+    }
+    emit("TELEGRAM_UPDATE_ROUTED", { updateId: item.updateId, updateKind: item.updateKind }, correlationId);
+    if (!store) updates.get(item.updateId).result = result;
     return result;
   }
 
@@ -181,8 +207,9 @@ export function createTelegramControlPlane({
     chatId,
     ttlMs = 5 * 60_000,
     policyVersion = "strict/v1",
+    chatType = "private",
   } = {}) {
-    if (!architects.has(String(actorTelegramUserId)) || !/^[0-9]{1,24}$/.test(String(chatId)) ||
+    if (!architects.has(String(actorTelegramUserId)) || !/^[0-9]{1,24}$/.test(String(chatId)) || chatType !== "private" ||
         !projection || typeof projection.claimId !== "string" ||
         typeof projection.claimDigest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(projection.claimDigest) ||
         typeof projection.evidenceSnapshotDigest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(projection.evidenceSnapshotDigest) ||
@@ -210,6 +237,7 @@ export function createTelegramControlPlane({
       expiresAt,
       state: "PENDING",
     });
+    if (store && store.saveReviewRequest(request) !== true) return outcome("ERROR", "TELEGRAM_REVIEW_REQUEST_PERSISTENCE_FAILED");
     requests.set(request.requestId, { request, consumed: false });
     emit("TELEGRAM_REVIEW_REQUEST_CREATED", { requestId: request.requestId, claimId: request.claimId, targetDigest: request.targetDigest }, request.requestId);
     return outcome("PENDING", "STRICT_ARCHITECT_DECISION_REQUIRED", { request });
@@ -228,7 +256,14 @@ export function createTelegramControlPlane({
     policyVersion,
     proof,
   } = {}) {
-    const entry = requests.get(requestId);
+    let entry = requests.get(requestId);
+    if (!entry && store) {
+      const stored = store.getReviewRequest(requestId);
+      if (stored) {
+        entry = { request: stored.request, consumed: stored.state === "CONSUMED" || stored.state === "CANCELLED", processing: stored.state === "PROCESSING" };
+        requests.set(requestId, entry);
+      }
+    }
     if (!entry) return outcome("NOT_FOUND", "TELEGRAM_APPROVAL_REQUEST_NOT_FOUND");
     const { request } = entry;
     if (entry.consumed) return decisions.has(requestId)
@@ -253,6 +288,10 @@ export function createTelegramControlPlane({
       return outcome("DENY", "TELEGRAM_APPROVAL_REQUEST_EXPIRED");
     }
 
+    if (store && store.claimReviewRequest(requestId) !== true) {
+      const stored = store.getReviewRequest(requestId);
+      return outcome("BLOCKED", stored?.state === "CONSUMED" ? "TELEGRAM_APPROVAL_REQUEST_CONSUMED" : "TELEGRAM_APPROVAL_ALREADY_IN_PROGRESS");
+    }
     const binding = frozen({
       requestId: request.requestId,
       nonce: request.nonce,
@@ -271,14 +310,19 @@ export function createTelegramControlPlane({
         evidenceSnapshotDigest !== request.evidenceSnapshotDigest ||
         rootDigest !== request.rootDigest ||
         policyVersion !== request.policyVersion) {
+      if (store) store.releaseReviewRequest(requestId);
       return outcome("BLOCKED", "TELEGRAM_APPROVAL_BINDING_MISMATCH");
     }
-    if (typeof verifyApproval !== "function") return outcome("DENY", "TELEGRAM_TRUSTED_APPROVAL_VERIFIER_UNAVAILABLE");
+    if (typeof verifyApproval !== "function") {
+      if (store) store.releaseReviewRequest(requestId);
+      return outcome("DENY", "TELEGRAM_TRUSTED_APPROVAL_VERIFIER_UNAVAILABLE");
+    }
     entry.processing = true;
     let verified = false;
     try { verified = await verifyApproval(proof, binding) === true; } catch { verified = false; }
     if (!verified) {
       entry.processing = false;
+      if (store) store.releaseReviewRequest(requestId);
       return outcome("DENY", "TELEGRAM_APPROVAL_PROOF_INVALID");
     }
 
@@ -296,10 +340,12 @@ export function createTelegramControlPlane({
       policyVersion: request.policyVersion,
       verifiedAt: timestamp(),
     });
+    const durableBinding = frozen({ ...binding, approvalProof: proof });
     let persisted = false;
-    try { persisted = await persistDecision(decisionRecord, binding) === true; } catch { persisted = false; }
+    try { persisted = await saveDecision(decisionRecord, durableBinding) === true; } catch { persisted = false; }
     if (!persisted) {
       entry.processing = false;
+      if (store) store.releaseReviewRequest(requestId);
       return outcome("ERROR", "TELEGRAM_DECISION_PERSISTENCE_FAILED");
     }
     entry.processing = false;
@@ -310,18 +356,27 @@ export function createTelegramControlPlane({
   }
 
   function cancelClaimReview({ requestId, actorTelegramUserId } = {}) {
-    const entry = requests.get(requestId);
+    let entry = requests.get(requestId);
+    if (!entry && store) {
+      const stored = store.getReviewRequest(requestId);
+      if (stored) {
+        entry = { request: stored.request, consumed: stored.state === "CONSUMED" || stored.state === "CANCELLED", processing: stored.state === "PROCESSING" };
+        requests.set(requestId, entry);
+      }
+    }
     if (!entry) return outcome("NOT_FOUND", "TELEGRAM_APPROVAL_REQUEST_NOT_FOUND");
     if (String(actorTelegramUserId) !== entry.request.actorTelegramUserId ||
         !architects.has(String(actorTelegramUserId))) return outcome("DENY", "TELEGRAM_CANCELLATION_ACTOR_MISMATCH");
     if (entry.consumed) return outcome("BLOCKED", "TELEGRAM_APPROVAL_REQUEST_TERMINAL");
     if (entry.processing) return outcome("BLOCKED", "TELEGRAM_APPROVAL_ALREADY_IN_PROGRESS");
+    if (store && store.cancelReviewRequest(requestId) !== true) return outcome("BLOCKED", "TELEGRAM_APPROVAL_REQUEST_TERMINAL");
     entry.consumed = true;
     emit("TELEGRAM_APPROVAL_CANCELLED", { requestId }, requestId);
     return outcome("OK", "TELEGRAM_APPROVAL_CANCELLED", { requestId });
   }
 
   function snapshot() {
+    if (store) return frozen(store.snapshot());
     return frozen({
       intakeCount: intakes.length,
       pendingReviews: [...requests.values()].filter(entry => !entry.consumed).map(entry => entry.request),
