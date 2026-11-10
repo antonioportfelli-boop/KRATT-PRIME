@@ -155,12 +155,14 @@ Widgets are subject to Telegram's chat/context limitations and production availa
 Core interfaces are dependency-injected:
 - `verifyWebhookSecret(received, expected)`
 - `normalizeTelegramUpdate(update)`
-- `createTelegramControlPlane({ now, verifyApproval, allowedArchitectUserIds })`
+- `createTelegramControlPlane({ now, verifyApproval, allowedArchitectUserIds, webhookSecret, store })`
+- `createSqliteTelegramStore(database)` for durable single-host SQLite state.
+- `createTrustedTelegramDecisionVerifier({ trustedApprovalKeys, now, authority })` for Ed25519 architect-signed review decisions.
 - `ingestAuthenticatedUpdate({ update, receivedSecret })` (async; intake persistence is injected through `persistIntake`)
 - `createClaimReviewRequest({ projection, actorTelegramUserId, chatId })`
 - `resolveClaimReview({ requestId, actorTelegramUserId, chatId, decision, reason, targetDigest, evidenceSnapshotDigest, rootDigest, policyVersion, proof })`
 - `cancelClaimReview({ requestId, actorTelegramUserId })`
-- persistence adapters: `persistIntake` and `persistDecision`; live deployments must also back update-ID idempotency and the audit journal with durable transactional storage.
+- persistence adapters: `persistIntake` and `persistDecision`; the feature-branch SQLite store now also persists update-ID idempotency, review requests, decisions, and hash-linked audit events transactionally. Multi-host operation still requires a shared transactional adapter.
 - transport adapter: `sendWidget`, `sendRichMessage`, `answerWidgetQuery`, `answerCallbackQuery` (implemented by a separately tested Telegram API client; no network call in core).
 
 ## 9. Observability
@@ -206,6 +208,16 @@ Acceptance requires test output and CI tied to exact commit SHA, review of the c
 TON wallet/gift operations, Telegram business account automation, automatic posting/publication, autonomous write permissions, unreviewed model-generated claim promotion, live connector activation, production webhook deployment.
 
 
-## 13. Implementation status at initial branch cut
+## 13. Implementation status — P0 durable authorization slice
 
-The initial feature-branch code is a local, dependency-injected kernel for webhook-secret comparison, update normalization, unreviewed text intake, review request binding, strict decision verification, persistence hooks, and hash-linked in-memory audit events. It does not yet contain a Telegram HTTP client, webhook server route, Widget HTML renderer, Rich Message renderer, durable database adapter, or Reflection Matrix writer. Those are follow-on implementation tasks and must not be represented as live or production-ready. The in-memory update deduplication map and journal are test/demo facilities only; production requires a durable transactional store and replay-safe persistence.
+Implemented on `feature/kratt-telegram-control-plane-v1`:
+- `createTrustedTelegramDecisionVerifier` verifies Ed25519 signatures against a deployment-supplied public-key registry. Each key is bound to one Telegram approver ID and the explicit `kratt.claim.review` authority.
+- The signed Telegram decision binds request ID, nonce, actor, private chat ID, claim ID, target/evidence/root digests, policy version, decision, reason, issue/expiry timestamps, approver, authority, and key ID.
+- Nonce consumption is deliberately not performed by the signature verifier. The SQLite store consumes the signed nonce, inserts the decision, transitions the review request to CONSUMED, and appends the audit event in one SQLite transaction.
+- `createSqliteTelegramStore` persists update IDs, payload digests, processing leases, unreviewed intake, review requests, decisions, and hash-linked audit events. File-backed restart tests cover durable update deduplication and decision/nonce persistence.
+- Update processing uses bounded leases. Same update ID with a different payload digest is blocked; duplicate completed updates are idempotent.
+- Audit events for intake, request creation, decisions, cancellation, and routed updates are committed with their corresponding durable state transition.
+
+The store is a **single-host SQLite adapter**. Multi-host deployments require a shared transactional store with equivalent atomicity. Database file location, backup, encryption-at-rest, retention, permissions, and operational key custody remain deployment responsibilities.
+
+Still not implemented: Telegram HTTP client, public webhook route, request rate limiter at the edge, actual Bot API 10.4 Widget HTML renderer, Rich Message renderer, live Telegram update polling/webhook activation, production key provisioning/rotation, canonical claim/evidence projection fetch, and Reflection Matrix CAS adapter. No live Telegram connection or production deployment is enabled.
