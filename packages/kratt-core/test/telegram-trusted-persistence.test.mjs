@@ -270,6 +270,26 @@ test("file-backed signed decision, audit and nonce remain consumed after databas
     assert.equal(snapshot.decisions.length, 1);
     assert.equal(snapshot.reviewRequests[0].state, "CONSUMED");
     assert.equal(snapshot.journal.some(event => event.type === "TELEGRAM_DECISION_PERSISTED"), true);
+    const restartedVerifier = createTrustedTelegramDecisionVerifier({ trustedApprovalKeys: [key], now: () => nowMs });
+    const restartedPlane = createTelegramControlPlane({
+      now: () => new Date(nowMs).toISOString(),
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: secret,
+      verifyApproval: restartedVerifier,
+      store,
+    });
+    const replay = await restartedPlane.resolveClaimReview({
+      requestId: pending.request.requestId,
+      actorTelegramUserId: "123456",
+      chatId: "123456",
+      decision: "APPROVE",
+      targetDigest: pending.request.targetDigest,
+      evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+      rootDigest: pending.request.rootDigest,
+      policyVersion: pending.request.policyVersion,
+      proof,
+    });
+    assert.equal(replay.status, "DUPLICATE");
     assert.equal(createSqliteNonceStore(database).consume(
       proof.key_id, proof.nonce, proof.approval_id, proof.expires_at, nowMs
     ), false);
