@@ -164,6 +164,7 @@ Core interfaces are dependency-injected:
 - `createTelegramReviewWidgetService({ controlPlane, store, botApiClient })` for private review widget delivery.
 - `createTelegramWidgetQueryHandler({ store, botApiClient })` for authenticated decision-intent capture.
 - `createTelegramApprovalSigningRequest({ request, intent, keyId, approvedBy, issuedAt })` for an external Ed25519 signer payload.
+- `createTelegramExternalSignerAdapter({ signer, keyId, approvedBy, verifyApproval })` for a hardware/OS-keystore/separate signer bridge. The signer receives only the canonical payload; private key material stays outside KRATT.
 - `renderTelegramEvidenceReport({ projection, generatedAt })` and `createTelegramEvidenceReporter({ botApiClient })` for persistent source-grounded Rich Message reports.
 - `ingestAuthenticatedUpdate({ update, receivedSecret })` (async; intake persistence is injected through `persistIntake`)
 - `createClaimReviewRequest({ projection, actorTelegramUserId, chatId })`
@@ -224,6 +225,7 @@ Implemented on `feature/kratt-telegram-control-plane-v1`:
 - `createSqliteTelegramStore` persists update IDs, payload digests, processing leases, unreviewed intake, review requests, decisions, and hash-linked audit events. File-backed restart tests cover durable update deduplication and decision/nonce persistence.
 - Update processing uses bounded leases. Same update ID with a different payload digest is blocked; duplicate completed updates are idempotent.
 - The SQLite ingress limiter stores only a salted hash of the socket peer address, never trusts forwarded headers, and fails closed on database or clock errors.
+- The external signer adapter sends only the exact canonical request-bound payload to the injected signer, then verifies the returned Ed25519 signature locally before allowing the approval gateway to persist it.
 - The claim projection service verifies the existing KRATT evidence-card digests, source-content digests, exact UTF-16 offsets and excerpt digests, and binds claim/evidence/source/root snapshots into one evidenceSnapshotDigest.
 - The webhook ingress handler requires POST + JSON, checks Telegram's secret-token header before parsing, requires an injected rate-limit decision, bounds request size, and maps processing states to retry-safe HTTP responses.
 - The Claim Review Widget is self-contained, HTML-escaped, compressed-size checked, private-chat only, non-shared, and uses short `TelegramWidget.request` action codes. It has no network access and does not collect free-form keyboard input; reject/contest reasons are selected from controlled reason codes.
