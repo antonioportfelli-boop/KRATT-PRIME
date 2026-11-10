@@ -300,5 +300,7 @@ updateClock();
 setInterval(updateClock, 1000);
 renderSignals();
 renderJournal();
-sealInitialJournal().then(renderJournal);
-refreshBackend();
+sealInitialJournal().then(() => {
+  renderJournal();
+  return refreshBackend();
+});
