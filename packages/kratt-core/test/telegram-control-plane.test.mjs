@@ -44,9 +44,9 @@ test("normalizes a text update without trusting its content", () => {
   assert.equal(result.envelope.actorTelegramUserId, "123456");
 });
 
-test("authenticated Telegram text becomes UNREVIEWED intake", () => {
+test("authenticated Telegram text becomes UNREVIEWED intake", async () => {
   const { plane } = makePlane();
-  const result = plane.ingestAuthenticatedUpdate({
+  const result = await plane.ingestAuthenticatedUpdate({
     receivedSecret: secret,
     update: { update_id: 1, message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "Candidate claim" } },
   });
@@ -55,13 +55,13 @@ test("authenticated Telegram text becomes UNREVIEWED intake", () => {
   assert.equal(result.intake.networkAccess, false);
 });
 
-test("duplicate update is idempotent and mismatched replay is blocked", () => {
+test("duplicate update is idempotent and mismatched replay is blocked", async () => {
   const { plane } = makePlane();
   const update = { update_id: 2, message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "first" } };
-  assert.equal(plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret }).status, "OK");
-  assert.equal(plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret }).status, "DUPLICATE");
+  assert.equal((await plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret })).status, "OK");
+  assert.equal((await plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret })).status, "DUPLICATE");
   const mismatch = { ...update, message: { ...update.message, text: "changed" } };
-  assert.equal(plane.ingestAuthenticatedUpdate({ update: mismatch, receivedSecret: secret }).status, "BLOCKED");
+  assert.equal((await plane.ingestAuthenticatedUpdate({ update: mismatch, receivedSecret: secret })).status, "BLOCKED");
 });
 
 test("strict review requires allowlisted architect and a private chat", () => {
@@ -162,4 +162,42 @@ test("successful decision is persisted once and exact replay is idempotent", asy
   assert.equal((await plane.resolveClaimReview(args)).status, "OK");
   assert.equal((await plane.resolveClaimReview(args)).status, "DUPLICATE");
   assert.equal(persisted.length, 1);
+});
+
+test("intake persistence failure does not acknowledge or retain the update", async () => {
+  const { plane } = makePlane({ persistIntake: async () => false });
+  const update = { update_id: 90, message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "not persisted" } };
+  const result = await plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret });
+  assert.equal(result.status, "ERROR");
+  assert.equal(result.reason, "TELEGRAM_INTAKE_PERSISTENCE_FAILED");
+  assert.equal(plane.snapshot().intakeCount, 0);
+});
+
+test("concurrent approval attempts cannot both enter verification", async () => {
+  let release;
+  let entered = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { plane } = makePlane({
+    verifyApproval: async () => { entered += 1; await gate; return true; },
+  });
+  const { request } = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+  const args = {
+    requestId: request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    decision: "APPROVE",
+    targetDigest: request.targetDigest,
+    evidenceSnapshotDigest: request.evidenceSnapshotDigest,
+    rootDigest: request.rootDigest,
+    policyVersion: request.policyVersion,
+    proof: "trusted-proof",
+  };
+  const first = plane.resolveClaimReview(args);
+  await Promise.resolve();
+  const second = await plane.resolveClaimReview(args);
+  assert.equal(second.status, "BLOCKED");
+  assert.equal(second.reason, "TELEGRAM_APPROVAL_ALREADY_IN_PROGRESS");
+  assert.equal(entered, 1);
+  release();
+  assert.equal((await first).status, "OK");
 });
