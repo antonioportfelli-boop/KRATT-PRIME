@@ -308,9 +308,10 @@ test("WidgetQuery rejects wrong actor and unsupported shared-widget decision con
   const database = new DatabaseSync(":memory:");
   try {
     const store = createSqliteTelegramStore(database);
+    let sharedAcknowledged = false;
     const botApiClient = {
       async sendClaimReviewWidget() { return { message_id: 112 }; },
-      async answerWidgetQuery() { return true; },
+      async answerWidgetQuery() { sharedAcknowledged = true; return true; },
       async editMessageWidgetData() { return true; },
     };
     const handler = createTelegramWidgetQueryHandler({ store, botApiClient });
@@ -354,6 +355,7 @@ test("WidgetQuery rejects wrong actor and unsupported shared-widget decision con
       },
     });
     assert.equal(shared.status, "DENY");
+    assert.equal(sharedAcknowledged, true);
   } finally { database.close(); }
 });
 
