@@ -59,7 +59,7 @@ function signalMarkup(item) {
     <div class="signal-body">
       <div class="signal-meta"><b>${escapeHtml(item.source)} · ${escapeHtml(item.category)}</b><span>${escapeHtml(item.age)}</span></div>
       <h3>${escapeHtml(item.title)}</h3>
-      <div class="signal-tags"><span class="tag ${categoryClass}">${escapeHtml(item.category)}</span><span class="tag">${item.claims} claim${item.claims===1?"":"s"}</span><span class="tag ${stateClass}">${stateLabel}</span></div>
+      <div class="signal-tags"><span class="tag ${categoryClass}">${escapeHtml(item.category)}</span><span class="tag">${item.claims} claim${item.claims===1?"":"s"}</span>${item.segments ? `<span class="tag tag-violet">${item.segments} segments</span>` : ""}<span class="tag ${stateClass}">${stateLabel}</span></div>
     </div>
     <div class="signal-score ${item.state==="unverified"?"score-muted":""}"><b>${item.relevance.toFixed(2)}</b><small>relevance</small></div>
   </article>`;
@@ -206,6 +206,8 @@ $("#intake-form")?.addEventListener("submit", async event => {
   event.preventDefault();
   const label = $("#intake-label").value.trim();
   const sourceType = $("#intake-source").value;
+  const sourceUrl = $("#intake-source-url").value.trim();
+  const content = $("#intake-content").value;
   if (!label) return;
   const apiSource = ({
     "Manual URL list":"manual_url",
@@ -213,22 +215,34 @@ $("#intake-form")?.addEventListener("submit", async event => {
     "JSON / CSV import":"json_csv",
     "Telegram adapter (not connected)":"telegram_pending"
   })[sourceType] ?? "manual_url";
+  if (content.trim() && !backendConnected) {
+    toast("Automatic segmentation requires the KRATT local API. Start the loopback server first.");
+    return;
+  }
+  let segmentation = null;
   if (backendConnected) {
     try {
       const response = await fetch("/api/intake", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify({ label, sourceType:apiSource, actor:"architect" })
+        body:JSON.stringify({
+          label,
+          sourceType:apiSource,
+          sourceUrl:sourceUrl || null,
+          content:content.trim() || undefined,
+          actor:"architect"
+        })
       });
       const payload = await response.json();
       if (!response.ok || payload.status !== "OK") {
         toast("Local API rejected the intake: " + (payload.reason ?? payload.error ?? "UNKNOWN"));
         return;
       }
+      segmentation = payload.segmentation;
       await refreshBackend();
     } catch {
       backendConnected = false;
-      toast("Local API became unavailable. Intake was not sent; switch to local preview mode.");
+      toast("Local API became unavailable. Intake was not recorded.");
       return;
     }
   } else {
@@ -242,6 +256,7 @@ $("#intake-form")?.addEventListener("submit", async event => {
     age:"just now",
     relevance:.50,
     claims:0,
+    segments:segmentation?.segmentCount ?? 0,
     state:"unverified",
     tags:["New","Unreviewed"]
   };
@@ -250,7 +265,10 @@ $("#intake-form")?.addEventListener("submit", async event => {
   renderSignals();
   dialog.close();
   $("#intake-label").value = "";
-  toast(backendConnected ? "Intake recorded by the loopback KRATT API. No external source was contacted." : "Local intake preview added. No external source was contacted.");
+  $("#intake-source-url").value = "";
+  $("#intake-content").value = "";
+  const segmentMessage = segmentation ? ` · ${segmentation.segmentCount} knowledge segments created` : "";
+  toast((backendConnected ? "Intake recorded by the loopback KRATT API" : "Local intake preview added") + segmentMessage + ". No external source was contacted.");
   if (activeView === "signals") renderSignals();
 });
 
