@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createSqliteNonceStore } from "../../kratt-core/src/sqlite-nonce-store.mjs";
 
 function stable(value) {
@@ -130,7 +130,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
         typeof receivedAt !== "string" || !Number.isFinite(Date.parse(receivedAt)) || !Number.isFinite(nowMs)) {
       return Object.freeze({ status: "INVALID" });
     }
-    const leaseToken = `telegram-lease:${hash({ updateId, payloadDigest, nowMs, salt: Math.random() })}`;
+    const leaseToken = `telegram-lease:${randomUUID()}`;
     try {
       return transaction(() => {
         const inserted = statements.insertUpdate.run(updateId, payloadDigest, leaseToken, nowMs + leaseMs, receivedAt);
@@ -150,10 +150,10 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     try {
       return transaction(() => {
         const inserted = statements.insertIntake.run(intake.candidateId, updateId, stable(intake));
-        if (Number(inserted.changes) !== 1) return false;
+        if (Number(inserted.changes) !== 1) throw new Error("TELEGRAM_INTAKE_DUPLICATE");
         const result = { status: "OK", reason: "TELEGRAM_INTAKE_RECORDED_UNREVIEWED", intake };
         const completed = statements.completeUpdate.run(stable(result), updateId, payloadDigest, leaseToken);
-        if (Number(completed.changes) !== 1) return false;
+        if (Number(completed.changes) !== 1) throw new Error("TELEGRAM_UPDATE_LEASE_LOST");
         return true;
       });
     } catch { return false; }
@@ -200,11 +200,11 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     try {
       return transaction(() => {
         const current = statements.getRequest.get(record.requestId);
-        if (!current || current.state !== "PROCESSING") return false;
+        if (!current || current.state !== "PROCESSING") throw new Error("TELEGRAM_REVIEW_NOT_PROCESSING");
         const consumed = nonce.consume(proof.key_id, proof.nonce, proof.approval_id, proof.expires_at, Date.parse(record.verifiedAt));
-        if (consumed !== true) return false;
+        if (consumed !== true) throw new Error("TELEGRAM_APPROVAL_NONCE_REPLAYED");
         statements.insertDecision.run(record.decisionId, record.requestId, stable(record));
-        if (Number(statements.consumeRequest.run(record.requestId).changes) !== 1) return false;
+        if (Number(statements.consumeRequest.run(record.requestId).changes) !== 1) throw new Error("TELEGRAM_REVIEW_STATE_CONFLICT");
         return true;
       });
     } catch { return false; }
