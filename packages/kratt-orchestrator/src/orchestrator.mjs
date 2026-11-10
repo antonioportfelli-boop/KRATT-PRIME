@@ -81,7 +81,7 @@ function result(status, reason, extra = {}) {
  * create network connections, infer trust from connector names, or persist
  * credentials. All writes require a request-scoped approval verifier.
  */
-export function createOrchestrator({ now = () => new Date().toISOString(), verifyApproval } = {}) {
+export function createOrchestrator({ now = () => new Date().toISOString(), verifyApproval, verifyAdapterEvidence } = {}) {
   if (typeof now !== "function") throw new TypeError("TRUSTED_CLOCK_REQUIRED");
 
   const adapters = new Map();
@@ -156,9 +156,20 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     if (!TRANSITIONS[current.state].includes(nextState)) {
       return result("BLOCKED", "ILLEGAL_ADAPTER_STATE_TRANSITION", { currentState: current.state, requestedState: nextState });
     }
-    if (nextState === "VERIFIED_READ_ONLY" && current.state === "CONNECTED_UNVERIFIED" &&
-        (!evidence || evidence.verified !== true || typeof evidence.verifierId !== "string" || !evidence.verifierId.trim())) {
-      return result("DENY", "TRUSTED_ADAPTER_VERIFICATION_REQUIRED");
+    if (nextState === "VERIFIED_READ_ONLY" && current.state === "CONNECTED_UNVERIFIED") {
+      if (typeof verifyAdapterEvidence !== "function") {
+        return result("DENY", "TRUSTED_ADAPTER_VERIFIER_UNAVAILABLE");
+      }
+      if (!evidence || typeof evidence.verifierId !== "string" || !evidence.verifierId.trim()) {
+        return result("DENY", "TRUSTED_ADAPTER_VERIFICATION_REQUIRED");
+      }
+      let verified = false;
+      try {
+        verified = verifyAdapterEvidence(evidence, Object.freeze({ adapterId, adapter: current })) === true;
+      } catch {
+        verified = false;
+      }
+      if (!verified) return result("DENY", "TRUSTED_ADAPTER_VERIFICATION_REQUIRED");
     }
     const updated = freeze({
       ...current,
