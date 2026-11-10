@@ -41,7 +41,7 @@ function setup() {
     verifyApproval,
     store,
   });
-  return { database, store, plane, privateKey, nowMs };
+  return { database, store, plane, privateKey, publicKey, nowMs };
 }
 
 function signedProof(request, privateKey, nowMs, overrides = {}) {
@@ -140,22 +140,47 @@ test("tampered Ed25519 decision is denied and review remains retryable", async (
   assert.equal(store.getReviewRequest(pending.request.requestId).state, "PENDING");
 });
 
-test("Telegram review verifier rejects unknown keys, authority substitution and expired proof", () => {
-  const { plane, privateKey, nowMs } = setup();
+test("Telegram review verifier rejects forged, unknown-key, authority-swapped and expired proofs", () => {
+  const { plane, privateKey, publicKey, nowMs } = setup();
   const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
   const verifier = createTrustedTelegramDecisionVerifier({
     trustedApprovalKeys: [{
       key_id: "telegram-review-key-1",
       approver_id: "123456",
-      public_key_pem: privateKey.export({ type: "pkcs8", format: "pem" }),
+      public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
       authorities: [authority],
     }],
     now: () => nowMs,
   });
-  assert.equal(typeof verifier, "function");
-  const proof = signedProof(pending.request, privateKey, nowMs, {
-    authority: "other.authority",
+  const request = pending.request;
+  const binding = {
+    requestId: request.requestId,
+    nonce: request.nonce,
+    actorTelegramUserId: request.actorTelegramUserId,
+    chatId: request.chatId,
+    claimId: request.claimId,
+    targetDigest: request.targetDigest,
+    evidenceSnapshotDigest: request.evidenceSnapshotDigest,
+    rootDigest: request.rootDigest,
+    policyVersion: request.policyVersion,
+    decision: "APPROVE",
+    reason: "",
+    expiresAt: request.expiresAt,
+  };
+  const valid = signedProof(request, privateKey, nowMs);
+  assert.equal(verifier(valid, binding), true);
+
+  const forged = { ...valid, reason: "tampered after signing" };
+  assert.equal(verifier(forged, binding), false);
+
+  const unknownKey = signedProof(request, privateKey, nowMs, { key_id: "untrusted-key" });
+  assert.equal(verifier(unknownKey, binding), false);
+
+  const wrongAuthority = signedProof(request, privateKey, nowMs, { authority: "other.authority" });
+  assert.equal(verifier(wrongAuthority, binding), false);
+
+  const expired = signedProof(request, privateKey, nowMs, {
     issued_at: new Date(nowMs - 6 * 60_000).toISOString(),
   });
-  assert.equal(proof.signature.length > 0, true);
+  assert.equal(verifier(expired, binding), false);
 });
