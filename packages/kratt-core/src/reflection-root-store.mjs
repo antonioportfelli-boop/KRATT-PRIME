@@ -227,6 +227,10 @@ export function createSqliteReflectionRootStore(database, {
       previous_hash TEXT,
       event_hash TEXT NOT NULL UNIQUE
     );
+    CREATE TABLE IF NOT EXISTS kratt_reflection_schema_migrations (
+      version TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
   `);
   const getRow = database.prepare("SELECT version,digest,document_json,updated_at FROM kratt_reflection_root WHERE singleton=1");
   const insertRoot = database.prepare("INSERT OR IGNORE INTO kratt_reflection_root(singleton,version,digest,document_json,updated_at) VALUES(1,?,?,?,?)");
@@ -235,6 +239,8 @@ export function createSqliteReflectionRootStore(database, {
   const insertApplied = database.prepare("INSERT INTO kratt_reflection_applied_proposals(proposal_id,proposal_digest,decision_id,applied_root_version,applied_root_digest,applied_at) VALUES(?,?,?,?,?,?)");
   const lastAudit = database.prepare("SELECT sequence,event_hash FROM kratt_reflection_audit ORDER BY sequence DESC LIMIT 1");
   const insertAudit = database.prepare("INSERT INTO kratt_reflection_audit(sequence,event_id,event_json,previous_hash,event_hash) VALUES(?,?,?,?,?)");
+  const insertMigration = database.prepare("INSERT OR IGNORE INTO kratt_reflection_schema_migrations(version,applied_at) VALUES(?,?)");
+  const getMigrations = database.prepare("SELECT version,applied_at FROM kratt_reflection_schema_migrations ORDER BY version");
 
   function transaction(fn) {
     database.exec("BEGIN IMMEDIATE");
@@ -257,6 +263,9 @@ export function createSqliteReflectionRootStore(database, {
   }
 
   transaction(() => {
+    const migrationAt = now();
+    if (typeof migrationAt !== "string" || !Number.isFinite(Date.parse(migrationAt))) throw new Error("REFLECTION_ROOT_MIGRATION_CLOCK_INVALID");
+    insertMigration.run("001_root_cas_v1", migrationAt);
     if (!getRow.get()) {
       if (!initialSnapshot) throw new Error("REFLECTION_ROOT_INITIAL_SNAPSHOT_REQUIRED");
       const seed = createRootSnapshot(initialSnapshot.document, { version: initialSnapshot.version ?? 0, createdAt: initialSnapshot.createdAt ?? now() });
@@ -349,5 +358,9 @@ export function createSqliteReflectionRootStore(database, {
     } catch { return Object.freeze({ ok: false, reason: "REFLECTION_AUDIT_VERIFY_FAILED" }); }
   }
 
-  return Object.freeze({ getSnapshot, applyProposal, listAudit, verifyAudit });
+  function listMigrations() {
+    return getMigrations.all().map(row => Object.freeze({ version: row.version, appliedAt: row.applied_at }));
+  }
+
+  return Object.freeze({ getSnapshot, applyProposal, listAudit, verifyAudit, listMigrations });
 }
