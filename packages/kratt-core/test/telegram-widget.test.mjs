@@ -1,0 +1,129 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { renderClaimReviewWidget } from "../../kratt-orchestrator/src/telegram-review-widget.mjs";
+import { createTelegramBotApiClient } from "../../kratt-orchestrator/src/telegram-bot-api-client.mjs";
+
+const digest = letter => `sha256:${letter.repeat(64)}`;
+const projection = {
+  claimId: "claim-widget-1",
+  claimText: "<img src=x onerror=alert(1)>",
+  claimStatus: "UNREVIEWED",
+  claimDigest: digest("a"),
+  evidenceSnapshotDigest: digest("b"),
+  rootDigest: digest("c"),
+  sourceRefs: [{ publisher: "Example Source", excerpt: "<script>alert(1)</script>", digest: digest("d") }],
+  evidenceLinks: [
+    { relation: "SUPPORTS", publisher: "Support Source", excerpt: "Supporting excerpt", digest: digest("e") },
+    { relation: "CONTRADICTS", publisher: "Contradiction Source", excerpt: "Contradicting excerpt", digest: digest("f") },
+  ],
+  contradictions: [{ summary: "Potential mismatch" }],
+};
+const request = {
+  requestId: "request-widget-1",
+  claimId: projection.claimId,
+  targetDigest: projection.claimDigest,
+  evidenceSnapshotDigest: projection.evidenceSnapshotDigest,
+  rootDigest: projection.rootDigest,
+  chatType: "private",
+};
+
+test("Claim Review Widget is self-contained, escaped, bounded and intent-only", () => {
+  const widget = renderClaimReviewWidget({ projection, request });
+  assert.equal(widget.allowQueries, true);
+  assert.equal(widget.isShared, false);
+  assert.equal(widget.chatData.includes(request.requestId), true);
+  assert.equal(widget.html.includes("<img src=x"), false);
+  assert.equal(widget.html.includes("<script>alert(1)</script>"), false);
+  assert.equal(widget.html.includes("intent:APPROVE"), true);
+  assert.equal(widget.html.includes("intent:REJECT:SOURCE_CONTRADICTED"), true);
+  assert.equal(widget.html.includes("separate signed confirmation"), true);
+  assert.ok(widget.htmlBytes <= 32768);
+  assert.ok(widget.compressedBytes <= 4096);
+});
+
+test("Claim Review Widget refuses mismatched snapshots and non-private chats", () => {
+  assert.throws(() => renderClaimReviewWidget({
+    projection,
+    request: { ...request, targetDigest: digest("9") },
+  }), /TELEGRAM_REVIEW_WIDGET_PROJECTION_INVALID/);
+  assert.throws(() => renderClaimReviewWidget({
+    projection,
+    request: { ...request, chatType: "group" },
+  }), /TELEGRAM_REVIEW_WIDGET_PROJECTION_INVALID/);
+});
+
+test("Bot API client sends a protected private review widget without activating a webhook", async () => {
+  const calls = [];
+  const client = createTelegramBotApiClient({
+    token: "123456789:local-test-token-secret",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, json: async () => ({ ok: true, result: { message_id: 44, chat: { id: 123456 } } }) };
+    },
+  });
+  const widget = renderClaimReviewWidget({ projection, request });
+  const message = await client.sendClaimReviewWidget({
+    chatId: 123456,
+    chatType: "private",
+    html: widget.html,
+    chatData: widget.chatData,
+    caption: "KRATT claim review",
+  });
+  assert.equal(message.message_id, 44);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.endsWith("/sendWidget"), true);
+  const payload = JSON.parse(calls[0].options.body);
+  assert.equal(payload.chat_id, 123456);
+  assert.equal(payload.allow_queries, true);
+  assert.equal(payload.is_shared, false);
+  assert.equal(payload.protect_content, true);
+});
+
+test("Bot API client refuses group widget sends and oversized widget HTML", async () => {
+  const client = createTelegramBotApiClient({
+    token: "123456789:local-test-token-secret",
+    fetchImpl: async () => { throw new Error("must not be called"); },
+  });
+  await assert.rejects(client.sendClaimReviewWidget({
+    chatId: -100123,
+    chatType: "group",
+    html: "<p>review</p>",
+    chatData: "{}",
+  }), /TELEGRAM_WIDGET_PRIVATE_CHAT_REQUIRED/);
+  await assert.rejects(client.sendClaimReviewWidget({
+    chatId: 123456,
+    chatType: "private",
+    html: "<p>" + "x".repeat(40_000) + "</p>",
+    chatData: "{}",
+  }), /TELEGRAM_WIDGET_HTML_TOO_LARGE/);
+});
+
+test("Bot API client answers widget queries and edits bot-owned chat state", async () => {
+  const calls = [];
+  const client = createTelegramBotApiClient({
+    token: "123456789:local-test-token-secret",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return { ok: true, json: async () => ({ ok: true, result: true }) };
+    },
+  });
+  await client.answerWidgetQuery("query-1", "Intent received.");
+  await client.editMessageWidgetData({ chatId: 123456, messageId: 44, chatData: JSON.stringify({ status: "PENDING_SIGNATURE" }) });
+  assert.equal(calls[0].url.endsWith("/answerWidgetQuery"), true);
+  assert.equal(calls[0].body.widget_query_id, "query-1");
+  assert.equal(calls[1].url.endsWith("/editMessageWidgetData"), true);
+  assert.equal(calls[1].body.message_id, 44);
+});
+
+test("Bot API client sanitizes rejected API errors and never returns the token", async () => {
+  const token = "123456789:local-test-token-secret";
+  const client = createTelegramBotApiClient({
+    token,
+    fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({ ok: false, error_code: 401, description: "unauthorized" }) }),
+  });
+  await assert.rejects(client.answerWidgetQuery("query-1"), error => {
+    assert.equal(error.message.includes(token), false);
+    assert.equal(error.message, "TELEGRAM_API_REJECTED:answerWidgetQuery:401");
+    return true;
+  });
+});
