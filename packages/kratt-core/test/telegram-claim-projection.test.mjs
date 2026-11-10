@@ -13,7 +13,7 @@ function fixture({ tamperSource = false, tamperExcerpt = false, tamperClaim = fa
   const exactExcerpt = content.slice(startOffset, endOffset);
   const sourceDigest = digest(content);
   const excerptDigest = digest(exactExcerpt);
-  const claim = attachEvidenceCardDigest({
+  let claim = attachEvidenceCardDigest({
     claimId: "claim-projection-01",
     normalizedText: "The prototype passed 14 validation tests.",
     claimStatus: "UNREVIEWED",
@@ -25,7 +25,7 @@ function fixture({ tamperSource = false, tamperExcerpt = false, tamperClaim = fa
       excerptDigest: tamperExcerpt ? digest("wrong excerpt") : excerptDigest,
     }],
   });
-  if (tamperClaim) claim.normalizedText = "tampered after digest";
+  if (tamperClaim) claim = { ...claim, normalizedText: "tampered after digest" };
   const link = attachEvidenceCardDigest({
     claimId: "claim-projection-01",
     evidenceId: "evidence-01",
