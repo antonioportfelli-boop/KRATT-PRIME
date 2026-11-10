@@ -4,7 +4,7 @@ import {
   createTelegramControlPlane,
   normalizeTelegramUpdate,
   verifyTelegramWebhookSecret,
-} from "../src/telegram-control-plane.mjs";
+} from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 
 const secret = "local-test-secret";
 const projection = {
