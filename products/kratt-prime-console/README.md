@@ -30,7 +30,8 @@ No package install is required for either preview.
 - Connector registry showing lifecycle states and capability boundaries.
 - Governance screen for READ/WRITE separation and human approval.
 - Local event journal demo with Web Crypto SHA-256 chain verification.
-- Intake dialog that appends a local sample record and event.
+- Intake dialog that records local source metadata and can structurally segment pasted text into provenance-linked, unreviewed knowledge units.
+- Local API journal event for each segmentation batch.
 
 ## Important boundary
 
@@ -41,6 +42,7 @@ The local API and orchestration kernel are implemented in:
 - `packages/kratt-orchestrator/src/local-server.mjs`
 - `packages/kratt-orchestrator/src/orchestrator.mjs`
 - `packages/kratt-orchestrator/test/`
+- `packages/kratt-core/src/knowledge-segmentation.mjs`
 
 The next integration step is to add individually reviewed source-specific read adapters with real identity verification, source provenance, retention controls and permission scopes. Credentials must remain server-side. External writes must remain request-bound, signed, scoped, expiring and fail-closed.
 
