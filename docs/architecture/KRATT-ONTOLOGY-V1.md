@@ -20,7 +20,7 @@ The ontology preserves four distinctions:
 |---|---|
 | SOURCE | source digest, observation time, rights status |
 | SEGMENT | source ID, UTF-16 start/end offsets, excerpt digest |
-| CLAIM | normalized text, extraction method, review state, source references |
+| CLAIM | normalized text, structured subject/predicate/object, time scope, extraction method, review state, source references |
 | EVIDENCE | source ID/digest, stance, integrity state, lineage and independence group |
 | CONTRADICTION | two distinct claim IDs, time scope, detection method, review status |
 | DECISION | target, decision, reviewer, reason, policy version, evidence snapshot digest, decision time |
