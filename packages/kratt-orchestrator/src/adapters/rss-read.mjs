@@ -164,13 +164,17 @@ export function createRssReadAdapter({
   maxBytes = 1_000_000,
   timeoutMs = 8_000,
 } = {}) {
-  const validHost = host => typeof host === "string" &&
-    host === host.trim() && host.length <= 253 &&
-    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(host) &&
-    !isIP(host) && host.toLowerCase() !== "localhost" &&
-    !host.toLowerCase().endsWith(".localhost") &&
-    !host.toLowerCase().endsWith(".local") &&
-    !host.toLowerCase().endsWith(".internal");
+  const validHost = host => {
+    if (typeof host !== "string" || host !== host.trim() || host.length > 253 || isIP(host)) return false;
+    const labels = host.toLowerCase().split(".");
+    if (labels.length < 2 || labels.some(label =>
+      !label || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label)
+    )) return false;
+    return host.toLowerCase() !== "localhost" &&
+      !host.toLowerCase().endsWith(".localhost") &&
+      !host.toLowerCase().endsWith(".local") &&
+      !host.toLowerCase().endsWith(".internal");
+  };
   if (!Array.isArray(allowedHosts) || allowedHosts.length === 0 || !allowedHosts.every(validHost)) {
     throw new TypeError("RSS_HOST_ALLOWLIST_REQUIRED");
   }
