@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync, sign } from "node:crypto";
+import { createTelegramApprovalSigningRequest } from "../src/telegram-approval-signing-request.mjs";
 import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
 import { createSqliteNonceStore } from "../src/sqlite-nonce-store.mjs";
@@ -297,4 +298,77 @@ test("file-backed signed decision, audit and nonce remain consumed after databas
     try { database.close(); } catch {}
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("external Ed25519 signing request produces a verifier-accepted bound proof", async () => {
+  const { plane, privateKey, nowMs } = setup();
+  const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+  const intent = {
+    status: "PENDING_SIGNATURE",
+    requestId: pending.request.requestId,
+    actorTelegramUserId: pending.request.actorTelegramUserId,
+    chatId: pending.request.chatId,
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    decision: "APPROVE",
+    reason: "",
+  };
+  const signingRequest = createTelegramApprovalSigningRequest({
+    request: pending.request,
+    intent,
+    keyId: "telegram-review-key-1",
+    approvedBy: "123456",
+    issuedAt: new Date(nowMs).toISOString(),
+  });
+  assert.equal(signingRequest.algorithm, "Ed25519");
+  assert.equal(signingRequest.privateKeyHandling, "EXTERNAL_SIGNER_ONLY");
+  const proof = {
+    ...signingRequest.proof,
+    signature: sign(null, Buffer.from(signingRequest.payload, "utf8"), privateKey).toString("base64url"),
+  };
+  const result = await plane.resolveClaimReview({
+    requestId: pending.request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    decision: "APPROVE",
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    proof,
+  });
+  assert.equal(result.status, "OK");
+});
+
+test("external signing request refuses changed intent digests and wrong approver", () => {
+  const { plane, nowMs } = setup();
+  const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+  const intent = {
+    status: "PENDING_SIGNATURE",
+    requestId: pending.request.requestId,
+    actorTelegramUserId: pending.request.actorTelegramUserId,
+    chatId: pending.request.chatId,
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    decision: "APPROVE",
+    reason: "",
+  };
+  assert.throws(() => createTelegramApprovalSigningRequest({
+    request: pending.request,
+    intent: { ...intent, targetDigest: `sha256:${"9".repeat(64)}` },
+    keyId: "telegram-review-key-1",
+    approvedBy: "123456",
+    issuedAt: new Date(nowMs).toISOString(),
+  }), /TELEGRAM_APPROVAL_SIGNING_REQUEST_INVALID/);
+  assert.throws(() => createTelegramApprovalSigningRequest({
+    request: pending.request,
+    intent,
+    keyId: "telegram-review-key-1",
+    approvedBy: "999999",
+    issuedAt: new Date(nowMs).toISOString(),
+  }), /TELEGRAM_APPROVAL_SIGNING_REQUEST_INVALID/);
 });
