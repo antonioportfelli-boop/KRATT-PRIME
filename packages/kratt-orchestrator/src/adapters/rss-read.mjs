@@ -8,7 +8,7 @@ function sha256(value) {
 }
 
 function decodeEntities(value) {
-  return value.replace(/&(#x[0-9a-f]+|#\\d+|amp|lt|gt|quot|apos);/gi, (match, entity) => {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (match, entity) => {
     const key = entity.toLowerCase();
     if (key === "amp") return "&";
     if (key === "lt") return "<";
@@ -29,9 +29,9 @@ function decodeEntities(value) {
 function cleanXmlText(value = "") {
   return decodeEntities(
     value
-      .replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/g, "$1")
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
       .replace(/<[^>]*>/g, " ")
-      .replace(/\\s+/g, " ")
+      .replace(/\s+/g, " ")
       .trim()
   );
 }
@@ -42,11 +42,11 @@ function extractElement(block, name) {
 }
 
 function extractLink(block) {
-  const linkTag = /<(?:[A-Za-z0-9_-]+:)?link\\b([^>]*)>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?link\\s*>/i.exec(block);
+  const linkTag = /<(?:[A-Za-z0-9_-]+:)?link\b([^>]*)>([\s\S]*?)<\/(?:[A-Za-z0-9_-]+:)?link\s*>/i.exec(block);
   if (linkTag) return cleanXmlText(linkTag[2]);
-  const selfClosing = /<(?:[A-Za-z0-9_-]+:)?link\\b([^>]*)\\/?\\s*>/i.exec(block);
+  const selfClosing = /<(?:[A-Za-z0-9_-]+:)?link\b([^>]*)\/?\s*>/i.exec(block);
   if (!selfClosing) return "";
-  return /\\bhref\\s*=\\s*["']([^"']+)["']/i.exec(selfClosing[1])?.[1] ?? "";
+  return /\bhref\s*=\s*["']([^"']+)["']/i.exec(selfClosing[1])?.[1] ?? "";
 }
 
 function parseDate(value) {
@@ -57,8 +57,8 @@ function parseDate(value) {
 }
 
 function parseFeed(xml, feedUrl, observedAt) {
-  const atom = /<feed\\b/i.test(xml);
-  const itemPattern = atom ? /<entry\\b[^>]*>([\\s\\S]*?)<\\/entry>/gi : /<item\\b[^>]*>([\\s\\S]*?)<\\/item>/gi;
+  const atom = /<feed\b/i.test(xml);
+  const itemPattern = atom ? /<entry\b[^>]*>([\s\S]*?)<\/entry>/gi : /<item\b[^>]*>([\s\S]*?)<\/item>/gi;
   const entries = [...xml.matchAll(itemPattern)].slice(0, 100);
   const feedTitle = cleanXmlText(extractElement(xml, "title")) || new URL(feedUrl).hostname;
   const items = [];
@@ -195,7 +195,7 @@ export function createRssReadAdapter({
       const bytes = await readBounded(response, maxBytes);
       const xml = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("FEED_XML_DTD_REJECTED");
-      if (!/<(?:rss|feed)\\b/i.test(xml)) throw new Error("FEED_XML_FORMAT_INVALID");
+      if (!/<(?:rss|feed)\b/i.test(xml)) throw new Error("FEED_XML_FORMAT_INVALID");
 
       const observedAt = now();
       if (typeof observedAt !== "string" || !Number.isFinite(Date.parse(observedAt))) {
