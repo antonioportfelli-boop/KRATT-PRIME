@@ -181,3 +181,28 @@ export function buildReflectionRootDelta({ snapshot, nodes = [], now = () => new
     return Object.freeze({ status: "ERROR", reason: "REFLECTION_ENGINE_FAILED_CLOSED" });
   }
 }
+
+
+/**
+ * Adapter for createTelegramReflectionProposalService(buildRootDelta).
+ * It re-reads the authoritative full root snapshot and binds reducer output
+ * to the exact version/digest that the read-only Telegram projection saw.
+ */
+export function createTelegramReflectionDeltaBuilder({ rootSnapshotProvider, collectCandidateNodes, now } = {}) {
+  if (!rootSnapshotProvider || typeof rootSnapshotProvider.getSnapshot !== "function" ||
+      typeof collectCandidateNodes !== "function") {
+    throw new TypeError("TELEGRAM_REFLECTION_DELTA_BUILDER_ADAPTERS_REQUIRED");
+  }
+  return async context => {
+    const supplied = await rootSnapshotProvider.getSnapshot();
+    const snapshot = supplied?.snapshot ?? supplied;
+    if (!snapshot || snapshot.version !== context?.expectedRoot?.rootVersion ||
+        snapshot.digest !== context?.expectedRoot?.rootDigest) {
+      throw new Error("TELEGRAM_REFLECTION_DELTA_ROOT_CHANGED");
+    }
+    const nodes = await collectCandidateNodes(context);
+    const result = buildReflectionRootDelta({ snapshot, nodes, ...(now ? { now } : {}) });
+    if (result.status !== "PROPOSED") throw new Error(`TELEGRAM_REFLECTION_DELTA_REJECTED:${result.reason ?? result.status}`);
+    return result.proposal.rootDelta;
+  };
+}
