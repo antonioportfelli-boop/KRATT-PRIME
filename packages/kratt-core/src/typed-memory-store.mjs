@@ -128,16 +128,27 @@ export function createSqliteTypedMemoryStore(database) {
   }
 
   function list({ kind, parentId, limit = 100 } = {}) {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return Object.freeze([]);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500 ||
+        (kind !== undefined && !KINDS.has(kind)) ||
+        (parentId !== undefined && !(parentId === null || typeof parentId === "string"))) return Object.freeze([]);
+    const clauses = [], parameters = [];
+    if (kind !== undefined) {
+      clauses.push("json_extract(record_json, '$.kind') = ?");
+      parameters.push(kind);
+    }
+    if (parentId !== undefined) {
+      clauses.push("parent_id IS ?");
+      parameters.push(parentId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND")}` : "";
     const rows = database.prepare(`
       SELECT sequence,record_json,record_digest,parent_id,root_digest,root_version,previous_hash,entry_hash
-      FROM kratt_typed_memory ORDER BY sequence DESC LIMIT ?
-    `).all(limit);
-    return rows.filter(row => (!kind || JSON.parse(row.record_json).kind === kind) &&
-      (parentId === undefined || row.parent_id === parentId)).reverse().map(row => Object.freeze({
-        sequence: Number(row.sequence), record: JSON.parse(row.record_json), recordDigest: row.record_digest,
-        previousHash: row.previous_hash, entryHash: row.entry_hash,
-      }));
+      FROM kratt_typed_memory ${where} ORDER BY sequence DESC LIMIT ?
+    `).all(...parameters, limit);
+    return rows.reverse().map(row => Object.freeze({
+      sequence: Number(row.sequence), record: JSON.parse(row.record_json), recordDigest: row.record_digest,
+      previousHash: row.previous_hash, entryHash: row.entry_hash,
+    }));
   }
 
   function verify() {
