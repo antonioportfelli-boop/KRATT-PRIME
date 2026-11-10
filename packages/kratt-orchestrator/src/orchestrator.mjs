@@ -59,6 +59,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
   const implementations = new Map();
   const journal = [];
   const pending = new Map();
+  const intakes = [];
 
   function emit(type, source, payload, correlationId = randomUUID()) {
     const occurredAt = now();
@@ -261,10 +262,31 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     }
   }
 
+  function recordLocalIntake({ label, sourceType, actor = "architect" } = {}) {
+    const allowedSources = ["manual_url", "rss_atom", "json_csv", "telegram_pending"];
+    if (typeof label !== "string" || !label.trim() || label.trim().length > 160 ||
+        !allowedSources.includes(sourceType) || !ID.test(actor)) {
+      return result("DENY", "LOCAL_INTAKE_REQUEST_INVALID");
+    }
+    const intake = freeze({
+      intakeId: randomUUID(),
+      label: label.trim(),
+      sourceType,
+      actor,
+      receivedAt: now(),
+      state: "RECEIVED_LOCAL",
+      networkAccess: false,
+    });
+    intakes.push(intake);
+    emit("LOCAL_INTAKE_RECORDED", "local-intake", intake);
+    return result("OK", "LOCAL_INTAKE_RECORDED", { intake });
+  }
+
   function snapshot() {
     return freeze({
       adapters: [...adapters.values()],
       pendingWrites: [...pending.values()].map(x => x.request),
+      intakes: [...intakes],
       journal: [...journal],
       journalHead: journal.at(-1)?.hash ?? null,
     });
@@ -289,6 +311,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     executeRead,
     requestWrite,
     approveAndExecuteWrite,
+    recordLocalIntake,
     snapshot,
     verifyJournal,
   });
