@@ -302,7 +302,7 @@ test("file-backed signed decision, audit and nonce remain consumed after databas
 });
 
 test("external Ed25519 signing request produces a verifier-accepted bound proof", async () => {
-  const { plane, privateKey, nowMs } = setup();
+  const { plane, privateKey, publicKey, nowMs } = setup();
   const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
   const intent = {
     status: "PENDING_SIGNATURE",
@@ -397,9 +397,7 @@ test("external signer adapter signs only the request-bound payload and locally v
         trustedApprovalKeys: [{
           key_id: "telegram-review-key-1",
           approver_id: "123456",
-          public_key_pem: (await import("node:crypto")).createPublicKey(
-            privateKey
-          ).export({ type: "spki", format: "pem" }),
+          public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
           authorities: [authority],
         }],
         now: () => nowMs,
