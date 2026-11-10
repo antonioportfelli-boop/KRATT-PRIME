@@ -81,7 +81,23 @@ Required fields:
 
 No external write capability is part of V1. The approval schema is retained for future governed actions, but no connector may infer permission from a historical approval.
 
-## 4. Evidence and contradiction rules
+## 4. Automatic knowledge segmentation
+
+Before semantic claim extraction, the local structural segmenter divides bounded source text into deterministic, provenance-preserving units.
+
+Each segment records:
+- source ID and optional source URL;
+- source observation time;
+- ordinal and exact start/end offsets in the captured text;
+- segment kind (`PARAGRAPH`, `SENTENCE_GROUP`, or `FRAGMENT`);
+- exact segment text and SHA-256 content digest;
+- stable segment ID;
+- review state `UNREVIEWED`;
+- an initially empty claim list.
+
+The segmenter is structural, not semantic truth detection. It must not promote a sentence to a fact, infer source credibility, or mark a claim supported. The original source digest and segment offsets allow downstream claim proposals to retain source lineage.
+
+## 5. Evidence and contradiction rules
 
 1. A source item is not automatically evidence for every claim in its text.
 2. A model-extracted claim begins in `UNREVIEWED`.
@@ -94,12 +110,13 @@ No external write capability is part of V1. The approval schema is retained for 
 9. If the system cannot verify a required condition, it returns `UNKNOWN` or `BLOCKED`, never a silent pass.
 10. The brief must preserve disagreement and uncertainty, not compress it into a single unsupported certainty score.
 
-## 5. Minimum API / service operations
+## 6. Minimum API / service operations
 
 These are logical service operations. Align names with the canonical codebase only after source reconciliation.
 
 - `importSource(payload, method)` → validated `SourceItem`
 - `normalizeSource(sourceItem)` → normalized item + transformation provenance
+- `segmentKnowledge(sourceItem)` → stable unreviewed segments with exact offsets and digests
 - `proposeClaims(sourceItem)` → claims in `UNREVIEWED`
 - `createEvidenceCard(claim, sourceItem, stance, excerpt)` → `EvidenceCard`
 - `verifyEvidenceCard(card)` → `VERIFIED | INVALID`
@@ -111,7 +128,7 @@ These are logical service operations. Align names with the canonical codebase on
 
 All operations must accept a correlation ID and return structured errors. Avoid raw stack traces in user-facing errors.
 
-## 6. Required failure behaviour
+## 7. Required failure behaviour
 
 | Condition | Required result |
 |---|---|
@@ -127,7 +144,7 @@ All operations must accept a correlation ID and return structured errors. Avoid 
 | Reviewer rejects claim | Preserve audit history; do not erase underlying source |
 | Export encounters unverifiable claim | Include uncertainty or omit the claim; never invent a citation |
 
-## 7. Test matrix
+## 8. Test matrix
 
 ### Unit tests
 - Canonical serialization produces deterministic digests.
@@ -167,7 +184,7 @@ Provide:
 - a sample Markdown brief with working citations and visible uncertainty;
 - a known-limitations document.
 
-## 8. Non-functional requirements
+## 9. Non-functional requirements
 
 - Local-first default; no outbound data transfer unless a user explicitly configures a connector.
 - No secret values in logs, reports, fixtures, or test output.
@@ -179,7 +196,7 @@ Provide:
 - Deterministic tests; no network dependency in core test suite.
 - No production deployment as part of this workstream.
 
-## 9. First implementation order
+## 10. First implementation order
 
 1. Identify canonical KRATT runtime ref and record exact SHA.
 2. Port only the required reviewed runtime modules into the isolated workstream; do not merge the divergent candidate wholesale.
@@ -192,7 +209,7 @@ Provide:
 9. Run the whole test/build pipeline and record evidence.
 10. Only then start Telegram adapter work.
 
-## 10. Definition of Done
+## 11. Definition of Done
 
 V1 is done only when the end-to-end acceptance suite passes, the security and provenance checks are documented, a customer can reproduce a cited brief from a bounded import, and a reviewer can explain why each claim was marked supported, contested, rejected, or approved.
 
