@@ -156,10 +156,11 @@ Core interfaces are dependency-injected:
 - `verifyWebhookSecret(received, expected)`
 - `normalizeTelegramUpdate(update)`
 - `createTelegramControlPlane({ now, verifyApproval, allowedArchitectUserIds })`
-- `ingestAuthenticatedUpdate({ update, receivedSecret })`
+- `ingestAuthenticatedUpdate({ update, receivedSecret })` (async; intake persistence is injected through `persistIntake`)
 - `createClaimReviewRequest({ projection, actorTelegramUserId, chatId })`
 - `resolveClaimReview({ requestId, actorTelegramUserId, chatId, decision, reason, targetDigest, evidenceSnapshotDigest, rootDigest, policyVersion, proof })`
 - `cancelClaimReview({ requestId, actorTelegramUserId })`
+- persistence adapters: `persistIntake` and `persistDecision`; live deployments must also back update-ID idempotency and the audit journal with durable transactional storage.
 - transport adapter: `sendWidget`, `sendRichMessage`, `answerWidgetQuery`, `answerCallbackQuery` (implemented by a separately tested Telegram API client; no network call in core).
 
 ## 9. Observability
@@ -203,3 +204,8 @@ Acceptance requires test output and CI tied to exact commit SHA, review of the c
 ## 12. Explicit non-goals for V1
 
 TON wallet/gift operations, Telegram business account automation, automatic posting/publication, autonomous write permissions, unreviewed model-generated claim promotion, live connector activation, production webhook deployment.
+
+
+## 13. Implementation status at initial branch cut
+
+The initial feature-branch code is a local, dependency-injected kernel for webhook-secret comparison, update normalization, unreviewed text intake, review request binding, strict decision verification, persistence hooks, and hash-linked in-memory audit events. It does not yet contain a Telegram HTTP client, webhook server route, Widget HTML renderer, Rich Message renderer, durable database adapter, or Reflection Matrix writer. Those are follow-on implementation tasks and must not be represented as live or production-ready. The in-memory update deduplication map and journal are test/demo facilities only; production requires a durable transactional store and replay-safe persistence.
