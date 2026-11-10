@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { createOrchestrator } from "../src/orchestrator.mjs";
 
 const stamp = "2026-11-10T12:00:00.000Z";
+const testOrchestrator = options => createOrchestrator({
+  verifyAdapterEvidence: (artifact, binding) =>
+    artifact?.attestation === "test-signed" && artifact?.adapterId === binding.adapterId,
+  ...options,
+});
 const descriptor = (overrides = {}) => ({
   id: "github-main",
   name: "GitHub",
@@ -16,14 +21,15 @@ function ready(orchestrator, spec = descriptor(), implementation = {}) {
   const adapter = orchestrator.registerAdapter(spec, implementation);
   assert.equal(orchestrator.transitionAdapter(adapter.id, "CONNECTED_UNVERIFIED").status, "OK");
   assert.equal(orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY", {
-    verified: true,
+    attestation: "test-signed",
+    adapterId: adapter.id,
     verifierId: "test-verifier",
   }).status, "OK");
   return adapter;
 }
 
 test("adapters begin discovered; connector identity never implies trust", async () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   const adapter = orchestrator.registerAdapter(descriptor(), { read: async () => [] });
   assert.equal(adapter.state, "DISCOVERED");
   const blocked = await orchestrator.executeRead({
@@ -35,15 +41,15 @@ test("adapters begin discovered; connector identity never implies trust", async 
 });
 
 test("unverified adapter cannot be promoted without verifier evidence", () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   const adapter = orchestrator.registerAdapter(descriptor());
   assert.equal(orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY").reason, "ILLEGAL_ADAPTER_STATE_TRANSITION");
   assert.equal(orchestrator.transitionAdapter(adapter.id, "CONNECTED_UNVERIFIED").status, "OK");
-  assert.equal(orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY").reason, "TRUSTED_ADAPTER_VERIFICATION_REQUIRED");
+  assert.equal(orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY").reason, "TRUSTED_ADAPTER_VERIFIER_UNAVAILABLE");
 });
 
 test("verified read adapter executes only declared read capabilities", async () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   ready(orchestrator, descriptor(), { read: async ({ input }) => ({ items: input.limit }) });
   const allowed = await orchestrator.executeRead({
     adapterId: "github-main",
@@ -122,14 +128,14 @@ test("missing, mismatched and replayed approval artifacts cannot execute writes"
 });
 
 test("write cannot be enabled by a generic lifecycle transition", () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   const adapter = ready(orchestrator);
   assert.equal(orchestrator.transitionAdapter(adapter.id, "WRITE_ENABLED").reason,
     "WRITE_ENABLEMENT_REQUIRES_REQUEST_BOUND_APPROVAL");
 });
 
 test("event journal is append-only and verifies its hash chain", async () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   ready(orchestrator, descriptor(), { read: async () => ({ ok: true }) });
   await orchestrator.executeRead({
     adapterId: "github-main",
@@ -143,7 +149,7 @@ test("event journal is append-only and verifies its hash chain", async () => {
 });
 
 test("disabled adapter cannot read even when a handler exists", async () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   const adapter = ready(orchestrator, descriptor(), { read: async () => ({ leaked: true }) });
   assert.equal(orchestrator.transitionAdapter(adapter.id, "DISABLED").status, "OK");
   const response = await orchestrator.executeRead({
@@ -157,7 +163,7 @@ test("disabled adapter cannot read even when a handler exists", async () => {
 
 test("pending write requests expire and restore the verified read-only state", async () => {
   let current = Date.parse(stamp);
-  const orchestrator = createOrchestrator({
+  const orchestrator = testOrchestrator({
     now: () => new Date(current).toISOString(),
     verifyApproval: () => true,
   });
@@ -179,7 +185,7 @@ test("pending write requests expire and restore the verified read-only state", a
 });
 
 test("write request cancellation is actor-bound", () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   ready(orchestrator, descriptor(), { write: async () => ({}) });
   const request = orchestrator.requestWrite({
     adapterId:"github-main",
@@ -200,7 +206,7 @@ test("write request cancellation is actor-bound", () => {
 });
 
 test("non-canonical payloads are rejected before a write request is queued", () => {
-  const orchestrator = createOrchestrator({ now: () => stamp });
+  const orchestrator = testOrchestrator({ now: () => stamp });
   ready(orchestrator, descriptor());
   const circular = {};
   circular.self = circular;
