@@ -59,7 +59,7 @@ function splitOversized(text, start, maxChars) {
     }
     if (next <= cursor) next = Math.min(cursor + maxChars, end);
     const range = trimBounds(text, cursor - start, next - start);
-    if (range.text) output.push({ start: cursor + range.start, end: cursor + range.end, kind: "FRAGMENT" });
+    if (range.text) output.push({ start: start + range.start, end: start + range.end, kind: "FRAGMENT" });
     cursor = next;
     while (cursor < end && /\s/u.test(text[cursor - start])) cursor += 1;
   }
