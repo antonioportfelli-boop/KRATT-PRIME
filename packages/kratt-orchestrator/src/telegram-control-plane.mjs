@@ -89,7 +89,7 @@ export function createTelegramControlPlane({
       !allowedArchitectUserIds.every(id => typeof id === "string" && /^[0-9]{1,24}$/.test(id))) {
     throw new TypeError("TELEGRAM_ARCHITECT_ALLOWLIST_INVALID");
   }
-  if (store && (!["claimUpdate","persistIntake","completeUpdate","releaseUpdate","saveReviewRequest","getReviewRequest","claimReviewRequest","releaseReviewRequest","cancelReviewRequest","persistDecision","appendAuditEvent","snapshot"].every(key => typeof store[key] === "function"))) {
+  if (store && (!["claimUpdate","persistIntake","completeUpdate","releaseUpdate","saveReviewRequest","getReviewRequest","claimReviewRequest","releaseReviewRequest","cancelReviewRequest","expireReviewRequest","persistDecision","appendAuditEvent","snapshot"].every(key => typeof store[key] === "function"))) {
     throw new TypeError("TELEGRAM_DURABLE_STORE_INVALID");
   }
   const saveIntake = persistIntake ?? store?.persistIntake?.bind(store);
@@ -112,7 +112,7 @@ export function createTelegramControlPlane({
     return value;
   }
 
-  function emit(type, payload, correlationId) {
+  function buildAuditEvent(type, payload, correlationId) {
     const body = {
       sequence: journal.length + 1,
       eventId: randomUUID(),
@@ -123,7 +123,12 @@ export function createTelegramControlPlane({
       previousHash: journal.at(-1)?.hash ?? null,
     };
     body.hash = digest(body);
-    journal.push(frozen(body));
+    return frozen(body);
+  }
+
+  function emit(type, payload, correlationId) {
+    const body = buildAuditEvent(type, payload, correlationId);
+    journal.push(body);
     if (store && store.appendAuditEvent(body) !== true) throw new Error("TELEGRAM_AUDIT_PERSISTENCE_FAILED");
     return body;
   }
@@ -176,9 +181,10 @@ export function createTelegramControlPlane({
         reviewState: "UNREVIEWED",
         networkAccess: false,
       });
+      const intakeAudit = buildAuditEvent("TELEGRAM_INTAKE_UNREVIEWED", { candidateId: intake.candidateId, contentDigest: intake.contentDigest }, correlationId);
       let intakePersisted = false;
       try {
-        intakePersisted = await saveIntake(intake, { updateId: item.updateId, payloadDigest: item.payloadDigest, leaseToken }) === true;
+        intakePersisted = await saveIntake(intake, { updateId: item.updateId, payloadDigest: item.payloadDigest, leaseToken, auditEvent: store ? intakeAudit : undefined }) === true;
       } catch { intakePersisted = false; }
       if (!intakePersisted) {
         if (store) store.releaseUpdate({ updateId: item.updateId, leaseToken });
@@ -186,17 +192,20 @@ export function createTelegramControlPlane({
         return outcome("ERROR", "TELEGRAM_INTAKE_PERSISTENCE_FAILED");
       }
       intakes.push(intake);
-      emit("TELEGRAM_INTAKE_UNREVIEWED", { candidateId: intake.candidateId, contentDigest: intake.contentDigest }, correlationId);
+      if (store) journal.push(intakeAudit);
+      else emit("TELEGRAM_INTAKE_UNREVIEWED", { candidateId: intake.candidateId, contentDigest: intake.contentDigest }, correlationId);
       const result = outcome("OK", "TELEGRAM_INTAKE_RECORDED_UNREVIEWED", { intake });
       if (!store) updates.get(item.updateId).result = result;
       return result;
     }
     const result = outcome("OK", "TELEGRAM_UPDATE_ROUTED", { envelope: record });
-    if (store && store.completeUpdate({ updateId: item.updateId, payloadDigest: item.payloadDigest, leaseToken, result }) !== true) {
+    const routedAudit = buildAuditEvent("TELEGRAM_UPDATE_ROUTED", { updateId: item.updateId, updateKind: item.updateKind }, correlationId);
+    if (store && store.completeUpdate({ updateId: item.updateId, payloadDigest: item.payloadDigest, leaseToken, result, auditEvent: routedAudit }) !== true) {
       store.releaseUpdate({ updateId: item.updateId, leaseToken });
       return outcome("ERROR", "TELEGRAM_UPDATE_COMPLETION_PERSISTENCE_FAILED");
     }
-    emit("TELEGRAM_UPDATE_ROUTED", { updateId: item.updateId, updateKind: item.updateKind }, correlationId);
+    if (store) journal.push(routedAudit);
+    else emit("TELEGRAM_UPDATE_ROUTED", { updateId: item.updateId, updateKind: item.updateKind }, correlationId);
     if (!store) updates.get(item.updateId).result = result;
     return result;
   }
@@ -237,9 +246,11 @@ export function createTelegramControlPlane({
       expiresAt,
       state: "PENDING",
     });
-    if (store && store.saveReviewRequest(request) !== true) return outcome("ERROR", "TELEGRAM_REVIEW_REQUEST_PERSISTENCE_FAILED");
+    const requestAudit = buildAuditEvent("TELEGRAM_REVIEW_REQUEST_CREATED", { requestId: request.requestId, claimId: request.claimId, targetDigest: request.targetDigest }, request.requestId);
+    if (store && store.saveReviewRequest(request, requestAudit) !== true) return outcome("ERROR", "TELEGRAM_REVIEW_REQUEST_PERSISTENCE_FAILED");
     requests.set(request.requestId, { request, consumed: false });
-    emit("TELEGRAM_REVIEW_REQUEST_CREATED", { requestId: request.requestId, claimId: request.claimId, targetDigest: request.targetDigest }, request.requestId);
+    if (store) journal.push(requestAudit);
+    else emit("TELEGRAM_REVIEW_REQUEST_CREATED", { requestId: request.requestId, claimId: request.claimId, targetDigest: request.targetDigest }, request.requestId);
     return outcome("PENDING", "STRICT_ARCHITECT_DECISION_REQUIRED", { request });
   }
 
@@ -283,8 +294,12 @@ export function createTelegramControlPlane({
     let currentTime;
     try { currentTime = Date.parse(timestamp()); } catch { currentTime = NaN; }
     if (!Number.isFinite(currentTime) || currentTime >= Date.parse(request.expiresAt)) {
+      const expiryAudit = buildAuditEvent("TELEGRAM_APPROVAL_EXPIRED", { requestId }, requestId);
+      if (store) {
+        store.expireReviewRequest(requestId, expiryAudit);
+        journal.push(expiryAudit);
+      } else emit("TELEGRAM_APPROVAL_EXPIRED", { requestId }, requestId);
       entry.consumed = true;
-      emit("TELEGRAM_APPROVAL_EXPIRED", { requestId }, requestId);
       return outcome("DENY", "TELEGRAM_APPROVAL_REQUEST_EXPIRED");
     }
 
@@ -340,9 +355,10 @@ export function createTelegramControlPlane({
       policyVersion: request.policyVersion,
       verifiedAt: timestamp(),
     });
+    const decisionAudit = buildAuditEvent("TELEGRAM_DECISION_PERSISTED", { decisionId: decisionRecord.decisionId, requestId, decision }, requestId);
     const durableBinding = frozen({ ...binding, approvalProof: proof });
     let persisted = false;
-    try { persisted = await saveDecision(decisionRecord, durableBinding) === true; } catch { persisted = false; }
+    try { persisted = await saveDecision(decisionRecord, durableBinding, store ? decisionAudit : undefined) === true; } catch { persisted = false; }
     if (!persisted) {
       entry.processing = false;
       if (store) store.releaseReviewRequest(requestId);
@@ -351,7 +367,8 @@ export function createTelegramControlPlane({
     entry.processing = false;
     entry.consumed = true;
     decisions.set(requestId, decisionRecord);
-    emit("TELEGRAM_DECISION_PERSISTED", { decisionId: decisionRecord.decisionId, requestId, decision }, requestId);
+    if (store) journal.push(decisionAudit);
+    else emit("TELEGRAM_DECISION_PERSISTED", { decisionId: decisionRecord.decisionId, requestId, decision }, requestId);
     return outcome("OK", "TELEGRAM_DECISION_PERSISTED", { decision: decisionRecord });
   }
 
@@ -369,9 +386,11 @@ export function createTelegramControlPlane({
         !architects.has(String(actorTelegramUserId))) return outcome("DENY", "TELEGRAM_CANCELLATION_ACTOR_MISMATCH");
     if (entry.consumed) return outcome("BLOCKED", "TELEGRAM_APPROVAL_REQUEST_TERMINAL");
     if (entry.processing) return outcome("BLOCKED", "TELEGRAM_APPROVAL_ALREADY_IN_PROGRESS");
-    if (store && store.cancelReviewRequest(requestId) !== true) return outcome("BLOCKED", "TELEGRAM_APPROVAL_REQUEST_TERMINAL");
+    const cancellationAudit = buildAuditEvent("TELEGRAM_APPROVAL_CANCELLED", { requestId }, requestId);
+    if (store && store.cancelReviewRequest(requestId, cancellationAudit) !== true) return outcome("BLOCKED", "TELEGRAM_APPROVAL_REQUEST_TERMINAL");
     entry.consumed = true;
-    emit("TELEGRAM_APPROVAL_CANCELLED", { requestId }, requestId);
+    if (store) journal.push(cancellationAudit);
+    else emit("TELEGRAM_APPROVAL_CANCELLED", { requestId }, requestId);
     return outcome("OK", "TELEGRAM_APPROVAL_CANCELLED", { requestId });
   }
 
