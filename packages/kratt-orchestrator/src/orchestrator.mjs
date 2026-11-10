@@ -211,7 +211,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
       return result("BLOCKED", "ADAPTER_NOT_IN_VERIFIED_STATE");
     }
     if (!target || typeof target !== "string" || !target.trim() || target.length > 512 ||
-        /[\\u0000-\\u001f\\u007f]/.test(target) || !ID.test(actor ?? "")) {
+        /[\u0000-\u001f\u007f]/.test(target) || !ID.test(actor ?? "")) {
       return result("DENY", "WRITE_REQUEST_SCOPE_INVALID");
     }
     const requestedAt = now();
