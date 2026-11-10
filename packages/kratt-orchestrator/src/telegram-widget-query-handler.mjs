@@ -125,6 +125,10 @@ export function createTelegramWidgetQueryHandler({ store, botApiClient, now = ()
     });
 
     const stored = store.createDecisionIntent(intent, auditEvent(intent, createdAt));
+    if (stored?.status === "CONFLICT") {
+      await answer(widgetQueryId, "A different decision intent is already pending for this review. No new decision was recorded.");
+      return Object.freeze({ status: "BLOCKED", reason: "TELEGRAM_WIDGET_DECISION_INTENT_CONFLICT" });
+    }
     if (!stored || !["CREATED", "DUPLICATE"].includes(stored.status)) {
       await answer(widgetQueryId, "KRATT could not persist this intent. No decision was recorded.");
       return Object.freeze({ status: "ERROR", reason: "TELEGRAM_WIDGET_INTENT_PERSISTENCE_FAILED" });
