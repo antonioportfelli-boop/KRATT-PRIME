@@ -12,7 +12,7 @@ const PROOF_KEYS = Object.freeze([
   "authority", "key_id", "signature"
 ]);
 
-function canonicalProof(proof) {
+export function canonicalTelegramApprovalPayload(proof) {
   const payload = {};
   for (const key of PROOF_KEYS) if (key !== "signature") payload[key] = proof[key];
   return JSON.stringify(payload);
@@ -99,7 +99,7 @@ export function createTrustedTelegramDecisionVerifier({
     try {
       const signature = Buffer.from(proof.signature, "base64url");
       if (signature.length !== 64 || signature.toString("base64url") !== proof.signature) return false;
-      return verifySignature(null, Buffer.from(canonicalProof(proof), "utf8"), key.publicKey, signature) === true;
+      return verifySignature(null, Buffer.from(canonicalTelegramApprovalPayload(proof), "utf8"), key.publicKey, signature) === true;
     } catch { return false; }
   };
 }
