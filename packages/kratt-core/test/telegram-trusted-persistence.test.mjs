@@ -1,9 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
+import { createSqliteNonceStore } from "../src/sqlite-nonce-store.mjs";
 import {
   canonicalTelegramApprovalPayload,
   createTrustedTelegramDecisionVerifier,
@@ -183,4 +187,94 @@ test("Telegram review verifier rejects forged, unknown-key, authority-swapped an
     issued_at: new Date(nowMs - 6 * 60_000).toISOString(),
   });
   assert.equal(verifier(expired, binding), false);
+});
+
+test("file-backed Telegram intake and update deduplication survive database reopen", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kratt-telegram-store-"));
+  const filename = join(directory, "telegram.sqlite");
+  let database = new DatabaseSync(filename);
+  try {
+    let store = createSqliteTelegramStore(database);
+    const update = {
+      update_id: 9901,
+      message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "persist across process restart" },
+    };
+    const firstPlane = createTelegramControlPlane({
+      now: () => "2026-11-10T12:00:00.000Z",
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: secret,
+      persistDecision: async () => true,
+      store,
+    });
+    assert.equal((await firstPlane.ingestAuthenticatedUpdate({ update, receivedSecret: secret })).status, "OK");
+    database.close();
+
+    database = new DatabaseSync(filename);
+    store = createSqliteTelegramStore(database);
+    assert.equal(store.snapshot().intakes.length, 1);
+    const restartedPlane = createTelegramControlPlane({
+      now: () => "2026-11-10T12:00:01.000Z",
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: secret,
+      persistDecision: async () => true,
+      store,
+    });
+    assert.equal((await restartedPlane.ingestAuthenticatedUpdate({ update, receivedSecret: secret })).status, "DUPLICATE");
+  } finally {
+    try { database.close(); } catch {}
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("file-backed signed decision, audit and nonce remain consumed after database reopen", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kratt-telegram-approval-"));
+  const filename = join(directory, "telegram.sqlite");
+  let database = new DatabaseSync(filename);
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const nowMs = Date.parse("2026-11-10T12:00:00.000Z");
+  const key = {
+    key_id: "telegram-review-key-1",
+    approver_id: "123456",
+    public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
+    authorities: [authority],
+  };
+  try {
+    let store = createSqliteTelegramStore(database);
+    const verifier = createTrustedTelegramDecisionVerifier({ trustedApprovalKeys: [key], now: () => nowMs });
+    const plane = createTelegramControlPlane({
+      now: () => new Date(nowMs).toISOString(),
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: secret,
+      verifyApproval: verifier,
+      store,
+    });
+    const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+    const proof = signedProof(pending.request, privateKey, nowMs);
+    const result = await plane.resolveClaimReview({
+      requestId: pending.request.requestId,
+      actorTelegramUserId: "123456",
+      chatId: "123456",
+      decision: "APPROVE",
+      targetDigest: pending.request.targetDigest,
+      evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+      rootDigest: pending.request.rootDigest,
+      policyVersion: pending.request.policyVersion,
+      proof,
+    });
+    assert.equal(result.status, "OK");
+    database.close();
+
+    database = new DatabaseSync(filename);
+    store = createSqliteTelegramStore(database);
+    const snapshot = store.snapshot();
+    assert.equal(snapshot.decisions.length, 1);
+    assert.equal(snapshot.reviewRequests[0].state, "CONSUMED");
+    assert.equal(snapshot.journal.some(event => event.type === "TELEGRAM_DECISION_PERSISTED"), true);
+    assert.equal(createSqliteNonceStore(database).consume(
+      proof.key_id, proof.nonce, proof.approval_id, proof.expires_at, nowMs
+    ), false);
+  } finally {
+    try { database.close(); } catch {}
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
