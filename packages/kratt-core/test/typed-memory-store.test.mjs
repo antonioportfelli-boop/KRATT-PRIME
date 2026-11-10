@@ -36,6 +36,7 @@ test("typed memory persists hierarchical parent scope and idempotent appends", (
     const second = createSqliteTypedMemoryStore(secondDb);
     assert.equal(second.get("claim-memory-1").record.parentId, "run-1");
     assert.equal(second.list({ kind: "CLAIM", parentId: "run-1" }).length, 1);
+    assert.equal(second.list({ kind: "BRANCH_RUN", limit: 1 })[0].record.id, "run-1");
     assert.equal(second.verify().ok, true);
     assert.equal(second.verify().count, 2);
   } finally {
