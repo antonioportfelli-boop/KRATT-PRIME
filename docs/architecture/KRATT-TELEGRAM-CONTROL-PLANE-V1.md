@@ -159,6 +159,11 @@ Core interfaces are dependency-injected:
 - `createSqliteTelegramStore(database)` for durable single-host SQLite state.
 - `createTrustedTelegramDecisionVerifier({ trustedApprovalKeys, now, authority })` for Ed25519 architect-signed review decisions.
 - `createTelegramWebhookHandler({ controlPlane, webhookSecret, allowRequest, maxBodyBytes })` for bounded, authenticated HTTP ingress.
+- `renderClaimReviewWidget({ projection, request })` for a self-contained HTML review widget.
+- `createTelegramBotApiClient({ token, fetchImpl })` for lazy `sendWidget`, `answerWidgetQuery`, and `editMessageWidgetData` calls.
+- `createTelegramReviewWidgetService({ controlPlane, store, botApiClient })` for private review widget delivery.
+- `createTelegramWidgetQueryHandler({ store, botApiClient })` for authenticated decision-intent capture.
+- `createTelegramApprovalSigningRequest({ request, intent, keyId, approvedBy, issuedAt })` for an external Ed25519 signer payload.
 - `ingestAuthenticatedUpdate({ update, receivedSecret })` (async; intake persistence is injected through `persistIntake`)
 - `createClaimReviewRequest({ projection, actorTelegramUserId, chatId })`
 - `resolveClaimReview({ requestId, actorTelegramUserId, chatId, decision, reason, targetDigest, evidenceSnapshotDigest, rootDigest, policyVersion, proof })`
@@ -218,7 +223,10 @@ Implemented on `feature/kratt-telegram-control-plane-v1`:
 - `createSqliteTelegramStore` persists update IDs, payload digests, processing leases, unreviewed intake, review requests, decisions, and hash-linked audit events. File-backed restart tests cover durable update deduplication and decision/nonce persistence.
 - Update processing uses bounded leases. Same update ID with a different payload digest is blocked; duplicate completed updates are idempotent.
 - The webhook ingress handler requires POST + JSON, checks Telegram's secret-token header before parsing, requires an injected rate-limit decision, bounds request size, and maps processing states to retry-safe HTTP responses.
-- Audit events for intake, request creation, decisions, cancellation, and routed updates are committed with their corresponding durable state transition.
+- The Claim Review Widget is self-contained, HTML-escaped, compressed-size checked, private-chat only, non-shared, and uses short `TelegramWidget.request` action codes. It has no network access and does not collect free-form keyboard input; reject/contest reasons are selected from controlled reason codes.
+- Widget sends are linked to a durable (chat ID, message ID) → review request mapping. WidgetQuery events are deduplicated and produce a durable `PENDING_SIGNATURE` decision intent only.
+- A separate Ed25519 signing request payload binds the exact intent and request. The external signer retains the private key; KRATT verifies the signature and atomically consumes the nonce before marking the intent SIGNED and persisting the decision.
+- Audit events for intake, request creation, decision intents, decisions, cancellation, and routed updates are committed with their corresponding durable state transition.
 
 The store is a **single-host SQLite adapter**. Multi-host deployments require a shared transactional store with equivalent atomicity. Database file location, backup, encryption-at-rest, retention, permissions, and operational key custody remain deployment responsibilities.
 
