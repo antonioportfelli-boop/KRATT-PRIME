@@ -375,7 +375,7 @@ test("external signing request refuses changed intent digests and wrong approver
 });
 
 test("external signer adapter signs only the request-bound payload and locally verifies it", async () => {
-  const { plane, privateKey, nowMs } = setup();
+  const { plane, privateKey, publicKey, nowMs } = setup();
   const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
   const intent = {
     status: "PENDING_SIGNATURE",
