@@ -21,6 +21,7 @@ function makePlane(overrides = {}) {
     now: () => new Date(current).toISOString(),
     allowedArchitectUserIds: ["123456"],
     webhookSecret: secret,
+    persistIntake: async () => true,
     verifyApproval: async (proof, binding) => proof === "trusted-proof" && binding.requestId.length > 0,
     persistDecision: async record => { persisted.push(record); return true; },
     ...overrides,
