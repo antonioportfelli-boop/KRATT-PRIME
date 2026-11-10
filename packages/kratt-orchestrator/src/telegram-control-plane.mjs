@@ -72,6 +72,7 @@ export function normalizeTelegramUpdate(update) {
       callbackQueryId: kind === "callback_query" && typeof item.id === "string" ? item.id : null,
       widgetQueryId: widgetQuery && typeof item.id === "string" ? item.id : null,
       widgetQueryData: widgetQuery && typeof item.data === "string" ? item.data : null,
+      widgetQueryType: widgetQuery && typeof item.type?.type === "string" ? item.type.type : null,
       widgetMessageId: widgetQuery && Number.isSafeInteger(item.message_id) ? item.message_id : null,
       widgetId: widgetQuery && typeof item.widget_id === "string" ? item.widget_id : null,
       payloadDigest: digest(update),
