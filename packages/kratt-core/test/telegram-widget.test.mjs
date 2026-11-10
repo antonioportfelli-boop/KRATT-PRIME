@@ -4,6 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
 import { createTelegramReviewWidgetService } from "../../kratt-orchestrator/src/telegram-review-service.mjs";
+import { createTelegramWidgetQueryHandler } from "../../kratt-orchestrator/src/telegram-widget-query-handler.mjs";
+import { normalizeTelegramUpdate } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { renderClaimReviewWidget } from "../../kratt-orchestrator/src/telegram-review-widget.mjs";
 import { createTelegramBotApiClient } from "../../kratt-orchestrator/src/telegram-bot-api-client.mjs";
 
@@ -202,5 +204,96 @@ test("review widget service refuses group contexts and cancels when send fails",
     const requests = store.snapshot().reviewRequests;
     assert.equal(requests.length, 1);
     assert.equal(requests[0].state, "CANCELLED");
+  } finally { database.close(); }
+});
+
+test("WidgetQuery records a request-bound decision intent but never final approval", async () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    const store = createSqliteTelegramStore(database);
+    const calls = [];
+    const botApiClient = {
+      async sendClaimReviewWidget() { return { message_id: 111 }; },
+      async answerWidgetQuery(id, data) { calls.push({ method: "answer", id, data }); return true; },
+      async editMessageWidgetData(args) { calls.push({ method: "edit", ...args }); return true; },
+    };
+    const handleWidgetQuery = createTelegramWidgetQueryHandler({
+      store,
+      botApiClient,
+      now: () => "2026-11-10T12:00:01.000Z",
+    });
+    const plane = createTelegramControlPlane({
+      now: () => "2026-11-10T12:00:00.000Z",
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: "local-test-webhook-secret",
+      handleWidgetQuery,
+      verifyApproval: async () => false,
+      store,
+    });
+    const service = createTelegramReviewWidgetService({ controlPlane: plane, store, botApiClient });
+    const sent = await service.send({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+    assert.equal(sent.status, "OK");
+
+    const update = {
+      update_id: 1201,
+      widget_query: {
+        id: "widget-query-1",
+        from: { id: 123456 },
+        chat: { id: 123456, type: "private" },
+        message_id: 111,
+        data: "intent:APPROVE",
+      },
+    };
+    const normalized = normalizeTelegramUpdate(update);
+    assert.equal(normalized.status, "OK");
+    assert.equal(normalized.envelope.updateKind, "widget_query");
+    const result = await plane.ingestAuthenticatedUpdate({ update, receivedSecret: "local-test-webhook-secret" });
+    assert.equal(result.status, "OK");
+    assert.equal(result.requiresSignedConfirmation, true);
+    const intent = store.getDecisionIntent(sent.requestId);
+    assert.equal(intent.state, "PENDING_SIGNATURE");
+    assert.equal(intent.intent.decision, "APPROVE");
+    assert.equal(store.snapshot().decisions.length, 0);
+    assert.equal(calls.some(call => call.method === "answer"), true);
+    assert.equal(calls.some(call => call.method === "edit"), true);
+  } finally { database.close(); }
+});
+
+test("WidgetQuery rejects wrong actor and unsupported shared-widget decision contexts", async () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    const store = createSqliteTelegramStore(database);
+    const botApiClient = {
+      async sendClaimReviewWidget() { return { message_id: 112 }; },
+      async answerWidgetQuery() { return true; },
+      async editMessageWidgetData() { return true; },
+    };
+    const handler = createTelegramWidgetQueryHandler({ store, botApiClient });
+    const plane = createTelegramControlPlane({
+      now: () => "2026-11-10T12:00:00.000Z",
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: "local-test-webhook-secret",
+      handleWidgetQuery: handler,
+      store,
+    });
+    const service = createTelegramReviewWidgetService({ controlPlane: plane, store, botApiClient });
+    const sent = await service.send({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+    assert.equal(sent.status, "OK");
+
+    const wrongActor = await plane.ingestAuthenticatedUpdate({
+      receivedSecret: "local-test-webhook-secret",
+      update: {
+        update_id: 1202,
+        widget_query: {
+          id: "widget-query-wrong-actor",
+          from: { id: 999999 },
+          chat: { id: 123456, type: "private" },
+          message_id: 112,
+          data: "intent:APPROVE",
+        },
+      },
+    });
+    assert.equal(wrongActor.status, "DENY");
+    assert.equal(store.getDecisionIntent(sent.requestId), null);
   } finally { database.close(); }
 });
