@@ -309,7 +309,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
               intent.policyVersion !== record.policyVersion ||
               priorIntent.state !== "PENDING_SIGNATURE") throw new Error("TELEGRAM_DECISION_INTENT_MISMATCH");
         }
-        statements.insertDecision.run(record.decisionId, record.requestId, stable(record));
+        statements.insertDecision.run(record.decisionId, record.requestId, stable({ ...record, approvalProof: proof }));
         if (Number(statements.consumeRequest.run(record.requestId).changes) !== 1) throw new Error("TELEGRAM_REVIEW_STATE_CONFLICT");
         if (priorIntent) statements.signDecisionIntent.run(record.requestId);
         if (auditEvent) insertAuditEvent(auditEvent);
