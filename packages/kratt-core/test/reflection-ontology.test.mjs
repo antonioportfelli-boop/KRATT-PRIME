@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import {
   createOntologyValidatedReflectionRootStore,
   createOntologyValidatedTelegramReflectionCasAdapter,
+  restoreOntologyValidatedReflectionRootBackup,
   KRATT_ONTOLOGY_VERSION,
   validateReflectionOntology,
 } from "../src/reflection-ontology.mjs";
@@ -137,4 +138,43 @@ test("Telegram CAS composition requires a valid ontology root before accepting t
     assert.equal(adapter.rootStore.getSnapshot().status, "OK");
     assert.equal(adapter.rootStore.getSnapshot().snapshot.document.metadata.ontologyVersion, KRATT_ONTOLOGY_VERSION);
   } finally { db.close(); }
+});
+
+
+test("ontology-validated backup restore preserves semantic root and rejects re-digested invalid ontology", () => {
+  const sourceDb = new DatabaseSync(":memory:");
+  const restoredDb = new DatabaseSync(":memory:");
+  const invalidDb = new DatabaseSync(":memory:");
+  try {
+    const store = createOntologyValidatedReflectionRootStore(sourceDb, {
+      initialSnapshot: createRootSnapshot(validDocument()),
+      verifyProposal: () => true,
+      now: () => "2026-11-10T15:00:00.000Z",
+    });
+    const exported = store.exportBackup();
+    assert.equal(exported.status, "OK");
+    const restored = restoreOntologyValidatedReflectionRootBackup(restoredDb, exported.backup, {
+      verifyProposal: () => true,
+      now: () => "2026-11-10T16:00:00.000Z",
+    });
+    assert.equal(validateReflectionOntology(restored.getSnapshot().snapshot.document).ok, true);
+    assert.equal(restored.verifyAudit().ok, true);
+
+    const invalidDocument = structuredClone(exported.backup.snapshot.document);
+    invalidDocument.metadata.ontologyVersion = "future/unknown";
+    const invalidSnapshot = createRootSnapshot(invalidDocument, {
+      version: exported.backup.snapshot.version,
+      createdAt: exported.backup.snapshot.createdAt,
+    });
+    const payload = { ...exported.backup, snapshot: invalidSnapshot };
+    delete payload.backupDigest;
+    const invalidBackup = { ...payload, backupDigest: digest(canonical(payload)) };
+    assert.throws(() => restoreOntologyValidatedReflectionRootBackup(invalidDb, invalidBackup, {
+      verifyProposal: () => true,
+    }), /KRATT_ONTOLOGY_BACKUP_INVALID/);
+  } finally {
+    sourceDb.close();
+    restoredDb.close();
+    invalidDb.close();
+  }
 });
