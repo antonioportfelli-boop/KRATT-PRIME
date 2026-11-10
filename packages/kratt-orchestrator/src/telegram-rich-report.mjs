@@ -1,14 +1,18 @@
 const MAX_MESSAGE_BYTES = 32_768;
 
 function escapeMarkdown(value) {
-  return String(value ?? "").replace(/([\\_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([\\_*\[\]()~`#+\-=|{}.!])/g, "\\$1");
 }
 
 function safeUrl(value) {
   if (typeof value !== "string" || value.length > 2048) return null;
   try {
     const parsed = new URL(value);
-    return ["https:", "http:"].includes(parsed.protocol) ? parsed.toString().replaceAll(")", "%29") : null;
+    return ["https:", "http:"].includes(parsed.protocol) ? parsed.toString().replaceAll("(", "%28").replaceAll(")", "%29") : null;
   } catch { return null; }
 }
 
@@ -18,8 +22,8 @@ function excerpt(value, max = 700) {
 }
 
 function sourceBlock(source, index) {
-  const publisher = escapeMarkdown(source.publisher ?? source.sourceId ?? `Source ${index + 1}`);
-  const title = escapeMarkdown(source.title ?? "");
+  const publisher = escapeMarkdown(excerpt(source.publisher ?? source.sourceId ?? `Source ${index + 1}`, 128));
+  const title = escapeMarkdown(excerpt(source.title ?? "", 200));
   const url = safeUrl(source.canonicalUrl ?? source.url);
   const heading = url ? `[${publisher}](${url})` : publisher;
   const quote = excerpt(source.excerpt ?? source.text);
@@ -49,7 +53,7 @@ export function renderTelegramEvidenceReport({ projection, generatedAt } = {}) {
       !/^sha256:[0-9a-f]{64}$/.test(projection.rootDigest ?? "")) {
     throw new TypeError("TELEGRAM_EVIDENCE_REPORT_PROJECTION_INVALID");
   }
-  const claim = escapeMarkdown(projection.claimText ?? projection.proposition ?? projection.claimId);
+  const claim = escapeMarkdown(excerpt(projection.claimText ?? projection.proposition ?? projection.claimId, 4000));
   const status = escapeMarkdown(projection.claimStatus ?? "UNREVIEWED");
   const sources = (Array.isArray(projection.sourceRefs) ? projection.sourceRefs : []).slice(0, 12);
   const evidence = (Array.isArray(projection.evidenceLinks) ? projection.evidenceLinks : []).slice(0, 16);
