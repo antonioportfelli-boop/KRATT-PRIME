@@ -5,7 +5,7 @@ import { renderClaimReviewWidget } from "./telegram-review-widget.mjs";
  * Sending the widget creates only a pending review request; no decision is
  * approved and no signature is fabricated by this service.
  */
-export function createTelegramReviewWidgetService({ controlPlane, store, botApiClient } = {}) {
+export function createTelegramReviewWidgetService({ controlPlane, store, botApiClient, projectionService } = {}) {
   if (!controlPlane || typeof controlPlane.createClaimReviewRequest !== "function" ||
       typeof controlPlane.cancelClaimReview !== "function") {
     throw new TypeError("TELEGRAM_CONTROL_PLANE_REQUIRED");
@@ -16,12 +16,20 @@ export function createTelegramReviewWidgetService({ controlPlane, store, botApiC
   if (!botApiClient || typeof botApiClient.sendClaimReviewWidget !== "function") {
     throw new TypeError("TELEGRAM_BOT_API_WIDGET_CLIENT_REQUIRED");
   }
+  if (projectionService !== undefined && (!projectionService || typeof projectionService.get !== "function")) {
+    throw new TypeError("TELEGRAM_CLAIM_PROJECTION_SERVICE_INVALID");
+  }
 
   return Object.freeze({
-    async send({ projection, actorTelegramUserId, chatId, chatType = "private", caption } = {}) {
+    async send({ projection, claimId, actorTelegramUserId, chatId, chatType = "private", caption } = {}) {
       if (chatType !== "private" || !/^[0-9]{1,24}$/.test(String(chatId))) {
         return Object.freeze({ status: "DENY", reason: "TELEGRAM_WIDGET_PRIVATE_CHAT_REQUIRED" });
       }
+      if (!projection && projectionService && typeof claimId === "string") {
+        try { projection = await projectionService.get(claimId); }
+        catch { return Object.freeze({ status: "ERROR", reason: "TELEGRAM_CLAIM_PROJECTION_UNAVAILABLE" }); }
+      }
+      if (!projection) return Object.freeze({ status: "DENY", reason: "TELEGRAM_CLAIM_PROJECTION_REQUIRED" });
       const pending = controlPlane.createClaimReviewRequest({
         projection,
         actorTelegramUserId,
