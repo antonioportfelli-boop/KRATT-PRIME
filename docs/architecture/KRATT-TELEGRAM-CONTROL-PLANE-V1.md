@@ -117,15 +117,7 @@ No verifier, invalid clock, missing allowlist, mismatch, timeout, exception, or 
 ## 6. Telegram API 10.4 presentation contract
 
 ### Claim Review Widget
-The widget displays:
-- claim proposition and status;
-- exact source excerpt, publisher, canonical URL, capture/observation times;
-- source and excerpt digests / verification state;
-- supporting and contradicting evidence side-by-side;
-- lineage and duplicate-dependence warnings;
-- contradiction candidates and time scope;
-- root snapshot and policy version;
-- explicit decision controls and a reason field where required.
+The widget displays claim proposition and status; exact source excerpt, publisher, canonical URL, capture/observation times; source and excerpt digests / verification state; supporting and contradicting evidence side-by-side; lineage and duplicate-dependence warnings; contradiction candidates and time scope; root snapshot and policy version; explicit decision controls and a reason field where required.
 
 Widget data is a projection only. The backend re-fetches the current KRATT record and recomputes digests before accepting a decision. Never trust hidden widget fields or client-side state.
 
@@ -160,18 +152,14 @@ Core interfaces are dependency-injected:
 - `createTrustedTelegramDecisionVerifier({ trustedApprovalKeys, now, authority })` for Ed25519 architect-signed review decisions.
 - `createTelegramWebhookHandler({ controlPlane, webhookSecret, allowRequest, maxBodyBytes })` for bounded, authenticated HTTP ingress.
 - `renderClaimReviewWidget({ projection, request })` for a self-contained HTML review widget.
-- `createTelegramBotApiClient({ token, fetchImpl })` for lazy `sendWidget`, `answerWidgetQuery`, and `editMessageWidgetData` calls.
+- `createTelegramBotApiClient({ token, fetchImpl })` for lazy Bot API calls.
 - `createTelegramReviewWidgetService({ controlPlane, store, botApiClient })` for private review widget delivery.
 - `createTelegramWidgetQueryHandler({ store, botApiClient })` for authenticated decision-intent capture.
 - `createTelegramApprovalSigningRequest({ request, intent, keyId, approvedBy, issuedAt })` for an external Ed25519 signer payload.
-- `createTelegramExternalSignerAdapter({ signer, keyId, approvedBy, verifyApproval })` for a hardware/OS-keystore/separate signer bridge. The signer receives only the canonical payload; private key material stays outside KRATT.
-- `renderTelegramEvidenceReport({ projection, generatedAt })` and `createTelegramEvidenceReporter({ botApiClient })` for persistent source-grounded Rich Message reports.
-- `ingestAuthenticatedUpdate({ update, receivedSecret })` (async; intake persistence is injected through `persistIntake`)
-- `createClaimReviewRequest({ projection, actorTelegramUserId, chatId })`
-- `resolveClaimReview({ requestId, actorTelegramUserId, chatId, decision, reason, targetDigest, evidenceSnapshotDigest, rootDigest, policyVersion, proof })`
-- `cancelClaimReview({ requestId, actorTelegramUserId })`
-- persistence adapters: `persistIntake` and `persistDecision`; the feature-branch SQLite store now also persists update-ID idempotency, review requests, decisions, and hash-linked audit events transactionally. Multi-host operation still requires a shared transactional adapter.
-- transport adapter: `sendWidget`, `sendRichMessage`, `answerWidgetQuery`, `answerCallbackQuery` (implemented by a separately tested Telegram API client; no network call in core).
+- `createTelegramExternalSignerAdapter({ signer, keyId, approvedBy, verifyApproval })` for a hardware/OS-keystore/separate signer bridge. The signer receives only the canonical request-bound payload; private key material stays outside KRATT.
+- `renderTelegramEvidenceReport({ projection, generatedAt })` and `createTelegramEvidenceReporter({ botApiClient })` for source-grounded Rich Message reports.
+- `createTelegramClaimProjectionService({ claimRepository, evidenceRepository, sourceRepository, rootProvider, contradictionRepository })` for verified, read-only claim projections.
+- persistence adapters for update intake, decision requests, decisions, nonce consumption, and hash-linked audit events. Multi-host operation still requires a shared transactional adapter.
 
 ## 9. Observability
 
@@ -208,32 +196,48 @@ Acceptance requires test output and CI tied to exact commit SHA, review of the c
 - **P1 — read-only ingestion:** Telegram messages/channel posts into the existing intake and segmentation pipeline.
 - **P2 — Claim Review Widget:** projection, widget renderer, callback/query adapter, fallback messages.
 - **P3 — Rich Message reporting:** cited evidence brief and persistent decision receipt.
-- **P4 — Reflection integration:** proposed RootDelta only; reuse canonical Reflection Matrix and CAS.
+- **P4 — Reflection integration:** proposal-only RootDelta bridge; canonical root mutation remains outside Telegram and requires the existing authoritative CAS.
 - **P5 — operational readiness:** secret management, rate limits, retention, monitoring, threat review, deployment plan (not deployment).
 
 ## 12. Explicit non-goals for V1
 
 TON wallet/gift operations, Telegram business account automation, automatic posting/publication, autonomous write permissions, unreviewed model-generated claim promotion, live connector activation, production webhook deployment.
 
-
-## 13. Implementation status — P0 durable authorization slice
+## 13. Implementation status — Telegram and strict approval slice
 
 Implemented on `feature/kratt-telegram-control-plane-v1`:
-- `createTrustedTelegramDecisionVerifier` verifies Ed25519 signatures against a deployment-supplied public-key registry. Each key is bound to one Telegram approver ID and the explicit `kratt.claim.review` authority.
-- The signed Telegram decision binds request ID, nonce, actor, private chat ID, claim ID, target/evidence/root digests, policy version, decision, reason, issue/expiry timestamps, approver, authority, and key ID.
-- Nonce consumption is deliberately not performed by the signature verifier. The SQLite store consumes the signed nonce, inserts the decision, transitions the review request to CONSUMED, and appends the audit event in one SQLite transaction.
-- `createSqliteTelegramStore` persists update IDs, payload digests, processing leases, unreviewed intake, review requests, decisions, and hash-linked audit events. File-backed restart tests cover durable update deduplication and decision/nonce persistence.
-- Update processing uses bounded leases. Same update ID with a different payload digest is blocked; duplicate completed updates are idempotent.
-- The SQLite ingress limiter stores only a salted hash of the socket peer address, never trusts forwarded headers, and fails closed on database or clock errors.
-- The external signer adapter sends only the exact canonical request-bound payload to the injected signer, then verifies the returned Ed25519 signature locally before allowing the approval gateway to persist it.
-- The claim projection service verifies the existing KRATT evidence-card digests, source-content digests, exact UTF-16 offsets and excerpt digests, and binds claim/evidence/source/root snapshots into one evidenceSnapshotDigest.
-- The webhook ingress handler requires POST + JSON, checks Telegram's secret-token header before parsing, requires an injected rate-limit decision, bounds request size, and maps processing states to retry-safe HTTP responses. Telegram requires WidgetQuery answers within 15 seconds and limits each user to five widget queries per five seconds; the handler acknowledges supported and rejected shared-widget queries immediately.
-- The Claim Review Widget is self-contained, HTML-escaped, compressed-size checked, private-chat only, non-shared, and uses short `TelegramWidget.request` action codes. It has no network access and does not collect free-form keyboard input; reject/contest reasons are selected from controlled reason codes.
-- Rich Message evidence reports include claim status, source lineage, source excerpts, digest references, support/contradiction counts, contradiction candidates, and an explicit non-verdict boundary. Untrusted text is escaped and source links are limited to HTTP(S).
-- Widget sends are linked to a durable (chat ID, message ID) → review request mapping. WidgetQuery events are deduplicated and produce a durable `PENDING_SIGNATURE` decision intent only. Only the `data` query type and 1–64-byte action payloads are accepted; shared-widget decisions are explicitly rejected and acknowledged.
-- A separate Ed25519 signing request payload binds the exact intent and request. The external signer retains the private key; KRATT verifies the signature and atomically consumes the nonce before marking the intent SIGNED and persisting the decision.
-- Audit events for intake, request creation, decision intents, decisions, cancellation, and routed updates are committed with their corresponding durable state transition.
+- Telegram update normalization, webhook-secret validation, bounded webhook handler, idempotent update processing, and durable SQLite persistence.
+- Salted peer-address hashing in the ingress limiter; forwarded headers are not trusted.
+- Private-chat review-widget delivery/query handling, durable message-to-request mapping, and decision-intent lifecycle.
+- Ed25519 approval verification and external signer interface; private keys remain outside KRATT.
+- Atomic persistence of signed decision, one-time nonce consumption, review-request transition, and audit event.
+- Read-only claim projection verifies evidence-card digests, source-content digests, exact UTF-16 offsets, excerpt digests, and binds the root snapshot.
+- Source-grounded evidence report rendering and HTML escaping.
+- Tests cover persistence/restart, replay/idempotency, webhook bounds, rate limiting, widget routing, provenance, and strict approval.
+
+The following remain NOT CONNECTED / NOT LIVE: production claim/evidence repositories; deployment-specific trusted-proxy and edge rate-limit wiring; actual Telegram webhook registration/polling and public route; production key provisioning and hardware/OS signer UI; shared multi-host persistence; operational backup/encryption/retention/key custody. No live Telegram connection or production deployment is enabled.
 
 The store is a **single-host SQLite adapter**. Multi-host deployments require a shared transactional store with equivalent atomicity. Database file location, backup, encryption-at-rest, retention, permissions, and operational key custody remain deployment responsibilities.
 
-Still not implemented: Telegram HTTP client, public webhook route, request rate limiter at the edge, actual Bot API 10.4 Widget HTML renderer, Rich Message renderer, live Telegram update polling/webhook activation, production key provisioning/rotation, canonical claim/evidence projection fetch, and Reflection Matrix CAS adapter. No live Telegram connection or production deployment is enabled.
+## 14. Reflection proposal bridge — non-mutating P4 slice (2026-11-10)
+
+The current repository tree contains no canonical Reflection Matrix, RootDelta schema, root mutation API, or compare-and-swap implementation. Therefore the Telegram work must not invent one or claim that reflection is integrated.
+
+A proposal-only bridge is added at `packages/kratt-core/src/telegram-reflection-proposal.mjs`. It:
+- reads a review request and decision from the durable decision store;
+- requires the request to be terminal `CONSUMED` and the persisted decision to be an architect-verified `APPROVE` record;
+- reloads the claim projection and requires exact claim, evidence-snapshot, and root-digest equality with the signed decision;
+- delegates RootDelta construction to a host-injected canonical builder, treating its output as opaque JSON data;
+- binds the delta digest, expected root version/digest, decision ID, request ID, and policy version into a proposal envelope;
+- labels every result `PROPOSAL_ONLY` / `NOT_APPLIED` and performs no root write, CAS, proposal persistence, or Telegram acknowledgement.
+
+The bridge fails closed on missing adapters, unconsumed requests, non-APPROVE decisions, stale roots, malformed/non-canonical deltas, or builder failures. Its tests use synthetic adapters and do not prove integration with a production Reflection Matrix.
+
+### Required canonical integration before applying any RootDelta
+1. Supply the actual Reflection Matrix snapshot and RootDelta types from their source of truth.
+2. Supply a canonical delta validator and a durable proposal repository.
+3. Supply a compare-and-swap operation that atomically checks expected root version + digest and applies one proposal exactly once.
+4. Bind CAS to the already persisted architect decision and immutable evidence snapshot; reject replay, stale roots, policy drift, and conflicting proposals.
+5. Add concurrency/restart tests and a synthetic end-to-end test. No live root mutation until separately approved.
+
+**Status boundary:** the proposal bridge is implemented as an isolated contract. Canonical RootDelta semantics, durable proposal storage, Reflection Matrix CAS, and production integration remain NOT CONNECTED.
