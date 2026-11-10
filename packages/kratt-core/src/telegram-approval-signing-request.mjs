@@ -23,7 +23,13 @@ export function createTelegramApprovalSigningRequest({
   if (!request || !intent || intent.status !== "PENDING_SIGNATURE" ||
       intent.requestId !== request.requestId ||
       intent.actorTelegramUserId !== request.actorTelegramUserId ||
-      intent.decision !== undefined && !["APPROVE","REJECT","CONTEST","ABSTAIN"].includes(intent.decision) ||
+      intent.chatId !== request.chatId ||
+      intent.targetDigest !== request.targetDigest ||
+      intent.evidenceSnapshotDigest !== request.evidenceSnapshotDigest ||
+      intent.rootDigest !== request.rootDigest ||
+      intent.policyVersion !== request.policyVersion ||
+      !["APPROVE","REJECT","CONTEST","ABSTAIN"].includes(intent.decision) ||
+      typeof intent.reason !== "string" || intent.reason.length > 2000 ||
       typeof keyId !== "string" || !ID.test(keyId) ||
       typeof approvedBy !== "string" || approvedBy !== request.actorTelegramUserId ||
       typeof authority !== "string" || !ID.test(authority) ||
