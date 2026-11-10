@@ -88,6 +88,7 @@ export function createTelegramReflectionCasAdapter({
   decisionStore,
   verifyApprovalProof,
   now = () => Date.now(),
+  validateDocument = () => true,
 } = {}) {
   const verifyProposal = createTrustedTelegramReflectionProposalVerifier({
     decisionStore,
@@ -101,6 +102,7 @@ export function createTelegramReflectionCasAdapter({
       const current = now();
       return new Date(typeof current === "string" ? Date.parse(current) : current).toISOString();
     },
+    validateDocument,
   });
   return Object.freeze({ rootStore, verifyProposal });
 }
