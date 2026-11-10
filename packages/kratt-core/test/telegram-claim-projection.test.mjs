@@ -98,8 +98,8 @@ test("projection requires all read-only repositories and a valid root snapshot",
 test("projection permits multiple verified excerpts from the same source", async () => {
   const content = "First verified statement. Second verified statement.";
   const excerpts = [
-    { startOffset: 0, endOffset: 26 },
-    { startOffset: 27, endOffset: content.length },
+    { startOffset: 0, endOffset: 25 },
+    { startOffset: 26, endOffset: content.length },
   ].map(item => {
     const text = content.slice(item.startOffset, item.endOffset);
     return {
