@@ -31,8 +31,11 @@ function outcome(status, reason, extra = {}) {
 
 export function verifyTelegramWebhookSecret(received, expected) {
   if (typeof received !== "string" || typeof expected !== "string" ||
-      received.length < 1 || expected.length < 1 || received.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(received, "utf8"), Buffer.from(expected, "utf8"));
+      received.length < 1 || expected.length < 1) return false;
+  const receivedBytes = Buffer.from(received, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  if (receivedBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(receivedBytes, expectedBytes);
 }
 
 /**
@@ -273,6 +276,10 @@ export function createTelegramControlPlane({
       if (stored) {
         entry = { request: stored.request, consumed: stored.state === "CONSUMED" || stored.state === "CANCELLED" || stored.state === "EXPIRED", processing: stored.state === "PROCESSING" };
         requests.set(requestId, entry);
+        if (stored.state === "CONSUMED") {
+          const priorDecision = store.getDecision(requestId);
+          if (priorDecision) decisions.set(requestId, priorDecision);
+        }
       }
     }
     if (!entry) return outcome("NOT_FOUND", "TELEGRAM_APPROVAL_REQUEST_NOT_FOUND");
