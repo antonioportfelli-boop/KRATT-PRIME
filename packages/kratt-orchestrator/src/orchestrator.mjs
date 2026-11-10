@@ -169,7 +169,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     emit("ADAPTER_STATE_CHANGED", adapterId, {
       previousState: current.state,
       nextState,
-      verifierId: nextState === "VERIFIED_READ_ONLY" ? evidence.verifierId : null,
+      verifierId: nextState === "VERIFIED_READ_ONLY" && current.state === "CONNECTED_UNVERIFIED" ? evidence.verifierId : null,
     });
     return result("OK", "ADAPTER_STATE_UPDATED", { adapter: updated });
   }
