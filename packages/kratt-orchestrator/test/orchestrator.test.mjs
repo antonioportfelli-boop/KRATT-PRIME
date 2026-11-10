@@ -68,7 +68,7 @@ test("verified read adapter executes only declared read capabilities", async () 
 
 test("write requires request-bound approval and returns adapter to read-only state", async () => {
   const calls = [];
-  const orchestrator = createOrchestrator({
+  const orchestrator = testOrchestrator({
     now: () => stamp,
     verifyApproval: (artifact, binding) => artifact?.requestId === binding.requestId &&
       artifact?.payloadDigest === binding.payloadDigest &&
@@ -102,7 +102,7 @@ test("write requires request-bound approval and returns adapter to read-only sta
 
 test("missing, mismatched and replayed approval artifacts cannot execute writes", async () => {
   let calls = 0;
-  const orchestrator = createOrchestrator({
+  const orchestrator = testOrchestrator({
     now: () => stamp,
     verifyApproval: (artifact, binding) => artifact?.requestId === binding.requestId,
   });
