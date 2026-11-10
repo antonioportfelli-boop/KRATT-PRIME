@@ -9,6 +9,7 @@ import { createTelegramWidgetQueryHandler } from "../../kratt-orchestrator/src/t
 import { normalizeTelegramUpdate } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createTrustedTelegramDecisionVerifier } from "../src/telegram-approval-verifier.mjs";
 import { createTelegramApprovalSigningRequest } from "../src/telegram-approval-signing-request.mjs";
+import { createTelegramEvidenceReporter, renderTelegramEvidenceReport } from "../../kratt-orchestrator/src/telegram-rich-report.mjs";
 import { renderClaimReviewWidget } from "../../kratt-orchestrator/src/telegram-review-widget.mjs";
 import { createTelegramBotApiClient } from "../../kratt-orchestrator/src/telegram-bot-api-client.mjs";
 
@@ -340,4 +341,73 @@ test("WidgetQuery rejects wrong actor and unsupported shared-widget decision con
     assert.equal(wrongActor.status, "DENY");
     assert.equal(store.getDecisionIntent(sent.requestId), null);
   } finally { database.close(); }
+});
+
+test("Rich evidence report escapes untrusted text and separates evidence integrity from truth", () => {
+  const report = renderTelegramEvidenceReport({
+    projection: {
+      ...projection,
+      claimText: "<script>alert(1)</script> Claim",
+      claimStatus: "UNREVIEWED",
+      sourceRefs: [{
+        publisher: "Publisher <img>",
+        title: "Source title",
+        canonicalUrl: "javascript:alert(1)",
+        excerpt: "<svg onload=alert(1)> untrusted excerpt",
+        digest: digest("d"),
+        capturedAt: "2026-11-10T12:00:00.000Z",
+      }],
+      evidenceLinks: [
+        { relation: "SUPPORTS", evidenceId: "ev-1", summary: "Support evidence" },
+        { relation: "CONTRADICTS", evidenceId: "ev-2", summary: "Contradiction evidence" },
+      ],
+      contradictions: [{ summary: "Potential contradiction" }],
+    },
+    generatedAt: "2026-11-10T12:00:00.000Z",
+  });
+  assert.equal(report.markdown.includes("<script>"), false);
+  assert.equal(report.markdown.includes("&lt;script&gt;"), true);
+  assert.equal(report.markdown.includes("javascript:"), false);
+  assert.equal(report.markdown.includes("Source integrity and claim truth are separate"), true);
+  assert.equal(report.markdown.includes("Supporting links: 1"), true);
+  assert.equal(report.markdown.includes("Contradicting links: 1"), true);
+  assert.ok(report.bytes <= 32768);
+});
+
+test("Rich evidence reporter sends persistent Telegram Rich Message through the API client", async () => {
+  const sent = [];
+  const reporter = createTelegramEvidenceReporter({
+    botApiClient: {
+      async sendRichMessage(args) {
+        sent.push(args);
+        return { message_id: 222 };
+      },
+    },
+  });
+  const result = await reporter.send({ chatId: 123456, projection, generatedAt: "2026-11-10T12:00:00.000Z" });
+  assert.equal(result.status, "OK");
+  assert.equal(result.messageId, 222);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].protectContent, true);
+  assert.equal(sent[0].markdown.includes("KRATT PRIME — Evidence Review"), true);
+});
+
+test("Bot API client sends a persistent Rich Message, not an ephemeral draft", async () => {
+  const calls = [];
+  const client = createTelegramBotApiClient({
+    token: "123456789:local-test-token-secret",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return { ok: true, json: async () => ({ ok: true, result: { message_id: 333 } }) };
+    },
+  });
+  const result = await client.sendRichMessage({
+    chatId: 123456,
+    markdown: "# KRATT Evidence Report",
+    protectContent: true,
+  });
+  assert.equal(result.message_id, 333);
+  assert.equal(calls[0].url.endsWith("/sendRichMessage"), true);
+  assert.deepEqual(calls[0].body.rich_message, { markdown: "# KRATT Evidence Report" });
+  assert.equal(calls[0].body.protect_content, true);
 });
