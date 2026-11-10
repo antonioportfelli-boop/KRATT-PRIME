@@ -150,10 +150,17 @@ export function validateRootDelta(delta) {
     }
     const encoded = canonical(delta);
     if (Buffer.byteLength(encoded, "utf8") > MAX_DELTA_BYTES) return Object.freeze({ ok: false, reason: "ROOT_DELTA_SIZE_LIMIT" });
-    const next = { nodes: [], edges: [], metadata: {} };
-    for (const op of delta.operations) applyOperation(next, op);
-    if (!rootDocumentValid(next)) return Object.freeze({ ok: false, reason: "ROOT_DELTA_RESULT_INVALID" });
-    return Object.freeze({ ok: true, digest: sha256(encoded), document: freezeDeep(next) });
+    for (const op of delta.operations) {
+      if (!op || typeof op !== "object" || Array.isArray(op) ||
+          !["add", "replace", "remove"].includes(op.op) ||
+          Object.keys(op).some(key => !["op", "path", "value"].includes(key)) ||
+          (op.op === "remove" ? Object.hasOwn(op, "value") : !Object.hasOwn(op, "value"))) {
+        return Object.freeze({ ok: false, reason: "ROOT_DELTA_OPERATION_INVALID" });
+      }
+      pointerParts(op.path);
+      if (op.op !== "remove") canonical(op.value);
+    }
+    return Object.freeze({ ok: true, digest: sha256(encoded) });
   } catch (error) {
     return Object.freeze({ ok: false, reason: error instanceof Error ? error.message : "ROOT_DELTA_INVALID" });
   }
@@ -287,7 +294,11 @@ export function createSqliteReflectionRootStore(database, {
         const validated = validateRootDelta(proposal.rootDelta);
         if (!validated.ok) return Object.freeze({ status: "DENY", reason: validated.reason });
         const nextDocument = cloneJson(snapshot.document);
-        for (const operation of proposal.rootDelta.operations) applyOperation(nextDocument, operation);
+        try {
+          for (const operation of proposal.rootDelta.operations) applyOperation(nextDocument, operation);
+        } catch {
+          return Object.freeze({ status: "DENY", reason: "REFLECTION_ROOT_DELTA_APPLICATION_INVALID" });
+        }
         if (!rootDocumentValid(nextDocument)) return Object.freeze({ status: "DENY", reason: "REFLECTION_ROOT_RESULT_INVALID" });
         const appliedAt = now();
         if (typeof appliedAt !== "string" || !Number.isFinite(Date.parse(appliedAt))) throw new Error("REFLECTION_ROOT_CLOCK_INVALID");
