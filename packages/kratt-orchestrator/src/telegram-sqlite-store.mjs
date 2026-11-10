@@ -64,6 +64,13 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
       decision_json TEXT NOT NULL,
       FOREIGN KEY(request_id) REFERENCES kratt_telegram_review_requests(request_id)
     );
+    CREATE TABLE IF NOT EXISTS kratt_telegram_review_messages (
+      chat_id TEXT NOT NULL,
+      message_id INTEGER NOT NULL,
+      request_id TEXT NOT NULL UNIQUE,
+      PRIMARY KEY(chat_id,message_id),
+      FOREIGN KEY(request_id) REFERENCES kratt_telegram_review_requests(request_id)
+    );
     CREATE TABLE IF NOT EXISTS kratt_telegram_audit_events (
       sequence INTEGER PRIMARY KEY,
       event_id TEXT NOT NULL UNIQUE,
@@ -84,6 +91,8 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     saveRequest: database.prepare("INSERT INTO kratt_telegram_review_requests (request_id,request_json,state) VALUES (?,?,'PENDING')"),
     getRequest: database.prepare("SELECT request_json,state FROM kratt_telegram_review_requests WHERE request_id=?"),
     getDecision: database.prepare("SELECT decision_json FROM kratt_telegram_decisions WHERE request_id=?"),
+    linkReviewMessage: database.prepare("INSERT INTO kratt_telegram_review_messages (chat_id,message_id,request_id) VALUES (?,?,?)"),
+    getRequestByMessage: database.prepare("SELECT r.request_json,r.state FROM kratt_telegram_review_messages m JOIN kratt_telegram_review_requests r ON r.request_id=m.request_id WHERE m.chat_id=? AND m.message_id=?"),
     claimRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='PROCESSING' WHERE request_id=? AND state='PENDING'"),
     releaseRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='PENDING' WHERE request_id=? AND state='PROCESSING'"),
     cancelRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='CANCELLED' WHERE request_id=? AND state='PENDING'"),
@@ -197,6 +206,19 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     return row ? parseJson(row.decision_json) : null;
   }
 
+  function linkReviewMessage(chatId, messageId, requestId) {
+    if (typeof chatId !== "string" || !/^[0-9]{1,24}$/.test(chatId) ||
+        !Number.isSafeInteger(messageId) || messageId < 1 || typeof requestId !== "string") return false;
+    try { statements.linkReviewMessage.run(chatId, messageId, requestId); return true; } catch { return false; }
+  }
+
+  function getReviewRequestForMessage(chatId, messageId) {
+    const row = statements.getRequestByMessage.get(String(chatId), messageId);
+    if (!row) return null;
+    const request = parseJson(row.request_json);
+    return request ? Object.freeze({ request, state: row.state }) : null;
+  }
+
   function claimReviewRequest(requestId) {
     try { return Number(statements.claimRequest.run(requestId).changes) === 1; } catch { return false; }
   }
@@ -256,7 +278,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
 
   return Object.freeze({
     claimUpdate, persistIntake, completeUpdate, releaseUpdate,
-    saveReviewRequest, getReviewRequest, getDecision, claimReviewRequest,
+    saveReviewRequest, getReviewRequest, getDecision, linkReviewMessage, getReviewRequestForMessage, claimReviewRequest,
     releaseReviewRequest, cancelReviewRequest, expireReviewRequest, persistDecision,
     appendAuditEvent, snapshot,
   });
