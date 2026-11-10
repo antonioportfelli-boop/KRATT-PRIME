@@ -25,6 +25,7 @@
         <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span>Overview</button>
         <button class="nav-item" data-view="signals"><span class="nav-icon">⌁</span>Signal stream <span class="nav-count" id="signal-count-nav">8</span></button>
         <button class="nav-item" data-view="evidence"><span class="nav-icon">⟡</span>Evidence graph</button>
+        <button class="nav-item" data-view="segments"><span class="nav-icon">▤</span>Knowledge segments</button>
         <button class="nav-item" data-view="orchestration"><span class="nav-icon">⌘</span>Orchestration</button>
         <button class="nav-item" data-view="connectors"><span class="nav-icon">⤳</span>Connectors</button>
       </nav>
@@ -131,6 +132,12 @@
         <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>INGESTION LAYER</div><h1>Signal stream<span class="heading-dot">.</span></h1><p>Incoming information, normalized and ranked — never assumed true.</p></div><div class="heading-actions"><button class="button button-primary" id="new-intake-signals">＋ New intake</button></div></div>
         <div class="filter-bar"><input id="signal-search" type="search" placeholder="Search signal, source or subject…" aria-label="Search signals"><select id="signal-filter" aria-label="Filter signals"><option value="all">All signals</option><option value="unverified">Unverified</option><option value="corroborated">Corroborated</option></select><span class="filter-total" id="signal-total">8 records</span></div>
         <section class="panel full-panel"><div class="panel-heading"><div><h2>Source intelligence</h2><p>Sample dataset · use Run local demo to append a local event.</p></div><span class="status-chip status-pending">SAMPLE DATA</span></div><div class="signal-list" id="all-signals"></div></section>
+      </section>
+
+      <section class="page-view" id="view-segments">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>STRUCTURAL KNOWLEDGE LAYER</div><h1>Knowledge segments<span class="heading-dot">.</span></h1><p>Source-linked information units with exact offsets, content digests and review state.</p></div><div class="heading-actions"><span class="status-chip status-pending">UNREVIEWED BY DEFAULT</span></div></div>
+        <div class="notice-bar"><span class="notice-icon">ⓘ</span><span><b>Segmentation is not verification.</b> These units preserve source structure and provenance; they do not establish truth or automatically assert claims.</span></div>
+        <section class="panel full-panel"><div class="panel-heading"><div><h2>Latest segmentation batch</h2><p id="segment-summary">No source text has been segmented in this session.</p></div><span class="tiny-label" id="segment-source">NO SOURCE</span></div><div id="segment-list" class="segment-list"><div class="empty-state">Open New intake and paste source text to create traceable knowledge segments.</div></div></section>
       </section>
 
       <section class="page-view" id="view-evidence">
