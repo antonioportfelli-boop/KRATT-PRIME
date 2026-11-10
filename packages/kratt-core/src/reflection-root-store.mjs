@@ -141,6 +141,102 @@ export function createRootSnapshot(document, { version = 0, createdAt = new Date
   });
 }
 
+export function verifyReflectionRootBackup(backup, { validateDocument = () => true } = {}) {
+  try {
+    if (!backup || typeof backup !== "object" || Array.isArray(backup) ||
+        backup.schemaVersion !== "kratt-reflection-root-backup/v1" ||
+        typeof backup.backupDigest !== "string" || typeof validateDocument !== "function" ||
+        !Array.isArray(backup.appliedProposals) || !Array.isArray(backup.audit) ||
+        !Array.isArray(backup.migrations) || typeof backup.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(backup.createdAt))) return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_SHAPE_INVALID" });
+    const payload = { ...backup };
+    delete payload.backupDigest;
+    if (sha256(canonical(payload)) !== backup.backupDigest) return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_DIGEST_INVALID" });
+    const snapshot = backup.snapshot;
+    if (!snapshot || snapshot.schemaVersion !== "kratt-root-snapshot/v1" ||
+        !rootDocumentValid(snapshot.document) || !Number.isSafeInteger(snapshot.version) || snapshot.version < 0 ||
+        !Number.isFinite(Date.parse(snapshot.createdAt)) ||
+        createRootSnapshot(snapshot.document, { version: snapshot.version, createdAt: snapshot.createdAt }).digest !== snapshot.digest ||
+        validateDocument(snapshot.document) !== true) return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_SNAPSHOT_INVALID" });
+
+    let previous = null, sequence = 0;
+    const eventIds = new Set(), eventHashes = new Set();
+    for (const row of backup.audit) {
+      sequence += 1;
+      if (!row || !row.event || row.event.sequence !== sequence ||
+          row.event.previousHash !== previous || row.previousHash !== previous ||
+          typeof row.event.eventId !== "string" || eventIds.has(row.event.eventId) ||
+          typeof row.hash !== "string" || row.event.hash !== row.hash || eventHashes.has(row.hash)) {
+        return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_AUDIT_CHAIN_INVALID" });
+      }
+      const body = { ...row.event };
+      delete body.hash;
+      if (sha256(canonical(body)) !== row.hash) return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_AUDIT_HASH_INVALID" });
+      eventIds.add(row.event.eventId);
+      eventHashes.add(row.hash);
+      previous = row.hash;
+    }
+    const proposalIds = new Set(), decisionIds = new Set();
+    for (const row of backup.appliedProposals) {
+      if (!row || typeof row.proposal_id !== "string" || typeof row.proposal_digest !== "string" ||
+          typeof row.decision_id !== "string" || proposalIds.has(row.proposal_id) || decisionIds.has(row.decision_id) ||
+          !Number.isSafeInteger(Number(row.applied_root_version)) || Number(row.applied_root_version) < 1 ||
+          Number(row.applied_root_version) > snapshot.version || !DIGEST.test(row.applied_root_digest) ||
+          typeof row.applied_at !== "string" || !Number.isFinite(Date.parse(row.applied_at))) {
+        return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_APPLIED_PROPOSAL_INVALID" });
+      }
+      proposalIds.add(row.proposal_id);
+      decisionIds.add(row.decision_id);
+    }
+    if (!backup.migrations.some(row => row?.version === "001_root_cas_v1" && typeof row.appliedAt === "string" && Number.isFinite(Date.parse(row.appliedAt)))) {
+      return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_MIGRATION_INVALID" });
+    }
+    return Object.freeze({ ok: true, auditCount: sequence, appliedProposalCount: proposalIds.size });
+  } catch {
+    return Object.freeze({ ok: false, reason: "REFLECTION_BACKUP_VERIFY_FAILED" });
+  }
+}
+
+/** Restore a verified logical backup into an empty SQLite database only. */
+export function restoreSqliteReflectionRootBackup(database, backup, {
+  verifyProposal,
+  now = () => new Date().toISOString(),
+  validateDocument = () => true,
+} = {}) {
+  if (!database || typeof database.prepare !== "function" || typeof database.exec !== "function" ||
+      typeof verifyProposal !== "function" || typeof now !== "function" || typeof validateDocument !== "function") {
+    throw new TypeError("REFLECTION_BACKUP_RESTORE_ADAPTERS_REQUIRED");
+  }
+  const verified = verifyReflectionRootBackup(backup, { validateDocument });
+  if (!verified.ok) throw new TypeError(verified.reason);
+  const table = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='kratt_reflection_root'").get();
+  if (table) {
+    const existing = database.prepare("SELECT 1 AS present FROM kratt_reflection_root WHERE singleton=1").get();
+    if (existing) throw new Error("REFLECTION_BACKUP_RESTORE_TARGET_NOT_EMPTY");
+  }
+  const store = createSqliteReflectionRootStore(database, {
+    initialSnapshot: backup.snapshot,
+    verifyProposal,
+    now,
+    validateDocument,
+  });
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.exec("DELETE FROM kratt_reflection_audit; DELETE FROM kratt_reflection_applied_proposals; DELETE FROM kratt_reflection_schema_migrations;");
+    const insertAudit = database.prepare("INSERT INTO kratt_reflection_audit(sequence,event_id,event_json,previous_hash,event_hash) VALUES(?,?,?,?,?)");
+    for (const row of backup.audit) insertAudit.run(row.event.sequence, row.event.eventId, canonical(row.event), row.previousHash, row.hash);
+    const insertApplied = database.prepare("INSERT INTO kratt_reflection_applied_proposals(proposal_id,proposal_digest,decision_id,applied_root_version,applied_root_digest,applied_at) VALUES(?,?,?,?,?,?)");
+    for (const row of backup.appliedProposals) insertApplied.run(row.proposal_id, row.proposal_digest, row.decision_id, row.applied_root_version, row.applied_root_digest, row.applied_at);
+    const insertMigration = database.prepare("INSERT INTO kratt_reflection_schema_migrations(version,applied_at) VALUES(?,?)");
+    for (const row of backup.migrations) insertMigration.run(row.version, row.appliedAt);
+    database.exec("COMMIT");
+  } catch (error) {
+    try { database.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
+  return store;
+}
+
 export function validateRootDelta(delta) {
   try {
     if (!delta || typeof delta !== "object" || Array.isArray(delta) ||
@@ -362,5 +458,26 @@ export function createSqliteReflectionRootStore(database, {
     return getMigrations.all().map(row => Object.freeze({ version: row.version, appliedAt: row.applied_at }));
   }
 
-  return Object.freeze({ getSnapshot, applyProposal, listAudit, verifyAudit, listMigrations });
+  function exportBackup() {
+    const current = getSnapshot();
+    const auditIntegrity = verifyAudit();
+    const createdAt = now();
+    if (current.status !== "OK" || !auditIntegrity.ok ||
+        typeof createdAt !== "string" || !Number.isFinite(Date.parse(createdAt))) {
+      return Object.freeze({ status: "ERROR", reason: "REFLECTION_BACKUP_EXPORT_FAILED" });
+    }
+    const appliedProposals = database.prepare("SELECT proposal_id,proposal_digest,decision_id,applied_root_version,applied_root_digest,applied_at FROM kratt_reflection_applied_proposals ORDER BY applied_root_version,proposal_id").all();
+    const payload = {
+      schemaVersion: "kratt-reflection-root-backup/v1",
+      createdAt,
+      snapshot: current.snapshot,
+      appliedProposals,
+      audit: listAudit(),
+      migrations: listMigrations(),
+    };
+    const backup = { ...payload, backupDigest: sha256(canonical(payload)) };
+    return Object.freeze({ status: "OK", backup: freezeDeep(backup) });
+  }
+
+  return Object.freeze({ getSnapshot, applyProposal, listAudit, verifyAudit, listMigrations, exportBackup });
 }
