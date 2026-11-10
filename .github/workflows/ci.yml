@@ -22,6 +22,10 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
+      - name: Dependency vulnerability inventory
+        run: |
+          npm audit --json > /tmp/kratt-npm-audit.json || true
+          node -e 'const a=JSON.parse(require("node:fs").readFileSync("/tmp/kratt-npm-audit.json","utf8")); console.log(JSON.stringify({metadata:a.metadata?.vulnerabilities, advisories:Object.entries(a.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==="string"?x:{name:x.name,title:x.title,url:x.url,range:x.range})}))},null,2))'
       - name: KRATT core and orchestration contract tests
         run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
       - name: Console and local API syntax
