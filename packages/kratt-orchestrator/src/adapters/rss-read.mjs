@@ -215,3 +215,30 @@ export function createRssReadAdapter({
     },
   });
 }
+
+
+/**
+ * Register an RSS/Atom reader in the governed adapter registry.
+ * Registration leaves it DISCOVERED; a trusted host verifier must separately
+ * promote it to VERIFIED_READ_ONLY before any read can execute.
+ */
+export function registerRssReadAdapter(orchestrator, {
+  id = "rss-primary",
+  name = "RSS / Atom",
+  ...adapterOptions
+} = {}) {
+  if (!orchestrator || typeof orchestrator.registerAdapter !== "function") {
+    throw new TypeError("KRATT_ORCHESTRATOR_REQUIRED");
+  }
+  const connector = createRssReadAdapter(adapterOptions);
+  const descriptor = orchestrator.registerAdapter({
+    id,
+    name,
+    kind: "feed",
+    capabilities: connector.capabilities,
+    permissions: connector.permissions,
+  }, {
+    read: args => connector.read(args),
+  });
+  return Object.freeze({ descriptor, connector });
+}
