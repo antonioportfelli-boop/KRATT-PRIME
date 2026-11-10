@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: 22
       - name: Run contract tests
-        run: node --test packages/kratt-core/test/*.test.mjs
+        run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
   typecheck-build:
     name: Existing app typecheck and build
     runs-on: ubuntu-latest
