@@ -78,6 +78,7 @@ export function normalizeTelegramUpdate(update) {
 export function createTelegramControlPlane({
   now = () => new Date().toISOString(),
   allowedArchitectUserIds = [],
+  webhookSecret,
   verifyApproval,
   persistDecision = async () => true,
 } = {}) {
@@ -89,6 +90,7 @@ export function createTelegramControlPlane({
   if (typeof persistDecision !== "function") throw new TypeError("TELEGRAM_PERSISTENCE_ADAPTER_INVALID");
 
   const architects = new Set(allowedArchitectUserIds);
+  const configuredWebhookSecret = typeof webhookSecret === "string" && webhookSecret.length > 0 ? webhookSecret : null;
   const updates = new Map();
   const intakes = [];
   const requests = new Map();
@@ -118,8 +120,8 @@ export function createTelegramControlPlane({
     return body;
   }
 
-  function ingestAuthenticatedUpdate({ update, receivedSecret, expectedSecret } = {}) {
-    if (!verifyTelegramWebhookSecret(receivedSecret, expectedSecret)) {
+  function ingestAuthenticatedUpdate({ update, receivedSecret } = {}) {
+    if (!configuredWebhookSecret || !verifyTelegramWebhookSecret(receivedSecret, configuredWebhookSecret)) {
       return outcome("DENY", "TELEGRAM_WEBHOOK_AUTHENTICATION_FAILED");
     }
     const normalized = normalizeTelegramUpdate(update);
@@ -223,6 +225,7 @@ export function createTelegramControlPlane({
     if (entry.consumed) return decisions.has(requestId)
       ? outcome("DUPLICATE", "TELEGRAM_DECISION_ALREADY_PERSISTED", { decision: decisions.get(requestId) })
       : outcome("BLOCKED", "TELEGRAM_APPROVAL_REQUEST_CONSUMED");
+    if (entry.processing) return outcome("BLOCKED", "TELEGRAM_APPROVAL_ALREADY_IN_PROGRESS");
     if (!architects.has(String(actorTelegramUserId)) ||
         String(actorTelegramUserId) !== request.actorTelegramUserId ||
         String(chatId) !== request.chatId || chatType !== "private") {
@@ -262,9 +265,13 @@ export function createTelegramControlPlane({
       return outcome("BLOCKED", "TELEGRAM_APPROVAL_BINDING_MISMATCH");
     }
     if (typeof verifyApproval !== "function") return outcome("DENY", "TELEGRAM_TRUSTED_APPROVAL_VERIFIER_UNAVAILABLE");
+    entry.processing = true;
     let verified = false;
     try { verified = await verifyApproval(proof, binding) === true; } catch { verified = false; }
-    if (!verified) return outcome("DENY", "TELEGRAM_APPROVAL_PROOF_INVALID");
+    if (!verified) {
+      entry.processing = false;
+      return outcome("DENY", "TELEGRAM_APPROVAL_PROOF_INVALID");
+    }
 
     const decisionRecord = frozen({
       schemaVersion: "kratt-telegram-validation-decision/v1",
@@ -282,7 +289,11 @@ export function createTelegramControlPlane({
     });
     let persisted = false;
     try { persisted = await persistDecision(decisionRecord, binding) === true; } catch { persisted = false; }
-    if (!persisted) return outcome("ERROR", "TELEGRAM_DECISION_PERSISTENCE_FAILED");
+    if (!persisted) {
+      entry.processing = false;
+      return outcome("ERROR", "TELEGRAM_DECISION_PERSISTENCE_FAILED");
+    }
+    entry.processing = false;
     entry.consumed = true;
     decisions.set(requestId, decisionRecord);
     emit("TELEGRAM_DECISION_PERSISTED", { decisionId: decisionRecord.decisionId, requestId, decision }, requestId);
@@ -295,6 +306,7 @@ export function createTelegramControlPlane({
     if (String(actorTelegramUserId) !== entry.request.actorTelegramUserId ||
         !architects.has(String(actorTelegramUserId))) return outcome("DENY", "TELEGRAM_CANCELLATION_ACTOR_MISMATCH");
     if (entry.consumed) return outcome("BLOCKED", "TELEGRAM_APPROVAL_REQUEST_TERMINAL");
+    if (entry.processing) return outcome("BLOCKED", "TELEGRAM_APPROVAL_ALREADY_IN_PROGRESS");
     entry.consumed = true;
     emit("TELEGRAM_APPROVAL_CANCELLED", { requestId }, requestId);
     return outcome("OK", "TELEGRAM_APPROVAL_CANCELLED", { requestId });
