@@ -43,6 +43,7 @@ The local API and orchestration kernel are implemented in:
 - `packages/kratt-orchestrator/src/orchestrator.mjs`
 - `packages/kratt-orchestrator/test/`
 - `packages/kratt-core/src/knowledge-segmentation.mjs`
+- `packages/kratt-orchestrator/src/adapters/rss-read.mjs` (separate allowlisted read-only adapter factory; not enabled by default)
 
 The next integration step is to add individually reviewed source-specific read adapters with real identity verification, source provenance, retention controls and permission scopes. Credentials must remain server-side. External writes must remain request-bound, signed, scoped, expiring and fail-closed.
 
