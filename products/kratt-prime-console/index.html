@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080a10">
+  <meta name="description" content="KRATT PRIME — evidence intelligence and orchestration console.">
+  <title>KRATT PRIME — Intelligence Operations</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="KRATT PRIME home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span class="brand-copy"><strong>KRATT<span>PRIME</span></strong><small>Evidence intelligence</small></span>
+      </a>
+      <div class="workspace-switch">
+        <span class="workspace-icon">K</span>
+        <span><b>Prime workspace</b><small>Architect console</small></span>
+        <span class="chevron">⌄</span>
+      </div>
+      <div class="nav-label">WORKSPACE</div>
+      <nav class="main-nav" aria-label="Main navigation">
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span>Overview</button>
+        <button class="nav-item" data-view="signals"><span class="nav-icon">⌁</span>Signal stream <span class="nav-count" id="signal-count-nav">8</span></button>
+        <button class="nav-item" data-view="evidence"><span class="nav-icon">⟡</span>Evidence graph</button>
+        <button class="nav-item" data-view="orchestration"><span class="nav-icon">⌘</span>Orchestration</button>
+        <button class="nav-item" data-view="connectors"><span class="nav-icon">⤳</span>Connectors</button>
+      </nav>
+      <div class="nav-label nav-label-spaced">CONTROL PLANE</div>
+      <nav class="main-nav" aria-label="Control plane navigation">
+        <button class="nav-item" data-view="governance"><span class="nav-icon">⛨</span>Governance</button>
+        <button class="nav-item" data-view="audit"><span class="nav-icon">≋</span>Event journal</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="node-card">
+          <div class="node-card-head"><span class="live-dot"></span><b>LOCAL NODE</b><span class="node-state">PREVIEW</span></div>
+          <div class="node-name">KRATT / PRIME-01</div>
+          <div class="node-meta"><span>External writes</span><b class="muted">LOCKED</b></div>
+          <div class="node-meta"><span>Evidence kernel</span><b class="good">READY</b></div>
+        </div>
+        <div class="user-row"><div class="avatar">AP</div><div><b>Architect</b><small>Owner workspace</small></div><span class="more">•••</span></div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="breadcrumbs"><span>KRATT PRIME</span><i>/</i><b id="crumb-view">Overview</b></div>
+        <div class="topbar-actions">
+          <div class="preview-pill"><span></span> LOCAL PREVIEW</div>
+          <button class="icon-button" aria-label="Notifications" title="Notifications">♧<i></i></button>
+          <div class="top-divider"></div>
+          <div class="avatar avatar-small">AP</div>
+        </div>
+      </header>
+
+      <section class="page-view active" id="view-overview">
+        <div class="page-heading">
+          <div><div class="eyebrow"><span class="eyebrow-line"></span>INTELLIGENCE CONTROL PLANE</div><h1>Good evening, Architect<span class="heading-dot">.</span></h1><p>Signals become evidence. Evidence becomes accountable decisions.</p></div>
+          <div class="heading-actions"><span class="timestamp" id="clock">--:-- UTC</span><button class="button button-primary" id="new-intake"><span>＋</span> New intake</button></div>
+        </div>
+
+        <div class="notice-bar"><span class="notice-icon">ⓘ</span><span><b>Demonstration environment</b> — sample records only. No external connector is active and no remote action can be executed from this screen.</span><button id="dismiss-notice" aria-label="Dismiss notice">×</button></div>
+
+        <div class="metric-grid">
+          <article class="metric-card"><div class="metric-top"><span>INGESTED SIGNALS</span><span class="metric-icon cyan">⌁</span></div><div class="metric-value" id="metric-signals">1,284</div><div class="metric-foot"><span class="trend">↗ 12.8%</span><span>vs. previous period</span></div><div class="metric-spark spark-cyan"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
+          <article class="metric-card"><div class="metric-top"><span>CLAIMS EXTRACTED</span><span class="metric-icon violet">⟡</span></div><div class="metric-value" id="metric-claims">312</div><div class="metric-foot"><span class="trend">↗ 8.4%</span><span>from 96 sources</span></div><div class="metric-spark spark-violet"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
+          <article class="metric-card"><div class="metric-top"><span>EVIDENCE VERIFIED</span><span class="metric-icon green">✓</span></div><div class="metric-value">86.4<span class="metric-unit">%</span></div><div class="metric-foot"><span class="trend">↗ 3.2%</span><span>269 of 312 claims</span></div><div class="progress-track"><span style="width:86.4%"></span></div></article>
+          <article class="metric-card"><div class="metric-top"><span>OPEN CONTRADICTIONS</span><span class="metric-icon amber">⚑</span></div><div class="metric-value">12</div><div class="metric-foot"><span class="warning">4 require review</span><span>across 7 subjects</span></div><div class="mini-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
+        </div>
+
+        <div class="section-heading"><div><h2>Evidence pipeline</h2><p>Six governed stages from source to decision.</p></div><button class="text-button" data-go="orchestration">View orchestration <span>→</span></button></div>
+        <section class="pipeline-panel">
+          <div class="pipeline-track">
+            <div class="pipeline-node complete"><div class="pipeline-symbol">⌁</div><b>Signal intake</b><small>1,284 items</small><span class="node-check">✓</span></div>
+            <div class="pipeline-connector complete"></div>
+            <div class="pipeline-node complete"><div class="pipeline-symbol">⌗</div><b>Normalization</b><small>1,271 clean</small><span class="node-check">✓</span></div>
+            <div class="pipeline-connector complete"></div>
+            <div class="pipeline-node complete"><div class="pipeline-symbol">⟡</div><b>Claim extraction</b><small>312 claims</small><span class="node-check">✓</span></div>
+            <div class="pipeline-connector active"></div>
+            <div class="pipeline-node active"><div class="pipeline-symbol">◈</div><b>Evidence review</b><small>43 in queue</small><span class="node-live">ACTIVE</span></div>
+            <div class="pipeline-connector pending"></div>
+            <div class="pipeline-node pending"><div class="pipeline-symbol">⟁</div><b>Reflection</b><small>12 conflicts</small></div>
+            <div class="pipeline-connector pending"></div>
+            <div class="pipeline-node pending"><div class="pipeline-symbol">▤</div><b>Brief export</b><small>Human approval</small></div>
+          </div>
+          <div class="pipeline-footer"><span><i class="legend-dot green-dot"></i>Validated stage</span><span><i class="legend-dot violet-dot"></i>Processing</span><span><i class="legend-dot grey-dot"></i>Awaiting input</span><span class="pipeline-runtime">LAST CYCLE <b>2m 14s</b></span></div>
+        </section>
+
+        <div class="content-grid">
+          <section class="panel signal-panel">
+            <div class="panel-heading"><div><h2>Priority signals</h2><p>Recent items ranked by evidence relevance.</p></div><button class="text-button" data-go="signals">All signals <span>→</span></button></div>
+            <div class="signal-list" id="signal-list">
+              <article class="signal-row"><div class="source-logo source-news">N</div><div class="signal-body"><div class="signal-meta"><b>Reuters · Technology</b><span>12 min ago</span></div><h3>European infrastructure investment enters a new funding cycle</h3><div class="signal-tags"><span class="tag tag-cyan">Infrastructure</span><span class="tag">3 claims</span><span class="tag tag-green">2 sources corroborate</span></div></div><div class="signal-score"><b>0.92</b><small>relevance</small></div></article>
+              <article class="signal-row"><div class="source-logo source-telegram">➤</div><div class="signal-body"><div class="signal-meta"><b>Telegram · Market Watch</b><span>28 min ago</span></div><h3>Unconfirmed supplier capacity expansion reported by channel sources</h3><div class="signal-tags"><span class="tag tag-amber">Unverified</span><span class="tag">1 claim</span><span class="tag">Needs source</span></div></div><div class="signal-score score-muted"><b>0.64</b><small>relevance</small></div></article>
+              <article class="signal-row"><div class="source-logo source-github">⌘</div><div class="signal-body"><div class="signal-meta"><b>GitHub · Repository activity</b><span>41 min ago</span></div><h3>Runtime adapter contract updated with request-scoped approval rules</h3><div class="signal-tags"><span class="tag tag-violet">Engineering</span><span class="tag">4 claims</span><span class="tag tag-green">Digest verified</span></div></div><div class="signal-score"><b>0.88</b><small>relevance</small></div></article>
+            </div>
+          </section>
+          <section class="panel review-panel">
+            <div class="panel-heading"><div><h2>Review queue</h2><p>Human decisions required.</p></div><span class="queue-count">04</span></div>
+            <div class="review-item"><div class="review-priority high"></div><div class="review-copy"><b>Conflicting supplier figures</b><small>2 evidence cards · 1 subject</small></div><span class="status-chip status-conflict">CONTESTED</span></div>
+            <div class="review-item"><div class="review-priority medium"></div><div class="review-copy"><b>Source authenticity check</b><small>1 evidence card · 1 source</small></div><span class="status-chip status-pending">PENDING</span></div>
+            <div class="review-item"><div class="review-priority medium"></div><div class="review-copy"><b>Publication date mismatch</b><small>3 evidence cards · 2 sources</small></div><span class="status-chip status-pending">PENDING</span></div>
+            <div class="review-item"><div class="review-priority low"></div><div class="review-copy"><b>Duplicate source cluster</b><small>5 items · 1 origin</small></div><span class="status-chip status-review">REVIEW</span></div>
+            <button class="button button-quiet button-full" data-go="evidence">Open evidence review <span>→</span></button>
+          </section>
+        </div>
+
+        <div class="bottom-grid">
+          <section class="panel connector-panel">
+            <div class="panel-heading"><div><h2>Connector mesh</h2><p>Adapter lifecycle and trust boundaries.</p></div><button class="text-button" data-go="connectors">Manage <span>→</span></button></div>
+            <div class="connector-mini-grid">
+              <div class="connector-mini"><span class="connector-symbol telegram">➤</span><b>Telegram</b><small><i class="state-dot grey"></i> Discovered</small></div>
+              <div class="connector-mini"><span class="connector-symbol rss">◉</span><b>RSS / Atom</b><small><i class="state-dot green"></i> Read-only verified</small></div>
+              <div class="connector-mini"><span class="connector-symbol github">⌘</span><b>GitHub</b><small><i class="state-dot amber"></i> Unverified</small></div>
+              <div class="connector-mini"><span class="connector-symbol slack">#</span><b>Slack</b><small><i class="state-dot grey"></i> Discovered</small></div>
+            </div>
+          </section>
+          <section class="panel journal-panel">
+            <div class="panel-heading"><div><h2>Event journal</h2><p>Recent immutable event envelopes.</p></div><button class="text-button" data-go="audit">View log <span>→</span></button></div>
+            <div class="journal-row"><span class="journal-marker green"></span><code>ADAPTER_VERIFIED</code><small>RSS-PRIMARY</small><time>09:42:18</time></div>
+            <div class="journal-row"><span class="journal-marker violet"></span><code>CLAIM_EXTRACTED</code><small>CLM-0291</small><time>09:41:52</time></div>
+            <div class="journal-row"><span class="journal-marker amber"></span><code>CONFLICT_DETECTED</code><small>CFL-0012</small><time>09:40:03</time></div>
+          </section>
+        </div>
+        <footer class="page-footer"><span>KRATT PRIME · SIGNAL-TO-EVIDENCE</span><span>LOCAL-FIRST · HUMAN-GOVERNED · PROVENANCE-PRESERVING</span><span>BUILD 0.1.0-PREVIEW</span></footer>
+      </section>
+
+      <section class="page-view" id="view-signals">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>INGESTION LAYER</div><h1>Signal stream<span class="heading-dot">.</span></h1><p>Incoming information, normalized and ranked — never assumed true.</p></div><div class="heading-actions"><button class="button button-primary" id="new-intake-signals">＋ New intake</button></div></div>
+        <div class="filter-bar"><input id="signal-search" type="search" placeholder="Search signal, source or subject…" aria-label="Search signals"><select id="signal-filter" aria-label="Filter signals"><option value="all">All signals</option><option value="unverified">Unverified</option><option value="corroborated">Corroborated</option></select><span class="filter-total" id="signal-total">8 records</span></div>
+        <section class="panel full-panel"><div class="panel-heading"><div><h2>Source intelligence</h2><p>Sample dataset · use Run local demo to append a local event.</p></div><span class="status-chip status-pending">SAMPLE DATA</span></div><div class="signal-list" id="all-signals"></div></section>
+      </section>
+
+      <section class="page-view" id="view-evidence">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>PROVENANCE & REFLECTION</div><h1>Evidence graph<span class="heading-dot">.</span></h1><p>Trace claims to source material, counter-evidence and review decisions.</p></div><div class="heading-actions"><span class="status-chip status-conflict">12 OPEN CONFLICTS</span></div></div>
+        <div class="evidence-layout">
+          <section class="panel graph-panel"><div class="panel-heading"><div><h2>Claim relationship map</h2><p>Illustrative dependency graph · not a live graph query.</p></div><span class="tiny-label">SUBJECT: EU INFRASTRUCTURE</span></div><div class="graph-canvas"><svg viewBox="0 0 760 410" role="img" aria-label="Illustrative graph linking sources, claims and evidence"><defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#283141"/></pattern></defs><rect width="760" height="410" fill="url(#dots)"/><g stroke="#354457" stroke-width="1.5" fill="none"><path d="M155 95 L320 175 L515 95"/><path d="M155 95 L320 175 L515 305"/><path d="M155 305 L320 175"/><path d="M515 95 L635 195"/><path d="M515 305 L635 195"/></g><g stroke="#53d9c4" stroke-width="2" fill="none"><path d="M155 95 L320 175"/><path d="M320 175 L515 95"/></g><g><rect x="62" y="58" width="186" height="74" rx="10" fill="#111c25" stroke="#326f72"/><text x="80" y="86" fill="#73ded2" font-size="11">SOURCE · REUTERS</text><text x="80" y="108" fill="#eef6f8" font-size="13">Investment report</text><rect x="62" y="268" width="186" height="74" rx="10" fill="#171827" stroke="#6650a4"/><text x="80" y="296" fill="#b7a4ff" font-size="11">SOURCE · POLICY DOC</text><text x="80" y="318" fill="#eef6f8" font-size="13">EU funding brief</text><rect x="260" y="140" width="190" height="74" rx="10" fill="#17222a" stroke="#53d9c4" stroke-width="1.6"/><text x="280" y="168" fill="#73ded2" font-size="11">CLAIM · CLM-0291</text><text x="280" y="190" fill="#eef6f8" font-size="13">Funding increases</text><rect x="470" y="58" width="188" height="74" rx="10" fill="#12251f" stroke="#3a9a72"/><text x="488" y="86" fill="#7ee0a6" font-size="11">EVIDENCE · VERIFIED</text><text x="488" y="108" fill="#eef6f8" font-size="13">Budget allocation</text><rect x="470" y="268" width="188" height="74" rx="10" fill="#2a2018" stroke="#b77a3c"/><text x="488" y="296" fill="#f0b66f" font-size="11">COUNTER-EVIDENCE</text><text x="488" y="318" fill="#eef6f8" font-size="13">Timing discrepancy</text><rect x="606" y="164" width="140" height="62" rx="10" fill="#1b1d2b" stroke="#7761b9"/><text x="622" y="189" fill="#b7a4ff" font-size="10">REVIEW</text><text x="622" y="208" fill="#eef6f8" font-size="12">Human decision</text></g><g fill="#53d9c4"><circle cx="320" cy="175" r="4"/><circle cx="515" cy="95" r="4"/></g></svg><div class="graph-legend"><span><i class="legend-dot cyan-dot"></i>Supports</span><span><i class="legend-dot amber-dot"></i>Contradicts</span><span><i class="legend-dot violet-dot"></i>Review required</span></div></div></section>
+          <section class="panel evidence-detail"><div class="panel-heading"><div><h2>Selected claim</h2><p>CLM-0291 · example record</p></div><span class="status-chip status-conflict">CONTESTED</span></div><div class="claim-title">European infrastructure investment increases in the 2027–2029 period.</div><div class="claim-meta"><span>Subject</span><b>EU infrastructure</b><span>Predicate</span><b>Funding allocation</b><span>Time scope</span><b>2027–2029</b></div><div class="detail-divider"></div><h3>Evidence cards</h3><div class="evidence-card"><div class="evidence-card-top"><span class="status-chip status-verified">SUPPORTS</span><small>EV-00912</small></div><b>Official budget allocation</b><p>Primary policy source · digest verified</p><code>sha256:8af2…d921</code></div><div class="evidence-card evidence-card-warning"><div class="evidence-card-top"><span class="status-chip status-conflict">CONTRADICTS</span><small>EV-00918</small></div><b>Implementation timing differs</b><p>Independent report · reviewer required</p><code>sha256:19be…0a14</code></div><button class="button button-quiet button-full" data-go="governance">Open review controls →</button></section>
+        </div>
+      </section>
+
+      <section class="page-view" id="view-orchestration">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>AGENT & ADAPTER CONTROL</div><h1>Orchestration<span class="heading-dot">.</span></h1><p>Typed events, scoped capabilities and fail-closed execution paths.</p></div><div class="heading-actions"><span class="status-chip status-pending">WRITE PATH LOCKED</span></div></div>
+        <div class="orchestration-grid"><section class="panel"><div class="panel-heading"><div><h2>Execution lanes</h2><p>Governed flow across the KRATT control plane.</p></div></div><div class="lane"><span class="lane-index">01</span><div><b>Signal intake agent</b><small>Fetch · normalize · source provenance</small></div><span class="status-chip status-verified">READ ONLY</span></div><div class="lane"><span class="lane-index">02</span><div><b>Evidence kernel</b><small>Digest · schema · source validation</small></div><span class="status-chip status-verified">VERIFIED</span></div><div class="lane"><span class="lane-index">03</span><div><b>Reflection engine</b><small>Support · counter-evidence · dependency groups</small></div><span class="status-chip status-pending">REVIEW</span></div><div class="lane"><span class="lane-index">04</span><div><b>Decision governor</b><small>Policy · authority · request-bound approval</small></div><span class="status-chip status-conflict">FAIL CLOSED</span></div><div class="lane"><span class="lane-index">05</span><div><b>Brief composer</b><small>Cited report · audit envelope · export</small></div><span class="status-chip status-pending">HUMAN GATE</span></div></section><section class="panel"><div class="panel-heading"><div><h2>Runtime invariants</h2><p>Hard boundaries, not model suggestions.</p></div></div><div class="invariant"><span class="invariant-check">✓</span><div><b>READ ≠ WRITE</b><small>Read capability cannot grant write permission.</small></div></div><div class="invariant"><span class="invariant-check">✓</span><div><b>Request-bound approval</b><small>Approval binds actor, target, operation and payload.</small></div></div><div class="invariant"><span class="invariant-check">✓</span><div><b>Provenance required</b><small>Every accepted evidence card carries source lineage.</small></div></div><div class="invariant"><span class="invariant-check">✓</span><div><b>Fail-closed defaults</b><small>Unknown state becomes BLOCKED, never ALLOW.</small></div></div><div class="invariant"><span class="invariant-check">✓</span><div><b>Human decision authority</b><small>Model output is a proposal, not an approval.</small></div></div></section></div>
+        <section class="panel event-panel"><div class="panel-heading"><div><h2>Orchestration events</h2><p>Correlated event stream · local sample view.</p></div><span class="tiny-label">APPEND-ONLY MODEL</span></div><div id="orchestration-events" class="event-list"></div></section>
+      </section>
+
+      <section class="page-view" id="view-connectors">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>INTEGRATION REGISTRY</div><h1>Connectors<span class="heading-dot">.</span></h1><p>Every external interface must prove its identity and capability before use.</p></div><div class="heading-actions"><span class="status-chip status-pending">NO LIVE CONNECTIONS</span></div></div>
+        <div class="notice-bar"><span class="notice-icon">⛨</span><span><b>Trust boundary active</b> — connector cards are illustrative. This preview does not store credentials or contact external services.</span></div>
+        <div class="connector-grid" id="connector-grid">
+          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol telegram">➤</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Telegram</h3><p>Channel and message signal ingestion.</p><div class="connector-capabilities"><span>message.read</span><span>channel.read</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
+          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol rss">◉</span><span class="status-chip status-verified">VERIFIED READ</span></div><h3>RSS / Atom</h3><p>Structured public feed collection.</p><div class="connector-capabilities"><span>feed.read</span><span>source.capture</span></div><div class="connector-footer"><span>Read: verified</span><span>Write: denied</span></div></article>
+          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol github">⌘</span><span class="status-chip status-unverified">UNVERIFIED</span></div><h3>GitHub</h3><p>Repository, commit and workflow evidence.</p><div class="connector-capabilities"><span>repo.read</span><span>workflow.read</span></div><div class="connector-footer"><span>Read: pending</span><span>Write: approval gate</span></div></article>
+          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol slack">#</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Slack</h3><p>Workspace intelligence and approved message context.</p><div class="connector-capabilities"><span>message.read</span><span>channel.read</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
+          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol web">⌕</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Web research</h3><p>Source discovery and citation capture.</p><div class="connector-capabilities"><span>search.read</span><span>page.capture</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
+          <article class="connector-card connector-card-add"><div class="add-symbol">＋</div><h3>Register adapter</h3><p>Define a typed adapter contract before connecting a service.</p><span class="text-button">Contract-first integration</span></article>
+        </div>
+      </section>
+
+      <section class="page-view" id="view-governance">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>POLICY & AUTHORITY</div><h1>Governance<span class="heading-dot">.</span></h1><p>Permission is explicit, scoped, expiring and independently verifiable.</p></div></div>
+        <div class="governance-grid"><section class="panel"><div class="panel-heading"><div><h2>Execution policy</h2><p>Default control profile.</p></div><span class="status-chip status-verified">ENFORCED MODEL</span></div><div class="policy-row"><div><b>External writes</b><small>Disabled unless a request-bound approval is verified.</small></div><span class="toggle locked"><i></i></span></div><div class="policy-row"><div><b>Autonomous publishing</b><small>Not part of V1; human approval required.</small></div><span class="toggle locked"><i></i></span></div><div class="policy-row"><div><b>Unverified evidence</b><small>Excluded from supported claim decisions.</small></div><span class="toggle on"><i></i></span></div><div class="policy-row"><div><b>Audit event capture</b><small>Every consequential action emits a correlated event.</small></div><span class="toggle on"><i></i></span></div></section><section class="panel"><div class="panel-heading"><div><h2>Decision states</h2><p>Explicit uncertainty is preserved.</p></div></div><div class="decision-state"><span class="state-square green"></span><b>SUPPORTED</b><small>Validated evidence supports the claim.</small></div><div class="decision-state"><span class="state-square amber"></span><b>CONTESTED</b><small>Material counter-evidence exists.</small></div><div class="decision-state"><span class="state-square grey"></span><b>UNVERIFIED</b><small>Evidence has not passed validation.</small></div><div class="decision-state"><span class="state-square red"></span><b>REJECTED</b><small>Evidence or claim failed review.</small></div><div class="decision-state"><span class="state-square violet"></span><b>APPROVED</b><small>Human reviewer accepted the scoped conclusion.</small></div></section></div>
+      </section>
+
+      <section class="page-view" id="view-audit">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>PROVENANCE JOURNAL</div><h1>Event journal<span class="heading-dot">.</span></h1><p>Hash-linked event envelopes for inspectable system history.</p></div><div class="heading-actions"><span class="status-chip status-verified">SAMPLE CHAIN VALID</span></div></div>
+        <section class="panel full-panel"><div class="panel-heading"><div><h2>Recent event history</h2><p>Illustrative event records, not a connected durable store.</p></div><button class="button button-quiet" id="verify-demo-journal">Verify sample chain</button></div><div id="full-journal" class="event-list"></div><div id="journal-result" class="journal-result" aria-live="polite">Awaiting local verification.</div></section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="intake-dialog" class="intake-dialog">
+    <form method="dialog" id="intake-form">
+      <div class="dialog-head"><div><div class="eyebrow"><span class="eyebrow-line"></span>LOCAL DEMO ACTION</div><h2>Start a signal intake</h2><p>Preview the source contract. No network request will be made.</p></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div>
+      <label for="intake-source">Source type</label><select id="intake-source"><option>Manual URL list</option><option>RSS / Atom feed</option><option>JSON / CSV import</option><option>Telegram adapter (not connected)</option></select>
+      <label for="intake-label">Intake label</label><input id="intake-label" placeholder="e.g. Baltic infrastructure watch" required>
+      <div class="dialog-note"><span>⛨</span><span>Imported content must retain source URL, observed time, capture method and content digest.</span></div>
+      <div class="dialog-actions"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary" id="run-demo-intake" value="default">Run local preview</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js"></script>
+</body>
+</html>
