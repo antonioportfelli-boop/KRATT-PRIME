@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRootSnapshot, validateRootDelta } from "../src/reflection-root-store.mjs";
-import { buildReflectionRootDelta } from "../src/reflection-engine.mjs";
+import { buildReflectionRootDelta, createTelegramReflectionDeltaBuilder } from "../src/reflection-engine.mjs";
 import { KRATT_ONTOLOGY_VERSION } from "../src/reflection-ontology.mjs";
 
 const digest = value => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
@@ -96,4 +96,35 @@ test("reflection reducer rejects stale roots, ID collisions and attempted model 
     sourceRefs: [{ segmentId: "segment-1", sourceDigest: digest("source-1"), startOffset: 0, endOffset: 12, excerptDigest: digest("excerpt-1") }],
   });
   assert.equal(buildReflectionRootDelta({ snapshot, nodes: [promoted], now: NOW }).status, "DENY");
+});
+
+
+test("Telegram proposal bridge re-reads and binds the authoritative root before building a RootDelta", async () => {
+  const snapshot = createRootSnapshot(baseDocument(), { version: 3, createdAt: "2026-11-10T14:30:00.000Z" });
+  const candidate = node("claim-bridge", "CLAIM", {
+    normalizedText: "The system status is inactive", subjectId: "system-1", predicate: "status", objectValue: "inactive",
+    timeScope: "2026-Q4", extractionMethod: "model", claimStatus: "UNREVIEWED",
+    sourceRefs: [{ segmentId: "segment-1", sourceDigest: digest("source-1"), startOffset: 0, endOffset: 12, excerptDigest: digest("excerpt-1") }],
+  });
+  const builder = createTelegramReflectionDeltaBuilder({
+    rootSnapshotProvider: { getSnapshot: () => ({ status: "OK", snapshot }) },
+    collectCandidateNodes: () => [candidate],
+    now: NOW,
+  });
+  const rootDelta = await builder({
+    decision: { decision: "APPROVE", decisionId: "signed-decision" },
+    projection: { claimId: "claim-1" },
+    expectedRoot: { rootVersion: snapshot.version, rootDigest: snapshot.digest },
+  });
+  assert.equal(validateRootDelta(rootDelta).ok, true);
+  assert.ok(rootDelta.operations.some(operation => operation.value?.type === "CONTRADICTION"));
+
+  const stale = createTelegramReflectionDeltaBuilder({
+    rootSnapshotProvider: { getSnapshot: () => ({ status: "OK", snapshot }) },
+    collectCandidateNodes: () => [candidate],
+    now: NOW,
+  });
+  await assert.rejects(() => stale({
+    expectedRoot: { rootVersion: snapshot.version + 1, rootDigest: snapshot.digest },
+  }), /TELEGRAM_REFLECTION_DELTA_ROOT_CHANGED/);
 });
