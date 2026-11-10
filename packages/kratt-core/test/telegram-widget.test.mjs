@@ -259,6 +259,7 @@ test("WidgetQuery intent proceeds to a separate Ed25519 signature before final d
         from: { id: 123456 },
         chat: { id: 123456, type: "private" },
         message_id: 111,
+        type: { type: "data" },
         data: "intent:APPROVE",
       },
     };
@@ -335,6 +336,7 @@ test("WidgetQuery rejects wrong actor and unsupported shared-widget decision con
           from: { id: 999999 },
           chat: { id: 123456, type: "private" },
           message_id: 112,
+          type: { type: "data" },
           data: "intent:APPROVE",
         },
       },
@@ -350,6 +352,7 @@ test("WidgetQuery rejects wrong actor and unsupported shared-widget decision con
           id: "shared-widget-query-unsupported",
           from: { id: 123456 },
           widget_id: "shared-widget-1",
+          type: { type: "data" },
           data: "intent:APPROVE",
         },
       },
