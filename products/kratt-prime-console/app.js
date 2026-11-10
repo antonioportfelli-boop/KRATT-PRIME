@@ -22,6 +22,7 @@ let eventSequence = 3;
 let toastHandle;
 let activeView = "overview";
 let backendConnected = false;
+let backendJournalRaw = null;
 
 function timeNow() {
   return new Intl.DateTimeFormat("en-GB", { hour:"2-digit", minute:"2-digit", second:"2-digit", timeZone:"UTC" }).format(new Date()) + " UTC";
@@ -82,6 +83,7 @@ async function refreshBackend() {
     const state = await stateResponse.json();
     renderAdapterStates(state.adapters ?? []);
     if (Array.isArray(state.journal) && state.journal.length) {
+      backendJournalRaw = state.journal;
       journal.splice(0, journal.length, ...state.journal.map(event => ({
         type:event.type,
         ref:event.source,
@@ -233,7 +235,7 @@ $("#intake-form")?.addEventListener("submit", async event => {
     await appendEvent("INTAKE_REQUESTED", "LOCAL-INTAKE", { label, sourceType:apiSource, mode:"LOCAL_PREVIEW" }, "violet");
   }
   const item = {
-    id:"SIG-" + String(1284 + (signals.length - 8)).padStart(4,"0"),
+    id:"SIG-" + String(1284 + (signals.length - 7)).padStart(4,"0"),
     source:sourceType,
     category:"New intake",
     title:label,
@@ -255,6 +257,22 @@ $("#intake-form")?.addEventListener("submit", async event => {
 $("#verify-demo-journal")?.addEventListener("click", async () => {
   const result = $("#journal-result");
   result.classList.remove("ok");
+  if (backendConnected) {
+    try {
+      const response = await fetch("/api/verify", { cache:"no-store" });
+      const verification = await response.json();
+      const valid = response.ok && verification.status === "OK";
+      result.textContent = valid
+        ? `LOCAL API JOURNAL VERIFIED · ${verification.eventCount} events · ${verification.head?.slice(0,24)}…`
+        : `JOURNAL VERIFICATION FAILED · ${verification.reason ?? "API_ERROR"}`;
+      result.classList.toggle("ok", valid);
+      toast(valid ? "KRATT local journal integrity verified." : "KRATT local journal integrity failure.");
+      return;
+    } catch {
+      result.textContent = "Local API unavailable; no integrity claim made.";
+      return;
+    }
+  }
   if (!globalThis.crypto?.subtle) {
     result.textContent = "Web Crypto is unavailable in this context; no integrity claim made.";
     return;
