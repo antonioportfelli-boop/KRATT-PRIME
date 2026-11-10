@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { verifyEvidenceCardDigest } from "./evidence-integrity.mjs";
 
 const RELATIONS = new Set(["SUPPORTS","CONTRADICTS","CONTEXTUALIZES","DUPLICATES","DERIVED_FROM"]);
+const CLAIM_STATUSES = new Set(["UNREVIEWED","UNDER_REVIEW","SUPPORTED","CONTESTED","REJECTED","APPROVED","UNKNOWN"]);
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 
 function sha256(value) {
@@ -66,6 +67,7 @@ export function createTelegramClaimProjectionService({
       ]);
       if (!claim || claim.claimId !== claimId) throw new Error("TELEGRAM_PROJECTION_CLAIM_NOT_FOUND");
       const claimDigest = verifiedCard(claim, "CLAIM");
+      if (!CLAIM_STATUSES.has(claim.claimStatus ?? "UNREVIEWED")) throw new Error("TELEGRAM_PROJECTION_CLAIM_STATUS_INVALID");
       if (!Array.isArray(claim.sourceRefs) || claim.sourceRefs.length === 0 || claim.sourceRefs.length > 32) {
         throw new Error("TELEGRAM_PROJECTION_SOURCE_REFS_REQUIRED");
       }
@@ -76,6 +78,7 @@ export function createTelegramClaimProjectionService({
 
       const sourceRefs = [];
       const sourceDigests = [];
+      const sourceIds = new Set();
       for (const reference of claim.sourceRefs) {
         if (!reference || typeof reference.sourceId !== "string" ||
             !Number.isSafeInteger(reference.startOffset) || !Number.isSafeInteger(reference.endOffset) ||
@@ -83,6 +86,8 @@ export function createTelegramClaimProjectionService({
             !DIGEST.test(reference.sourceDigest ?? "") || !DIGEST.test(reference.excerptDigest ?? "")) {
           throw new Error("TELEGRAM_PROJECTION_SOURCE_REFERENCE_INVALID");
         }
+        if (sourceIds.has(reference.sourceId)) throw new Error("TELEGRAM_PROJECTION_DUPLICATE_SOURCE_REFERENCE");
+        sourceIds.add(reference.sourceId);
         const source = await sourceRepository.getById(reference.sourceId);
         if (!source || typeof source.content !== "string") throw new Error("TELEGRAM_PROJECTION_SOURCE_NOT_FOUND");
         const actualSourceDigest = sha256(source.content);
@@ -118,6 +123,7 @@ export function createTelegramClaimProjectionService({
         const artifact = await evidenceRepository.getArtifact(link.evidenceId);
         if (!artifact || artifact.evidenceId !== link.evidenceId) throw new Error("TELEGRAM_PROJECTION_EVIDENCE_ARTIFACT_MISSING");
         const artifactDigest = verifiedCard(artifact, "EVIDENCE_ARTIFACT");
+        if (!sourceIds.has(artifact.sourceId)) throw new Error("TELEGRAM_PROJECTION_EVIDENCE_SOURCE_NOT_IN_CLAIM_LINEAGE");
         evidenceDigests.push(linkDigest, artifactDigest);
         evidenceLinks.push(Object.freeze({
           evidenceId: artifact.evidenceId,
@@ -137,6 +143,10 @@ export function createTelegramClaimProjectionService({
         : [];
       if (!Array.isArray(contradictions) || contradictions.length > 32) {
         throw new Error("TELEGRAM_PROJECTION_CONTRADICTIONS_INVALID");
+      }
+      for (const candidate of contradictions) {
+        if (!candidate || typeof candidate.candidateId !== "string") throw new Error("TELEGRAM_PROJECTION_CONTRADICTION_CARD_INVALID");
+        evidenceDigests.push(verifiedCard(candidate, "CONTRADICTION_CANDIDATE"));
       }
       const evidenceSnapshotDigest = sha256(stable({
         claimDigest,
