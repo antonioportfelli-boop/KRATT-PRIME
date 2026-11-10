@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { createTelegramApprovalSigningRequest } from "../src/telegram-approval-signing-request.mjs";
+import { createTrustedTelegramReflectionProposalVerifier } from "../src/telegram-reflection-proposal-verifier.mjs";
 import { createTelegramExternalSignerAdapter } from "../../kratt-orchestrator/src/telegram-external-signer.mjs";
 import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
@@ -124,6 +125,7 @@ test("Ed25519 signed architect decision is persisted with atomic one-time nonce 
   assert.equal(result.status, "OK");
   const snapshot = store.snapshot();
   assert.equal(snapshot.decisions.length, 1);
+  assert.deepEqual(store.getDecision(pending.request.requestId).approvalProof, proof);
   assert.equal(snapshot.reviewRequests[0].state, "CONSUMED");
 });
 
@@ -428,4 +430,79 @@ test("external signer adapter signs only the request-bound payload and locally v
     proof: signed.proof,
   });
   assert.equal(result.status, "OK");
+});
+
+
+test("Reflection CAS verifier rechecks persisted Ed25519 proof and exact decision binding", async () => {
+  const { store, plane, privateKey, publicKey, nowMs } = setup();
+  const pending = plane.createClaimReviewRequest({
+    projection,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    chatType: "private",
+  });
+  const proof = signedProof(pending.request, privateKey, nowMs);
+  const resolved = await plane.resolveClaimReview({
+    requestId: pending.request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    chatType: "private",
+    decision: "APPROVE",
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    proof,
+  });
+  assert.equal(resolved.status, "OK");
+
+  const verifyApprovalProof = createTrustedTelegramDecisionVerifier({
+    trustedApprovalKeys: [{
+      key_id: "telegram-review-key-1",
+      approver_id: "123456",
+      public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
+      authorities: [authority],
+    }],
+    now: () => nowMs + 1000,
+    authority,
+  });
+  const verifyProposal = createTrustedTelegramReflectionProposalVerifier({
+    decisionStore: store,
+    verifyApprovalProof,
+    now: () => nowMs + 1000,
+  });
+  const decision = store.getDecision(pending.request.requestId);
+  const proposal = {
+    schemaVersion: "kratt-telegram-reflection-proposal/v1",
+    status: "PROPOSAL_ONLY",
+    applyStatus: "NOT_APPLIED",
+    proposalId: "reflection-proposal:test",
+    proposalDigest: `sha256:${"d".repeat(64)}`,
+    decisionId: decision.decisionId,
+    requestId: decision.requestId,
+    claimId: decision.claimId,
+    targetDigest: decision.targetDigest,
+    evidenceSnapshotDigest: decision.evidenceSnapshotDigest,
+    policyVersion: decision.policyVersion,
+    expectedRootVersion: 4,
+    expectedRootDigest: decision.rootDigest,
+    rootDeltaDigest: `sha256:${"e".repeat(64)}`,
+    rootDelta: { schemaVersion: "kratt-root-delta/v1", operations: [{ op: "replace", path: "/nodes/0/status", value: "REFLECTED" }] },
+    createdFromVerifiedDecisionAt: decision.verifiedAt,
+  };
+  const currentSnapshot = { version: 4, digest: decision.rootDigest };
+  assert.equal(verifyProposal(proposal, currentSnapshot), true);
+  assert.equal(verifyProposal({ ...proposal, targetDigest: `sha256:${"f".repeat(64)}` }, currentSnapshot), false);
+  assert.equal(verifyProposal(proposal, { version: 5, digest: decision.rootDigest }), false);
+
+  const tamperedStore = {
+    getReviewRequest: id => store.getReviewRequest(id),
+    getDecision: id => ({ ...store.getDecision(id), approvalProof: { ...store.getDecision(id).approvalProof, signature: "forged" } }),
+  };
+  const rejectForged = createTrustedTelegramReflectionProposalVerifier({
+    decisionStore: tamperedStore,
+    verifyApprovalProof,
+    now: () => nowMs + 1000,
+  });
+  assert.equal(rejectForged(proposal, currentSnapshot), false);
 });
