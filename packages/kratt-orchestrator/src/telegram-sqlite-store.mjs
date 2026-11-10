@@ -37,7 +37,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
   if (!nonceStore || typeof nonceStore.consume !== "function") throw new TypeError("DURABLE_NONCE_STORE_REQUIRED");
   if (!Number.isInteger(leaseMs) || leaseMs < 1000 || leaseMs > 5 * 60_000) throw new TypeError("TELEGRAM_UPDATE_LEASE_INVALID");
 
-  database.exec(`
+  database.exec(`PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS kratt_telegram_updates (
       update_id INTEGER PRIMARY KEY,
       payload_digest TEXT NOT NULL,
@@ -56,7 +56,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     CREATE TABLE IF NOT EXISTS kratt_telegram_review_requests (
       request_id TEXT PRIMARY KEY,
       request_json TEXT NOT NULL,
-      state TEXT NOT NULL CHECK(state IN ('PENDING','PROCESSING','CONSUMED','CANCELLED'))
+      state TEXT NOT NULL CHECK(state IN ('PENDING','PROCESSING','CONSUMED','CANCELLED','EXPIRED'))
     );
     CREATE TABLE IF NOT EXISTS kratt_telegram_decisions (
       decision_id TEXT PRIMARY KEY,
@@ -108,21 +108,21 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     }
   }
 
+  function insertAuditEvent(event) {
+    if (!event || typeof event.eventId !== "string" || typeof event.type !== "string") throw new Error("TELEGRAM_AUDIT_EVENT_INVALID");
+    const previous = statements.lastEvent.get();
+    const sequence = Number(previous?.sequence ?? 0) + 1;
+    const previousHash = previous?.event_hash ?? null;
+    const body = { ...event, sequence, previousHash };
+    delete body.hash;
+    const eventHash = hash(body);
+    const stored = Object.freeze({ ...body, hash: eventHash });
+    statements.insertEvent.run(sequence, stored.eventId, stable(stored), previousHash, eventHash);
+    return true;
+  }
+
   function appendAuditEvent(event) {
-    if (!event || typeof event.eventId !== "string" || typeof event.type !== "string") return false;
-    try {
-      return transaction(() => {
-        const previous = statements.lastEvent.get();
-        const sequence = Number(previous?.sequence ?? 0) + 1;
-        const previousHash = previous?.event_hash ?? null;
-        const body = { ...event, sequence, previousHash };
-        delete body.hash;
-        const eventHash = hash(body);
-        const stored = Object.freeze({ ...body, hash: eventHash });
-        statements.insertEvent.run(sequence, stored.eventId, stable(stored), previousHash, eventHash);
-        return true;
-      });
-    } catch { return false; }
+    try { return transaction(() => insertAuditEvent(event)); } catch { return false; }
   }
 
   function claimUpdate(updateId, payloadDigest, receivedAt, nowMs = Date.now()) {
@@ -146,7 +146,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     } catch { return Object.freeze({ status: "ERROR" }); }
   }
 
-  function persistIntake(intake, { updateId, payloadDigest, leaseToken } = {}) {
+  function persistIntake(intake, { updateId, payloadDigest, leaseToken, auditEvent } = {}) {
     try {
       return transaction(() => {
         const inserted = statements.insertIntake.run(intake.candidateId, updateId, stable(intake));
@@ -154,14 +154,19 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
         const result = { status: "OK", reason: "TELEGRAM_INTAKE_RECORDED_UNREVIEWED", intake };
         const completed = statements.completeUpdate.run(stable(result), updateId, payloadDigest, leaseToken);
         if (Number(completed.changes) !== 1) throw new Error("TELEGRAM_UPDATE_LEASE_LOST");
+        if (auditEvent) insertAuditEvent(auditEvent);
         return true;
       });
     } catch { return false; }
   }
 
-  function completeUpdate({ updateId, payloadDigest, leaseToken, result }) {
+  function completeUpdate({ updateId, payloadDigest, leaseToken, result, auditEvent }) {
     try {
-      return transaction(() => Number(statements.completeUpdate.run(stable(result), updateId, payloadDigest, leaseToken).changes) === 1);
+      return transaction(() => {
+        if (Number(statements.completeUpdate.run(stable(result), updateId, payloadDigest, leaseToken).changes) !== 1) throw new Error("TELEGRAM_UPDATE_LEASE_LOST");
+        if (auditEvent) insertAuditEvent(auditEvent);
+        return true;
+      });
     } catch { return false; }
   }
 
@@ -169,8 +174,14 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     try { return Number(statements.releaseUpdate.run(updateId, leaseToken).changes) === 1; } catch { return false; }
   }
 
-  function saveReviewRequest(request) {
-    try { statements.saveRequest.run(request.requestId, stable(request)); return true; } catch { return false; }
+  function saveReviewRequest(request, auditEvent) {
+    try {
+      return transaction(() => {
+        statements.saveRequest.run(request.requestId, stable(request));
+        if (auditEvent) insertAuditEvent(auditEvent);
+        return true;
+      });
+    } catch { return false; }
   }
 
   function getReviewRequest(requestId) {
@@ -188,11 +199,28 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     try { return Number(statements.releaseRequest.run(requestId).changes) === 1; } catch { return false; }
   }
 
-  function cancelReviewRequest(requestId) {
-    try { return Number(statements.cancelRequest.run(requestId).changes) === 1; } catch { return false; }
+  function cancelReviewRequest(requestId, auditEvent) {
+    try {
+      return transaction(() => {
+        if (Number(statements.cancelRequest.run(requestId).changes) !== 1) throw new Error("TELEGRAM_REVIEW_NOT_PENDING");
+        if (auditEvent) insertAuditEvent(auditEvent);
+        return true;
+      });
+    } catch { return false; }
   }
 
-  function persistDecision(record, binding) {
+  function expireReviewRequest(requestId, auditEvent) {
+    try {
+      return transaction(() => {
+        const expired = database.prepare("UPDATE kratt_telegram_review_requests SET state='EXPIRED' WHERE request_id=? AND state='PENDING'").run(requestId);
+        if (Number(expired.changes) !== 1) throw new Error("TELEGRAM_REVIEW_NOT_PENDING");
+        if (auditEvent) insertAuditEvent(auditEvent);
+        return true;
+      });
+    } catch { return false; }
+  }
+
+  function persistDecision(record, binding, auditEvent) {
     const proof = binding?.approvalProof;
     if (!proof || typeof proof !== "object" || typeof proof.key_id !== "string" ||
         typeof proof.nonce !== "string" || typeof proof.approval_id !== "string" ||
@@ -205,6 +233,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
         if (consumed !== true) throw new Error("TELEGRAM_APPROVAL_NONCE_REPLAYED");
         statements.insertDecision.run(record.decisionId, record.requestId, stable(record));
         if (Number(statements.consumeRequest.run(record.requestId).changes) !== 1) throw new Error("TELEGRAM_REVIEW_STATE_CONFLICT");
+        if (auditEvent) insertAuditEvent(auditEvent);
         return true;
       });
     } catch { return false; }
@@ -222,7 +251,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
   return Object.freeze({
     claimUpdate, persistIntake, completeUpdate, releaseUpdate,
     saveReviewRequest, getReviewRequest, claimReviewRequest,
-    releaseReviewRequest, cancelReviewRequest, persistDecision,
+    releaseReviewRequest, cancelReviewRequest, expireReviewRequest, persistDecision,
     appendAuditEvent, snapshot,
   });
 }
