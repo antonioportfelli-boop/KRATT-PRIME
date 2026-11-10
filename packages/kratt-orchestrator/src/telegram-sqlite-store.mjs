@@ -301,7 +301,12 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
         const priorIntent = statements.getDecisionIntent.get(record.requestId);
         if (priorIntent) {
           const intent = parseJson(priorIntent.intent_json);
-          if (!intent || intent.decision !== record.decision || intent.actorTelegramUserId !== record.actorTelegramUserId ||
+          if (!intent || intent.decision !== record.decision || intent.reason !== record.reason ||
+              intent.actorTelegramUserId !== record.actorTelegramUserId ||
+              intent.targetDigest !== record.targetDigest ||
+              intent.evidenceSnapshotDigest !== record.evidenceSnapshotDigest ||
+              intent.rootDigest !== record.rootDigest ||
+              intent.policyVersion !== record.policyVersion ||
               priorIntent.state !== "PENDING_SIGNATURE") throw new Error("TELEGRAM_DECISION_INTENT_MISMATCH");
         }
         statements.insertDecision.run(record.decisionId, record.requestId, stable(record));
