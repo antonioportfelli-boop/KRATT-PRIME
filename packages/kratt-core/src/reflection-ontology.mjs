@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createSqliteReflectionRootStore } from "./reflection-root-store.mjs";
+import { createTelegramReflectionCasAdapter } from "./telegram-reflection-proposal-verifier.mjs";
 
 export const KRATT_ONTOLOGY_VERSION = "kratt-ontology/v1";
 
@@ -182,6 +183,17 @@ export function createOntologyValidatedReflectionRootStore(database, options = {
   const result = validateReflectionOntology(options.initialSnapshot?.document);
   if (!result.ok) throw new TypeError(`KRATT_ONTOLOGY_INITIAL_ROOT_INVALID:${result.errors.join(",")}`);
   return createSqliteReflectionRootStore(database, {
+    ...options,
+    validateDocument: document => validateReflectionOntology(document).ok,
+  });
+}
+
+
+/** Production Telegram composition with ontology validation at every root trust boundary. */
+export function createOntologyValidatedTelegramReflectionCasAdapter(options = {}) {
+  const result = validateReflectionOntology(options.initialSnapshot?.document);
+  if (!result.ok) throw new TypeError(`KRATT_ONTOLOGY_INITIAL_ROOT_INVALID:${result.errors.join(",")}`);
+  return createTelegramReflectionCasAdapter({
     ...options,
     validateDocument: document => validateReflectionOntology(document).ok,
   });
