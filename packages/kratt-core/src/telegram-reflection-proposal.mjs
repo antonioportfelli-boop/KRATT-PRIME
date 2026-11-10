@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
-const DIGEST = /^sha256:[0-9a-f]{64}$/;
-const ISO_UTC = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$/;
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 function canonical(value, active = new WeakSet(), path = "$") {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
@@ -16,7 +15,15 @@ function canonical(value, active = new WeakSet(), path = "$") {
   try {
     if (Array.isArray(value)) {
       if (Reflect.ownKeys(value).length !== value.length + 1) throw new TypeError(`REFLECTION_PROPOSAL_ARRAY_SHAPE_INVALID:${path}`);
-      return `[${value.map((item, index) => canonical(item, active, `${path}[${index}]`)).join(",")}]`;
+      const items = [];
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          throw new TypeError(`REFLECTION_PROPOSAL_ARRAY_ITEM_INVALID:${path}[${index}]`);
+        }
+        items.push(canonical(descriptor.value, active, `${path}[${index}]`));
+      }
+      return `[${items.join(",")}]`;
     }
     if (![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
       throw new TypeError(`REFLECTION_PROPOSAL_OBJECT_PROTOTYPE_INVALID:${path}`);
