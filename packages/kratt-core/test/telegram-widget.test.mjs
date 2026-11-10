@@ -1,5 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
+import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
+import { createTelegramReviewWidgetService } from "../../kratt-orchestrator/src/telegram-review-service.mjs";
 import { renderClaimReviewWidget } from "../../kratt-orchestrator/src/telegram-review-widget.mjs";
 import { createTelegramBotApiClient } from "../../kratt-orchestrator/src/telegram-bot-api-client.mjs";
 
@@ -126,4 +130,77 @@ test("Bot API client sanitizes rejected API errors and never returns the token",
     assert.equal(error.message, "TELEGRAM_API_REJECTED:answerWidgetQuery:401");
     return true;
   });
+});
+
+test("review widget service binds sent message to a persisted pending request", async () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    const store = createSqliteTelegramStore(database);
+    const controlPlane = createTelegramControlPlane({
+      now: () => "2026-11-10T12:00:00.000Z",
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: "local-test-webhook-secret",
+      store,
+    });
+    const service = createTelegramReviewWidgetService({
+      controlPlane,
+      store,
+      botApiClient: {
+        async sendClaimReviewWidget() {
+          return { message_id: 91, chat: { id: 123456 } };
+        },
+      },
+    });
+    const result = await service.send({
+      projection,
+      actorTelegramUserId: "123456",
+      chatId: "123456",
+      chatType: "private",
+    });
+    assert.equal(result.status, "OK");
+    assert.equal(result.reason, "TELEGRAM_REVIEW_WIDGET_SENT_PENDING_SIGNATURE");
+    const mapping = store.getReviewRequestForMessage("123456", 91);
+    assert.equal(mapping.request.requestId, result.requestId);
+    assert.equal(mapping.state, "PENDING");
+  } finally { database.close(); }
+});
+
+test("review widget service refuses group contexts and cancels when send fails", async () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    const store = createSqliteTelegramStore(database);
+    const controlPlane = createTelegramControlPlane({
+      now: () => "2026-11-10T12:00:00.000Z",
+      allowedArchitectUserIds: ["123456"],
+      webhookSecret: "local-test-webhook-secret",
+      store,
+    });
+    let sends = 0;
+    const service = createTelegramReviewWidgetService({
+      controlPlane,
+      store,
+      botApiClient: {
+        async sendClaimReviewWidget() { sends += 1; throw new Error("transport unavailable"); },
+      },
+    });
+    const denied = await service.send({
+      projection,
+      actorTelegramUserId: "123456",
+      chatId: "-100123",
+      chatType: "group",
+    });
+    assert.equal(denied.status, "DENY");
+    assert.equal(sends, 0);
+
+    const failed = await service.send({
+      projection,
+      actorTelegramUserId: "123456",
+      chatId: "123456",
+      chatType: "private",
+    });
+    assert.equal(failed.status, "ERROR");
+    const requests = store.snapshot().reviewRequests;
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].state, "CANCELLED");
+  } finally { database.close(); }
 });
