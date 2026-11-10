@@ -1,3 +1,5 @@
+import { createSqliteReflectionRootStore } from "./reflection-root-store.mjs";
+
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 function validTime(value) {
@@ -72,4 +74,30 @@ export function createTrustedTelegramReflectionProposalVerifier({
       return false;
     }
   };
+}
+
+
+/**
+ * Compose the trusted Telegram decision re-verifier with the SQLite CAS root.
+ * The caller supplies the already-configured SQLite database, durable
+ * Telegram decision store, and trusted Ed25519 public-key verifier.
+ */
+export function createTelegramReflectionCasAdapter({
+  database,
+  initialSnapshot,
+  decisionStore,
+  verifyApprovalProof,
+  now = () => Date.now(),
+} = {}) {
+  const verifyProposal = createTrustedTelegramReflectionProposalVerifier({
+    decisionStore,
+    verifyApprovalProof,
+    now,
+  });
+  const rootStore = createSqliteReflectionRootStore(database, {
+    initialSnapshot,
+    verifyProposal,
+    now: () => new Date(typeof now() === "string" ? Date.parse(now()) : now()).toISOString(),
+  });
+  return Object.freeze({ rootStore, verifyProposal });
 }
