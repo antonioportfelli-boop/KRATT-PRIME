@@ -27,13 +27,13 @@ The ontology preserves four distinctions:
 | BRANCH_RUN | root version/digest and run status |
 | AGENT | role, explicit scope and status |
 
-Every node carries a stable ID, UTC creation time, attributes and recomputable SHA-256 `recordDigest`. Model-extracted claims are required to remain `UNREVIEWED`; the validator rejects direct model promotion to `APPROVED`.
+Every node and typed edge carries a stable ID, UTC creation time, exact versioned fields and recomputable SHA-256 `recordDigest`. Source, segment, claim, evidence, contradiction and decision references must resolve to the expected node types. Model-extracted claims are required to remain `UNREVIEWED`; the validator rejects direct model promotion to `APPROVED`.
 
 ## Typed relations
 
 V1 supports `SOURCE_HAS_SEGMENT`, `SEGMENT_SUPPORTS_CLAIM`, `EVIDENCE_SUPPORTS_CLAIM`, `EVIDENCE_CONTRADICTS_CLAIM`, `CLAIM_CONTRADICTS_CLAIM`, `DECISION_REVIEWS_CLAIM`, `BRANCH_RUN_PROPOSES_CLAIM`, `AGENT_PRODUCED`, `DERIVED_FROM`, and `PARENT_OF`.
 
-The validator checks endpoint existence and endpoint types, unique IDs, timestamps, digest shapes, and acyclicity of derivation and parent-child relations. The root metadata must declare `ontologyVersion: kratt-ontology/v1`.
+The validator checks exact field sets, endpoint existence and endpoint types, unique IDs, timestamps, recomputable record digests, provenance references, and acyclicity of derivation and parent-child relations. The root metadata must declare `ontologyVersion: kratt-ontology/v1`.
 
 ## Root integration
 
@@ -42,11 +42,11 @@ The validator checks endpoint existence and endpoint types, unique IDs, timestam
 2. every durable root read;
 3. the proposed post-delta document, before the CAS update commits.
 
-An invalid semantic transition is denied and leaves root version, digest and audit journal unchanged. The production composition still needs the host's real decision store, trusted architect public-key ring, durable claim/evidence repository and operational key management. The validator is not an authentication or authorization substitute.
+An invalid semantic transition is denied and leaves root version, digest and audit journal unchanged. The production composition still needs the host's real decision store, trusted architect public-key ring, durable claim/evidence repository and operational key management. The validator is not an authentication or authorization substitute. The SQLite store records schema migration `001_root_cas_v1`. `exportBackup()` emits a digest-bound logical backup containing the root snapshot, applied-proposal idempotency ledger, audit chain and migration history. `verifyReflectionRootBackup()` verifies it; `restoreSqliteReflectionRootBackup()` restores only into an empty database and refuses to overwrite a populated root.
 
 ## Tests
 
-`reflection-ontology.test.mjs` covers a valid source→segment→claim→evidence graph, model-claim promotion denial, missing endpoint denial, derivation cycle rejection, ontology-version enforcement, and CAS rejection of a semantically invalid transition.
+`reflection-ontology.test.mjs` covers a valid source→segment→claim→evidence graph, exact edge digests, model-claim promotion denial, missing endpoint denial, derivation cycle rejection, ontology-version enforcement, and CAS rejection of a semantically invalid transition. Root-store tests cover migration recording, backup digest/tamper rejection, empty-target restore, idempotency-ledger recovery and audit-chain verification.
 
 `reflection-root-concurrency.test.mjs` uses two independent SQLite connections to one file-backed database. It verifies that two proposals based on the same root snapshot cannot both commit, and that replay remains idempotent after closing and reopening a connection.
 
