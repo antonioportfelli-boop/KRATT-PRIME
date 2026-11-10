@@ -24,7 +24,8 @@ function evidenceRows(items, label) {
     const title = escapeHtml(item.publisher ?? item.sourceId ?? item.evidenceId ?? "Source");
     const excerpt = escapeHtml(item.excerpt ?? item.summary ?? item.relation ?? "No excerpt supplied.");
     const digest = escapeHtml(safeDigest(item.digest ?? item.evidenceDigest));
-    return `<article class="evidence"><strong>${title}</strong><p>${excerpt}</p><small>${digest}</small></article>`;
+    const lineage = escapeHtml(item.sourceLineageId ?? item.independenceGroupId ?? "lineage not supplied");
+    return `<article class="evidence"><strong>${title}</strong><p>${excerpt}</p><small>${digest} · ${lineage}</small></article>`;
   }).join("");
 }
 
