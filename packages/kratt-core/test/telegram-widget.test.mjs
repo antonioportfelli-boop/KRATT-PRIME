@@ -266,6 +266,7 @@ test("WidgetQuery intent proceeds to a separate Ed25519 signature before final d
     const normalized = normalizeTelegramUpdate(update);
     assert.equal(normalized.status, "OK");
     assert.equal(normalized.envelope.updateKind, "widget_query");
+    assert.equal(normalized.envelope.widgetQueryType, "data");
     const result = await plane.ingestAuthenticatedUpdate({ update, receivedSecret: "local-test-webhook-secret" });
     assert.equal(result.status, "OK");
     assert.equal(result.requiresSignedConfirmation, true);
