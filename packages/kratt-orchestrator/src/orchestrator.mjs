@@ -23,10 +23,39 @@ const TRANSITIONS = Object.freeze({
 const READ_STATES = new Set(["VERIFIED_READ_ONLY", "WRITE_ENABLED"]);
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
-function stable(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(",")}}`;
+function stable(value, active = new WeakSet(), path = "$") {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError(`NON_FINITE_NUMBER:${path}`);
+    return JSON.stringify(Object.is(value, -0) ? 0 : value);
+  }
+  if (typeof value !== "object") throw new TypeError(`UNSUPPORTED_VALUE:${path}`);
+  if (active.has(value)) throw new TypeError(`CIRCULAR_VALUE:${path}`);
+  active.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (Reflect.ownKeys(value).length !== value.length + 1) throw new TypeError(`ARRAY_SHAPE_INVALID:${path}`);
+      const items = [];
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) throw new TypeError(`ARRAY_ITEM_INVALID:${path}[${index}]`);
+        items.push(stable(descriptor.value, active, `${path}[${index}]`));
+      }
+      return `[${items.join(",")}]`;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`NON_PLAIN_OBJECT:${path}`);
+    const keys = Reflect.ownKeys(value);
+    if (keys.some(key => typeof key !== "string")) throw new TypeError(`SYMBOL_KEY:${path}`);
+    return `{${keys.sort().map(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) throw new TypeError(`OBJECT_FIELD_INVALID:${path}.${key}`);
+      return `${JSON.stringify(key)}:${stable(descriptor.value, active, `${path}.${key}`)}`;
+    }).join(",")}}`;
+  } finally {
+    active.delete(value);
+  }
 }
 
 function digest(value) {
