@@ -153,3 +153,62 @@ test("disabled adapter cannot read even when a handler exists", async () => {
   });
   assert.equal(response.status, "BLOCKED");
 });
+
+
+test("pending write requests expire and restore the verified read-only state", async () => {
+  let current = Date.parse(stamp);
+  const orchestrator = createOrchestrator({
+    now: () => new Date(current).toISOString(),
+    verifyApproval: () => true,
+  });
+  ready(orchestrator, descriptor(), { write: async () => ({ accepted:true }) });
+  const request = orchestrator.requestWrite({
+    adapterId:"github-main",
+    capability:"repo.write",
+    target:"feature/test",
+    payload:{ operation:"write" },
+    actor:"architect",
+  });
+  current += 5 * 60_000;
+  const expired = await orchestrator.approveAndExecuteWrite({
+    requestId:request.request.requestId,
+    approval:{ signature:"not-relevant-after-expiry" },
+  });
+  assert.equal(expired.reason, "WRITE_REQUEST_EXPIRED");
+  assert.equal(orchestrator.snapshot().adapters[0].state, "VERIFIED_READ_ONLY");
+});
+
+test("write request cancellation is actor-bound", () => {
+  const orchestrator = createOrchestrator({ now: () => stamp });
+  ready(orchestrator, descriptor(), { write: async () => ({}) });
+  const request = orchestrator.requestWrite({
+    adapterId:"github-main",
+    capability:"repo.write",
+    target:"feature/test",
+    payload:{ operation:"write" },
+    actor:"architect",
+  });
+  assert.equal(orchestrator.cancelWriteRequest({
+    requestId:request.request.requestId,
+    actor:"other-actor",
+  }).status, "DENY");
+  assert.equal(orchestrator.cancelWriteRequest({
+    requestId:request.request.requestId,
+    actor:"architect",
+  }).status, "OK");
+  assert.equal(orchestrator.snapshot().adapters[0].state, "VERIFIED_READ_ONLY");
+});
+
+test("non-canonical payloads are rejected before a write request is queued", () => {
+  const orchestrator = createOrchestrator({ now: () => stamp });
+  ready(orchestrator, descriptor());
+  const circular = {};
+  circular.self = circular;
+  assert.throws(() => orchestrator.requestWrite({
+    adapterId:"github-main",
+    capability:"repo.write",
+    target:"feature/test",
+    payload:circular,
+    actor:"architect",
+  }), /CIRCULAR_VALUE/);
+});
