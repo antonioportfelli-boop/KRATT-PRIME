@@ -10,6 +10,8 @@ jobs:
   vite:
     name: typecheck + build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       matrix:
         node-version: [22.x]
@@ -22,10 +24,10 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
-      - name: Dependency vulnerability inventory
-        run: |
-          npm audit --json > /tmp/kratt-npm-audit.json || true
-          node -e 'const a=JSON.parse(require("node:fs").readFileSync("/tmp/kratt-npm-audit.json","utf8")); console.log(JSON.stringify({metadata:a.metadata?.vulnerabilities, advisories:Object.entries(a.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==="string"?x:{name:x.name,title:x.title,url:x.url,range:x.range})}))},null,2))'
+      - name: Apply non-breaking dependency security updates
+        run: npm audit fix
+      - name: Enforce dependency security audit
+        run: npm audit --audit-level=high
       - name: KRATT core and orchestration contract tests
         run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
       - name: Console and local API syntax
@@ -34,3 +36,18 @@ jobs:
         run: npm run typecheck
       - name: Build
         run: npm run build
+      - name: Commit verified dependency lock updates
+        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feature/kratt-telegram-control-plane-v1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "No dependency lock changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "fix(deps): remediate npm security advisories"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${TARGET_BRANCH}"
