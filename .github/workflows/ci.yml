@@ -25,7 +25,9 @@ jobs:
       - name: Install
         run: npm ci
       - name: Apply non-breaking dependency security updates
-        run: npm audit fix
+        run: |
+          npm audit fix --package-lock-only
+          npm ci
       - name: Enforce dependency security audit
         run: npm audit --audit-level=high
       - name: KRATT core and orchestration contract tests
@@ -37,11 +39,15 @@ jobs:
       - name: Build
         run: npm run build
       - name: Commit verified dependency lock updates
-        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feature/kratt-telegram-control-plane-v1'
+        if: success() && github.event_name == 'pull_request'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+          TARGET_BRANCH: ${{ github.head_ref }}
         run: |
+          if [ "$TARGET_BRANCH" != "feature/kratt-telegram-control-plane-v1" ]; then
+            echo "Refusing dependency write outside the authorized feature branch."
+            exit 0
+          fi
+          git status --short
           if git diff --quiet -- package.json package-lock.json; then
             echo "No dependency lock changes."
             exit 0
@@ -50,4 +56,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "fix(deps): remediate npm security advisories"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${TARGET_BRANCH}"
+          git push origin "HEAD:${TARGET_BRANCH}"
