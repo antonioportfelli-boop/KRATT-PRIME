@@ -103,7 +103,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
       occurredAt,
       type,
       source,
-      payloadDigest,
+      payloadDigest: digest(payload),
       previousHash,
     };
     event.hash = digest(event);
@@ -228,7 +228,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
       capability,
       target,
       actor,
-      payloadDigest: digest(payload),
+      payloadDigest,
       correlationId,
       requestedAt,
       expiresAt: new Date(requestedTime + 5 * 60_000).toISOString(),
