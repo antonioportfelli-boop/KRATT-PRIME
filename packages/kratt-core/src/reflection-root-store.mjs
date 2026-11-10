@@ -197,12 +197,13 @@ export function createSqliteReflectionRootStore(database, {
   initialSnapshot,
   verifyProposal,
   now = () => new Date().toISOString(),
+  validateDocument = () => true,
 } = {}) {
   if (!database || typeof database.exec !== "function" || typeof database.prepare !== "function" ||
-      typeof verifyProposal !== "function" || typeof now !== "function") {
+      typeof verifyProposal !== "function" || typeof now !== "function" || typeof validateDocument !== "function") {
     throw new TypeError("REFLECTION_ROOT_STORE_ADAPTERS_REQUIRED");
   }
-  if (initialSnapshot && !rootDocumentValid(initialSnapshot.document)) throw new TypeError("REFLECTION_ROOT_INITIAL_SNAPSHOT_INVALID");
+  if (initialSnapshot && (!rootDocumentValid(initialSnapshot.document) || validateDocument(initialSnapshot.document) !== true)) throw new TypeError("REFLECTION_ROOT_INITIAL_SNAPSHOT_INVALID");
   database.exec(`
     CREATE TABLE IF NOT EXISTS kratt_reflection_root (
       singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -251,7 +252,7 @@ export function createSqliteReflectionRootStore(database, {
     const row = getRow.get();
     if (!row) return null;
     const document = JSON.parse(row.document_json);
-    if (!rootDocumentValid(document) || sha256(canonical(document)) !== row.digest) throw new Error("REFLECTION_ROOT_STORAGE_INTEGRITY_FAILURE");
+    if (!rootDocumentValid(document) || validateDocument(document) !== true || sha256(canonical(document)) !== row.digest) throw new Error("REFLECTION_ROOT_STORAGE_INTEGRITY_FAILURE");
     return createRootSnapshot(document, { version: Number(row.version), createdAt: row.updated_at });
   }
 
@@ -259,6 +260,7 @@ export function createSqliteReflectionRootStore(database, {
     if (!getRow.get()) {
       if (!initialSnapshot) throw new Error("REFLECTION_ROOT_INITIAL_SNAPSHOT_REQUIRED");
       const seed = createRootSnapshot(initialSnapshot.document, { version: initialSnapshot.version ?? 0, createdAt: initialSnapshot.createdAt ?? now() });
+      if (validateDocument(seed.document) !== true) throw new Error("REFLECTION_ROOT_ONTOLOGY_VALIDATION_FAILED");
       insertRoot.run(seed.version, seed.digest, canonical(seed.document), seed.createdAt);
       audit({ eventId: `root-seed:${seed.digest}`, type: "REFLECTION_ROOT_INITIALIZED", rootVersion: seed.version, rootDigest: seed.digest, occurredAt: seed.createdAt });
     }
@@ -299,7 +301,7 @@ export function createSqliteReflectionRootStore(database, {
         } catch {
           return Object.freeze({ status: "DENY", reason: "REFLECTION_ROOT_DELTA_APPLICATION_INVALID" });
         }
-        if (!rootDocumentValid(nextDocument)) return Object.freeze({ status: "DENY", reason: "REFLECTION_ROOT_RESULT_INVALID" });
+        if (!rootDocumentValid(nextDocument) || validateDocument(nextDocument) !== true) return Object.freeze({ status: "DENY", reason: "REFLECTION_ROOT_RESULT_INVALID" });
         const appliedAt = now();
         if (typeof appliedAt !== "string" || !Number.isFinite(Date.parse(appliedAt))) throw new Error("REFLECTION_ROOT_CLOCK_INVALID");
         const next = createRootSnapshot(nextDocument, { version: snapshot.version + 1, createdAt: appliedAt });
