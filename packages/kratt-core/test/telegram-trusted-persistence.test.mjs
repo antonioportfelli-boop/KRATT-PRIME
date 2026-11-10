@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { createTelegramApprovalSigningRequest } from "../src/telegram-approval-signing-request.mjs";
-import { createTrustedTelegramReflectionProposalVerifier } from "../src/telegram-reflection-proposal-verifier.mjs";
+import { createTrustedTelegramReflectionProposalVerifier, createTelegramReflectionCasAdapter } from "../src/telegram-reflection-proposal-verifier.mjs";
+import { createTelegramReflectionProposalService } from "../src/telegram-reflection-proposal.mjs";
+import { createRootSnapshot } from "../src/reflection-root-store.mjs";
 import { createTelegramExternalSignerAdapter } from "../../kratt-orchestrator/src/telegram-external-signer.mjs";
 import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
@@ -505,4 +507,86 @@ test("Reflection CAS verifier rechecks persisted Ed25519 proof and exact decisio
     now: () => nowMs + 1000,
   });
   assert.equal(rejectForged(proposal, currentSnapshot), false);
+});
+
+
+test("end-to-end signed Telegram approval creates and applies a CAS-bound reflection delta", async () => {
+  const { database, store, plane, privateKey, publicKey, nowMs } = setup();
+  const initialSnapshot = createRootSnapshot({
+    nodes: [{ id: "claim-telegram-01", status: "UNDER_REVIEW" }],
+    edges: [],
+    metadata: { schema: "kratt-reflection-test/v1" },
+  });
+  const reviewProjection = {
+    ...projection,
+    rootDigest: initialSnapshot.digest,
+  };
+  const pending = plane.createClaimReviewRequest({
+    projection: reviewProjection,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    chatType: "private",
+  });
+  const proof = signedProof(pending.request, privateKey, nowMs);
+  const resolved = await plane.resolveClaimReview({
+    requestId: pending.request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    chatType: "private",
+    decision: "APPROVE",
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    proof,
+  });
+  assert.equal(resolved.status, "OK");
+
+  const verifyApprovalProof = createTrustedTelegramDecisionVerifier({
+    trustedApprovalKeys: [{
+      key_id: "telegram-review-key-1",
+      approver_id: "123456",
+      public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
+      authorities: [authority],
+    }],
+    now: () => nowMs + 1000,
+    authority,
+  });
+  const proposalService = createTelegramReflectionProposalService({
+    decisionStore: store,
+    projectionService: {
+      async get(claimId) {
+        return {
+          readOnly: true,
+          truthVerdict: "NOT_ASSERTED",
+          claimId,
+          claimDigest: pending.request.targetDigest,
+          evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+          rootDigest: initialSnapshot.digest,
+          rootVersion: initialSnapshot.version,
+        };
+      },
+    },
+    async buildRootDelta() {
+      return {
+        schemaVersion: "kratt-root-delta/v1",
+        operations: [{ op: "replace", path: "/nodes/0/status", value: "REFLECTED" }],
+      };
+    },
+  });
+  const created = await proposalService.createProposal({ requestId: pending.request.requestId });
+  assert.equal(created.status, "OK");
+
+  const cas = createTelegramReflectionCasAdapter({
+    database,
+    initialSnapshot,
+    decisionStore: store,
+    verifyApprovalProof,
+    now: () => nowMs + 1000,
+  });
+  const applied = cas.rootStore.applyProposal(created.proposal);
+  assert.equal(applied.status, "APPLIED");
+  assert.equal(cas.rootStore.getSnapshot().snapshot.version, 1);
+  assert.equal(cas.rootStore.getSnapshot().snapshot.document.nodes[0].status, "REFLECTED");
+  assert.equal(cas.rootStore.verifyAudit().ok, true);
 });
