@@ -118,6 +118,14 @@ async function hashText(text) {
   const hash = await crypto.subtle.digest("SHA-256", bytes);
   return "sha256:" + [...new Uint8Array(hash)].map(x => x.toString(16).padStart(2,"0")).join("");
 }
+async function sealInitialJournal() {
+  let previous = null;
+  for (const event of journal) {
+    event.previousHash = previous;
+    event.hash = await hashText(JSON.stringify(event));
+    previous = event.hash;
+  }
+}
 async function appendEvent(type, ref, payload, tone = "cyan") {
   const previous = journal.at(-1)?.hash ?? null;
   const event = {
@@ -140,7 +148,7 @@ $("#intake-form")?.addEventListener("submit", async event => {
   const sourceType = $("#intake-source").value;
   if (!label) return;
   const item = {
-    id:"SIG-" + String(1284 + (signals.length - 7)).padStart(4,"0"),
+    id:"SIG-" + String(1284 + (signals.length - 8)).padStart(4,"0"),
     source:sourceType,
     category:"New intake",
     title:label,
@@ -190,3 +198,4 @@ updateClock();
 setInterval(updateClock, 1000);
 renderSignals();
 renderJournal();
+sealInitialJournal().then(renderJournal);
