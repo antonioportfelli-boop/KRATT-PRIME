@@ -32,11 +32,11 @@ function validDocument() {
     sourceId: "source-1", startOffset: 0, endOffset: 12, excerptDigest: digest("excerpt"),
   });
   const claim = node("claim-1", "CLAIM", {
-    normalizedText: "A testable proposition", extractionMethod: "model", claimStatus: "UNREVIEWED",
+    normalizedText: "A testable proposition", subjectId: "entity-1", predicate: "status", objectValue: "active", timeScope: "2026-Q4", extractionMethod: "model", claimStatus: "UNREVIEWED",
     sourceRefs: [{ segmentId: "segment-1", sourceDigest: digest("source"), startOffset: 0, endOffset: 12, excerptDigest: digest("excerpt") }],
   });
   const evidence = node("evidence-1", "EVIDENCE", {
-    sourceId: "source-1", sourceDigest: digest("source"), stance: "supports",
+    sourceId: "source-1", sourceDigest: digest("source"), claimId: "claim-1", stance: "supports",
     integrityStatus: "VERIFIED", sourceLineageId: "lineage-1", independenceGroupId: "independent-1",
   });
   return {
@@ -70,7 +70,7 @@ test("accepts versioned source, segment, claim and evidence provenance graph", (
 test("rejects model claim promotion, missing provenance and invalid relation endpoints", () => {
   const promoted = validDocument();
   promoted.nodes[2] = node("claim-1", "CLAIM", {
-    normalizedText: "A testable proposition", extractionMethod: "model", claimStatus: "APPROVED", sourceRefs: [{ segmentId: "segment-1" }],
+    normalizedText: "A testable proposition", subjectId: "entity-1", predicate: "status", objectValue: "active", timeScope: "2026-Q4", extractionMethod: "model", claimStatus: "APPROVED", sourceRefs: [{ segmentId: "segment-1" }],
   });
   assert.ok(validateReflectionOntology(promoted).errors.includes("ONTOLOGY_MODEL_CLAIM_PROMOTION_FORBIDDEN"));
 
