@@ -65,7 +65,7 @@ export function createTelegramWidgetQueryHandler({ store, botApiClient, now = ()
     if (!envelope || !["widget_query","shared_widget_query"].includes(envelope.updateKind)) {
       return Object.freeze({ status: "DENY", reason: "TELEGRAM_WIDGET_QUERY_CONTEXT_UNSUPPORTED" });
     }
-    const { widgetQueryId, widgetQueryData, actorTelegramUserId, chatId, chatType, widgetMessageId } = envelope;
+    const { widgetQueryId, widgetQueryData, widgetQueryType, actorTelegramUserId, chatId, chatType, widgetMessageId } = envelope;
     if (envelope.updateKind === "shared_widget_query") {
       await answer(widgetQueryId, "Shared-widget review decisions are not supported in KRATT V1.");
       return Object.freeze({ status: "DENY", reason: "TELEGRAM_SHARED_WIDGET_REVIEW_UNSUPPORTED" });
@@ -84,6 +84,10 @@ export function createTelegramWidgetQueryHandler({ store, botApiClient, now = ()
         request.chatId !== chatId || request.chatType !== "private") {
       await answer(widgetQueryId, "This review request is not pending for this Telegram account.");
       return Object.freeze({ status: "DENY", reason: "TELEGRAM_WIDGET_REVIEW_ACTOR_OR_STATE_MISMATCH" });
+    }
+    if (widgetQueryType !== "data" || typeof widgetQueryData !== "string" || Buffer.byteLength(widgetQueryData, "utf8") < 1 || Buffer.byteLength(widgetQueryData, "utf8") > 64) {
+      await answer(widgetQueryId, "Unsupported widget query type.");
+      return Object.freeze({ status: "REJECTED", reason: "TELEGRAM_WIDGET_QUERY_TYPE_UNSUPPORTED" });
     }
     const action = parseIntent(widgetQueryData);
     if (!action) {
