@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { createTelegramApprovalSigningRequest } from "../src/telegram-approval-signing-request.mjs";
+import { createTelegramExternalSignerAdapter } from "../../kratt-orchestrator/src/telegram-external-signer.mjs";
 import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
 import { createSqliteNonceStore } from "../src/sqlite-nonce-store.mjs";
@@ -371,4 +372,62 @@ test("external signing request refuses changed intent digests and wrong approver
     approvedBy: "999999",
     issuedAt: new Date(nowMs).toISOString(),
   }), /TELEGRAM_APPROVAL_SIGNING_REQUEST_INVALID/);
+});
+
+test("external signer adapter signs only the request-bound payload and locally verifies it", async () => {
+  const { plane, privateKey, nowMs } = setup();
+  const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+  const intent = {
+    status: "PENDING_SIGNATURE",
+    requestId: pending.request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: pending.request.chatId,
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    decision: "APPROVE",
+    reason: "",
+  };
+  const adapter = createTelegramExternalSignerAdapter({
+    keyId: "telegram-review-key-1",
+    approvedBy: "123456",
+    verifyApproval: async (proof, binding) => {
+      const verifier = createTrustedTelegramDecisionVerifier({
+        trustedApprovalKeys: [{
+          key_id: "telegram-review-key-1",
+          approver_id: "123456",
+          public_key_pem: (await import("node:crypto")).createPublicKey(
+            privateKey
+          ).export({ type: "spki", format: "pem" }),
+          authorities: [authority],
+        }],
+        now: () => nowMs,
+      });
+      return verifier(proof, binding);
+    },
+    signer: {
+      async signEd25519({ payload }) {
+        return sign(null, Buffer.from(payload, "utf8"), privateKey).toString("base64url");
+      },
+    },
+  });
+  const signed = await adapter.signIntent({
+    request: pending.request,
+    intent,
+    issuedAt: new Date(nowMs).toISOString(),
+  });
+  assert.equal(signed.status, "OK");
+  const result = await plane.resolveClaimReview({
+    requestId: pending.request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    decision: "APPROVE",
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    proof: signed.proof,
+  });
+  assert.equal(result.status, "OK");
 });
