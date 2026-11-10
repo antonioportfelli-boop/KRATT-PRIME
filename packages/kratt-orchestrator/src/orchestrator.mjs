@@ -125,7 +125,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     if (!TRANSITIONS[current.state].includes(nextState)) {
       return result("BLOCKED", "ILLEGAL_ADAPTER_STATE_TRANSITION", { currentState: current.state, requestedState: nextState });
     }
-    if (nextState === "VERIFIED_READ_ONLY" &&
+    if (nextState === "VERIFIED_READ_ONLY" && current.state === "CONNECTED_UNVERIFIED" &&
         (!evidence || evidence.verified !== true || typeof evidence.verifierId !== "string" || !evidence.verifierId.trim())) {
       return result("DENY", "TRUSTED_ADAPTER_VERIFICATION_REQUIRED");
     }
