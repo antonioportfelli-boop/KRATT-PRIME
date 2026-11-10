@@ -8,8 +8,8 @@ const NODE_TYPES = new Set(["SOURCE", "SEGMENT", "CLAIM", "EVIDENCE", "CONTRADIC
 const NODE_FIELDS = {
   SOURCE: ["sourceDigest", "observedAt", "rightsStatus"],
   SEGMENT: ["sourceId", "startOffset", "endOffset", "excerptDigest"],
-  CLAIM: ["normalizedText", "extractionMethod", "claimStatus", "sourceRefs"],
-  EVIDENCE: ["sourceId", "sourceDigest", "stance", "integrityStatus", "sourceLineageId", "independenceGroupId"],
+  CLAIM: ["normalizedText", "subjectId", "predicate", "objectValue", "timeScope", "extractionMethod", "claimStatus", "sourceRefs"],
+  EVIDENCE: ["sourceId", "sourceDigest", "claimId", "stance", "integrityStatus", "sourceLineageId", "independenceGroupId"],
   CONTRADICTION: ["claimIds", "timeScope", "detectionMethod", "status"],
   DECISION: ["targetId", "decision", "reviewerId", "reason", "policyVersion", "evidenceSnapshotDigest", "decidedAt"],
   BRANCH_RUN: ["rootVersion", "rootDigest", "status"],
@@ -95,6 +95,8 @@ function validateNode(node, errors) {
   }
   if (node.type === "CLAIM") {
     add(errors, typeof a.normalizedText === "string" && a.normalizedText.trim().length > 0, "ONTOLOGY_CLAIM_TEXT_INVALID");
+    add(errors, typeof a.subjectId === "string" && a.subjectId.length > 0 && typeof a.predicate === "string" && a.predicate.length > 0 && typeof a.timeScope === "string" && a.timeScope.length > 0, "ONTOLOGY_CLAIM_STRUCTURED_PROPOSITION_INVALID");
+    try { canonical(a.objectValue); } catch { errors.push("ONTOLOGY_CLAIM_OBJECT_VALUE_INVALID"); }
     add(errors, ["human", "rules", "model", "parser"].includes(a.extractionMethod), "ONTOLOGY_CLAIM_EXTRACTION_INVALID");
     add(errors, ["UNREVIEWED", "UNDER_REVIEW", "SUPPORTED", "CONTESTED", "REJECTED", "APPROVED", "UNKNOWN"].includes(a.claimStatus), "ONTOLOGY_CLAIM_STATUS_INVALID");
     add(errors, Array.isArray(a.sourceRefs) && a.sourceRefs.length > 0, "ONTOLOGY_CLAIM_SOURCE_REQUIRED");
@@ -107,6 +109,7 @@ function validateNode(node, errors) {
   }
   if (node.type === "EVIDENCE") {
     add(errors, DIGEST.test(a.sourceDigest), "ONTOLOGY_EVIDENCE_SOURCE_DIGEST_INVALID");
+    add(errors, typeof a.claimId === "string" && a.claimId.length > 0, "ONTOLOGY_EVIDENCE_CLAIM_REFERENCE_INVALID");
     add(errors, ["supports", "contradicts", "contextualizes", "mentions"].includes(a.stance), "ONTOLOGY_EVIDENCE_STANCE_INVALID");
     add(errors, ["UNVERIFIED", "VERIFIED", "INVALID"].includes(a.integrityStatus), "ONTOLOGY_EVIDENCE_INTEGRITY_INVALID");
     add(errors, typeof a.sourceLineageId === "string" && a.sourceLineageId.length > 0 &&
@@ -160,6 +163,7 @@ export function validateReflectionOntology(document) {
       const a = node.attributes ?? {};
       if (node.type === "SEGMENT" && nodes.get(a.sourceId)?.type !== "SOURCE") errors.push("ONTOLOGY_SEGMENT_SOURCE_NOT_FOUND");
       if (node.type === "EVIDENCE" && nodes.get(a.sourceId)?.type !== "SOURCE") errors.push("ONTOLOGY_EVIDENCE_SOURCE_NOT_FOUND");
+      if (node.type === "EVIDENCE" && nodes.get(a.claimId)?.type !== "CLAIM") errors.push("ONTOLOGY_EVIDENCE_CLAIM_NOT_FOUND");
       if (node.type === "CLAIM" && Array.isArray(a.sourceRefs) &&
           a.sourceRefs.some(ref => nodes.get(ref.segmentId)?.type !== "SEGMENT")) errors.push("ONTOLOGY_CLAIM_SEGMENT_NOT_FOUND");
       if (node.type === "CONTRADICTION" && Array.isArray(a.claimIds) &&
