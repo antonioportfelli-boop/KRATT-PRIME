@@ -48,14 +48,15 @@ export function normalizeTelegramUpdate(update) {
     return outcome("REJECTED", "TELEGRAM_UPDATE_ENVELOPE_INVALID");
   }
 
-  const candidates = ["message", "channel_post", "edited_message", "callback_query", "business_message"];
+  const candidates = ["message", "channel_post", "edited_message", "callback_query", "business_message", "widget_query", "shared_widget_query"];
   const kind = candidates.find(key => update[key] && typeof update[key] === "object");
   if (!kind) return outcome("REJECTED", "TELEGRAM_UPDATE_KIND_UNSUPPORTED");
 
   const item = update[kind];
   const from = kind === "callback_query" ? item.from : item.from;
   const chat = kind === "callback_query" ? item.message?.chat : item.chat;
-  const text = kind === "callback_query" ? null : (typeof item.text === "string" ? item.text :
+  const widgetQuery = kind === "widget_query" || kind === "shared_widget_query";
+  const text = kind === "callback_query" || widgetQuery ? null : (typeof item.text === "string" ? item.text :
     typeof item.caption === "string" ? item.caption : null);
 
   return outcome("OK", "TELEGRAM_UPDATE_NORMALIZED", {
@@ -65,9 +66,14 @@ export function normalizeTelegramUpdate(update) {
       updateKind: kind,
       actorTelegramUserId: Number.isSafeInteger(from?.id) ? String(from.id) : null,
       chatId: Number.isSafeInteger(chat?.id) ? String(chat.id) : null,
-      chatType: typeof chat?.type === "string" ? chat.type : null,
+      chatType: typeof chat?.type === "string" ? chat.type :
+        (typeof item.chat_type === "string" ? item.chat_type : null),
       text,
       callbackQueryId: kind === "callback_query" && typeof item.id === "string" ? item.id : null,
+      widgetQueryId: widgetQuery && typeof item.id === "string" ? item.id : null,
+      widgetQueryData: widgetQuery && typeof item.data === "string" ? item.data : null,
+      widgetMessageId: widgetQuery && Number.isSafeInteger(item.message_id) ? item.message_id : null,
+      widgetId: widgetQuery && typeof item.widget_id === "string" ? item.widget_id : null,
       payloadDigest: digest(update),
     }),
   });
@@ -83,6 +89,7 @@ export function createTelegramControlPlane({
   allowedArchitectUserIds = [],
   webhookSecret,
   verifyApproval,
+  handleWidgetQuery,
   store,
   persistIntake,
   persistDecision,
@@ -95,6 +102,7 @@ export function createTelegramControlPlane({
   if (store && (!["claimUpdate","persistIntake","completeUpdate","releaseUpdate","saveReviewRequest","getReviewRequest","getDecision","claimReviewRequest","releaseReviewRequest","cancelReviewRequest","expireReviewRequest","persistDecision","appendAuditEvent","snapshot"].every(key => typeof store[key] === "function"))) {
     throw new TypeError("TELEGRAM_DURABLE_STORE_INVALID");
   }
+  if (handleWidgetQuery !== undefined && typeof handleWidgetQuery !== "function") throw new TypeError("TELEGRAM_WIDGET_QUERY_HANDLER_INVALID");
   const saveIntake = persistIntake ?? store?.persistIntake?.bind(store);
   const saveDecision = persistDecision ?? store?.persistDecision?.bind(store);
   if (typeof saveIntake !== "function" || typeof saveDecision !== "function") throw new TypeError("TELEGRAM_PERSISTENCE_ADAPTER_REQUIRED");
@@ -168,6 +176,35 @@ export function createTelegramControlPlane({
           : outcome("DUPLICATE", "TELEGRAM_UPDATE_ALREADY_PROCESSED", { updateId: item.updateId, original: prior.result });
       }
       updates.set(item.updateId, { payloadDigest: item.payloadDigest, result: null });
+    }
+    if (item.updateKind === "widget_query" || item.updateKind === "shared_widget_query") {
+      let widgetResult;
+      if (item.updateKind !== "widget_query" || typeof handleWidgetQuery !== "function") {
+        widgetResult = outcome("DENY", "TELEGRAM_WIDGET_QUERY_CONTEXT_UNSUPPORTED");
+      } else {
+        try { widgetResult = await handleWidgetQuery({ envelope: item, update }); }
+        catch { widgetResult = outcome("ERROR", "TELEGRAM_WIDGET_QUERY_HANDLER_FAILED"); }
+      }
+      if (widgetResult?.status === "ERROR") {
+        if (store) store.releaseUpdate({ updateId: item.updateId, leaseToken });
+        else updates.delete(item.updateId);
+        return widgetResult;
+      }
+      const widgetAudit = buildAuditEvent("TELEGRAM_WIDGET_QUERY_HANDLED", {
+        updateId: item.updateId,
+        widgetQueryId: item.widgetQueryId,
+        status: widgetResult?.status ?? "ERROR",
+      }, correlationId);
+      if (store && store.completeUpdate({ updateId: item.updateId, payloadDigest: item.payloadDigest, leaseToken, result: widgetResult, auditEvent: widgetAudit }) !== true) {
+        store.releaseUpdate({ updateId: item.updateId, leaseToken });
+        return outcome("ERROR", "TELEGRAM_WIDGET_QUERY_PERSISTENCE_FAILED");
+      }
+      if (store) journal.push(widgetAudit);
+      else {
+        updates.get(item.updateId).result = widgetResult;
+        emit("TELEGRAM_WIDGET_QUERY_HANDLED", { updateId: item.updateId, widgetQueryId: item.widgetQueryId, status: widgetResult?.status ?? "ERROR" }, correlationId);
+      }
+      return widgetResult;
     }
     if (item.text !== null && ["message", "channel_post", "edited_message", "business_message"].includes(item.updateKind)) {
       const intake = frozen({
