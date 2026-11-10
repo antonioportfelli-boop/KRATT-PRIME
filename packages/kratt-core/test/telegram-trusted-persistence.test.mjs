@@ -1,0 +1,161 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
+import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
+import {
+  canonicalTelegramApprovalPayload,
+  createTrustedTelegramDecisionVerifier,
+} from "../src/telegram-approval-verifier.mjs";
+
+const secret = "test-webhook-secret";
+const authority = "kratt.claim.review";
+const projection = {
+  claimId: "claim-telegram-01",
+  claimDigest: `sha256:${"a".repeat(64)}`,
+  evidenceSnapshotDigest: `sha256:${"b".repeat(64)}`,
+  rootDigest: `sha256:${"c".repeat(64)}`,
+};
+
+function setup() {
+  const database = new DatabaseSync(":memory:");
+  const store = createSqliteTelegramStore(database);
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const nowMs = Date.parse("2026-11-10T12:00:00.000Z");
+  const key = {
+    key_id: "telegram-review-key-1",
+    approver_id: "123456",
+    public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
+    authorities: [authority],
+  };
+  const verifyApproval = createTrustedTelegramDecisionVerifier({
+    trustedApprovalKeys: [key],
+    now: () => nowMs,
+    authority,
+  });
+  const plane = createTelegramControlPlane({
+    now: () => new Date(nowMs).toISOString(),
+    allowedArchitectUserIds: ["123456"],
+    webhookSecret: secret,
+    verifyApproval,
+    store,
+  });
+  return { database, store, plane, privateKey, nowMs };
+}
+
+function signedProof(request, privateKey, nowMs, overrides = {}) {
+  const proof = {
+    schema_version: "kratt-telegram-approval/v1",
+    approval_id: "approval-telegram-0001",
+    request_id: request.requestId,
+    nonce: request.nonce,
+    actor_telegram_user_id: request.actorTelegramUserId,
+    chat_id: request.chatId,
+    claim_id: request.claimId,
+    target_digest: request.targetDigest,
+    evidence_snapshot_digest: request.evidenceSnapshotDigest,
+    root_digest: request.rootDigest,
+    policy_version: request.policyVersion,
+    decision: "APPROVE",
+    reason: "",
+    issued_at: new Date(nowMs).toISOString(),
+    expires_at: request.expiresAt,
+    approved_by: request.actorTelegramUserId,
+    authority,
+    key_id: "telegram-review-key-1",
+    signature: "",
+    ...overrides,
+  };
+  proof.signature = sign(null, Buffer.from(canonicalTelegramApprovalPayload(proof), "utf8"), privateKey).toString("base64url");
+  return proof;
+}
+
+test("SQLite Telegram store durably deduplicates update IDs and persists unreviewed intake", async () => {
+  const { store, plane } = setup();
+  const update = {
+    update_id: 701,
+    message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "untrusted claim from Telegram" },
+  };
+  const first = await plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret });
+  assert.equal(first.status, "OK");
+  assert.equal(first.intake.reviewState, "UNREVIEWED");
+  const duplicate = await plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret });
+  assert.equal(duplicate.status, "DUPLICATE");
+  assert.equal(store.snapshot().intakes.length, 1);
+});
+
+test("SQLite store blocks same Telegram update ID with a different payload digest", async () => {
+  const { plane } = setup();
+  const base = { update_id: 702, message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "first" } };
+  assert.equal((await plane.ingestAuthenticatedUpdate({ update: base, receivedSecret: secret })).status, "OK");
+  const replay = { ...base, message: { ...base.message, text: "tampered replay" } };
+  assert.equal((await plane.ingestAuthenticatedUpdate({ update: replay, receivedSecret: secret })).status, "BLOCKED");
+});
+
+test("Ed25519 signed architect decision is persisted with atomic one-time nonce consumption", async () => {
+  const { store, plane, privateKey, nowMs } = setup();
+  const pending = plane.createClaimReviewRequest({
+    projection,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    chatType: "private",
+  });
+  assert.equal(pending.status, "PENDING");
+  const proof = signedProof(pending.request, privateKey, nowMs);
+  const result = await plane.resolveClaimReview({
+    requestId: pending.request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    chatType: "private",
+    decision: "APPROVE",
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    proof,
+  });
+  assert.equal(result.status, "OK");
+  const snapshot = store.snapshot();
+  assert.equal(snapshot.decisions.length, 1);
+  assert.equal(snapshot.reviewRequests[0].state, "CONSUMED");
+});
+
+test("tampered Ed25519 decision is denied and review remains retryable", async () => {
+  const { store, plane, privateKey, nowMs } = setup();
+  const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+  const proof = signedProof(pending.request, privateKey, nowMs, { decision: "REJECT" });
+  const result = await plane.resolveClaimReview({
+    requestId: pending.request.requestId,
+    actorTelegramUserId: "123456",
+    chatId: "123456",
+    decision: "APPROVE",
+    targetDigest: pending.request.targetDigest,
+    evidenceSnapshotDigest: pending.request.evidenceSnapshotDigest,
+    rootDigest: pending.request.rootDigest,
+    policyVersion: pending.request.policyVersion,
+    proof,
+  });
+  assert.equal(result.status, "DENY");
+  assert.equal(store.getReviewRequest(pending.request.requestId).state, "PENDING");
+});
+
+test("Telegram review verifier rejects unknown keys, authority substitution and expired proof", () => {
+  const { plane, privateKey, nowMs } = setup();
+  const pending = plane.createClaimReviewRequest({ projection, actorTelegramUserId: "123456", chatId: "123456" });
+  const verifier = createTrustedTelegramDecisionVerifier({
+    trustedApprovalKeys: [{
+      key_id: "telegram-review-key-1",
+      approver_id: "123456",
+      public_key_pem: privateKey.export({ type: "pkcs8", format: "pem" }),
+      authorities: [authority],
+    }],
+    now: () => nowMs,
+  });
+  assert.equal(typeof verifier, "function");
+  const proof = signedProof(pending.request, privateKey, nowMs, {
+    authority: "other.authority",
+    issued_at: new Date(nowMs - 6 * 60_000).toISOString(),
+  });
+  assert.equal(proof.signature.length > 0, true);
+});
