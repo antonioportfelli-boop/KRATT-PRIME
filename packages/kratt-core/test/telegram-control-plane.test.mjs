@@ -20,6 +20,7 @@ function makePlane(overrides = {}) {
   const plane = createTelegramControlPlane({
     now: () => new Date(current).toISOString(),
     allowedArchitectUserIds: ["123456"],
+    webhookSecret: secret,
     verifyApproval: async (proof, binding) => proof === "trusted-proof" && binding.requestId.length > 0,
     persistDecision: async record => { persisted.push(record); return true; },
     ...overrides,
@@ -47,7 +48,6 @@ test("authenticated Telegram text becomes UNREVIEWED intake", () => {
   const { plane } = makePlane();
   const result = plane.ingestAuthenticatedUpdate({
     receivedSecret: secret,
-    expectedSecret: secret,
     update: { update_id: 1, message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "Candidate claim" } },
   });
   assert.equal(result.status, "OK");
@@ -58,10 +58,10 @@ test("authenticated Telegram text becomes UNREVIEWED intake", () => {
 test("duplicate update is idempotent and mismatched replay is blocked", () => {
   const { plane } = makePlane();
   const update = { update_id: 2, message: { from: { id: 9 }, chat: { id: 9, type: "private" }, text: "first" } };
-  assert.equal(plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret, expectedSecret: secret }).status, "OK");
-  assert.equal(plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret, expectedSecret: secret }).status, "DUPLICATE");
+  assert.equal(plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret }).status, "OK");
+  assert.equal(plane.ingestAuthenticatedUpdate({ update, receivedSecret: secret }).status, "DUPLICATE");
   const mismatch = { ...update, message: { ...update.message, text: "changed" } };
-  assert.equal(plane.ingestAuthenticatedUpdate({ update: mismatch, receivedSecret: secret, expectedSecret: secret }).status, "BLOCKED");
+  assert.equal(plane.ingestAuthenticatedUpdate({ update: mismatch, receivedSecret: secret }).status, "BLOCKED");
 });
 
 test("strict review requires allowlisted architect and a private chat", () => {
