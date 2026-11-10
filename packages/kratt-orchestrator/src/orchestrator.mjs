@@ -103,7 +103,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
       occurredAt,
       type,
       source,
-      payloadDigest: digest(payload),
+      payloadDigest,
       previousHash,
     };
     event.hash = digest(event);
@@ -216,6 +216,10 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     const requestedAt = now();
     const requestedTime = Date.parse(requestedAt);
     if (!Number.isFinite(requestedTime)) return result("BLOCKED", "TRUSTED_CLOCK_UNAVAILABLE");
+    let payloadDigest;
+    try { payloadDigest = digest(payload); } catch {
+      return result("DENY", "WRITE_PAYLOAD_NOT_CANONICAL");
+    }
     const requestId = randomUUID();
     const request = freeze({
       requestId,
