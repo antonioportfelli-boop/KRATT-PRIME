@@ -158,6 +158,7 @@ Core interfaces are dependency-injected:
 - `createTelegramControlPlane({ now, verifyApproval, allowedArchitectUserIds, webhookSecret, store })`
 - `createSqliteTelegramStore(database)` for durable single-host SQLite state.
 - `createTrustedTelegramDecisionVerifier({ trustedApprovalKeys, now, authority })` for Ed25519 architect-signed review decisions.
+- `createTelegramWebhookHandler({ controlPlane, webhookSecret, allowRequest, maxBodyBytes })` for bounded, authenticated HTTP ingress.
 - `ingestAuthenticatedUpdate({ update, receivedSecret })` (async; intake persistence is injected through `persistIntake`)
 - `createClaimReviewRequest({ projection, actorTelegramUserId, chatId })`
 - `resolveClaimReview({ requestId, actorTelegramUserId, chatId, decision, reason, targetDigest, evidenceSnapshotDigest, rootDigest, policyVersion, proof })`
@@ -216,6 +217,7 @@ Implemented on `feature/kratt-telegram-control-plane-v1`:
 - Nonce consumption is deliberately not performed by the signature verifier. The SQLite store consumes the signed nonce, inserts the decision, transitions the review request to CONSUMED, and appends the audit event in one SQLite transaction.
 - `createSqliteTelegramStore` persists update IDs, payload digests, processing leases, unreviewed intake, review requests, decisions, and hash-linked audit events. File-backed restart tests cover durable update deduplication and decision/nonce persistence.
 - Update processing uses bounded leases. Same update ID with a different payload digest is blocked; duplicate completed updates are idempotent.
+- The webhook ingress handler requires POST + JSON, checks Telegram's secret-token header before parsing, requires an injected rate-limit decision, bounds request size, and maps processing states to retry-safe HTTP responses.
 - Audit events for intake, request creation, decisions, cancellation, and routed updates are committed with their corresponding durable state transition.
 
 The store is a **single-host SQLite adapter**. Multi-host deployments require a shared transactional store with equivalent atomicity. Database file location, backup, encryption-at-rest, retention, permissions, and operational key custody remain deployment responsibilities.
