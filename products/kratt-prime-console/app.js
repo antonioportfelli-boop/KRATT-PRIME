@@ -22,7 +22,6 @@ let eventSequence = 3;
 let toastHandle;
 let activeView = "overview";
 let backendConnected = false;
-let backendJournalRaw = null;
 let lastSegmentation = null;
 
 function timeNow() {
@@ -84,7 +83,6 @@ async function refreshBackend() {
     const state = await stateResponse.json();
     renderAdapterStates(state.adapters ?? []);
     if (Array.isArray(state.journal) && state.journal.length) {
-      backendJournalRaw = state.journal;
       journal.splice(0, journal.length, ...state.journal.map(event => ({
         type:event.type,
         ref:event.source,
@@ -186,7 +184,6 @@ function showView(view) {
 }
 $$(".nav-item").forEach(button => button.addEventListener("click", () => showView(button.dataset.view)));
 $$("[data-go]").forEach(button => button.addEventListener("click", () => showView(button.dataset.go)));
-$$("[data-view]").forEach(button => button.addEventListener("click", () => showView(button.dataset.view)));
 $("#signal-search")?.addEventListener("input", renderSignals);
 $("#signal-filter")?.addEventListener("change", renderSignals);
 $("#dismiss-notice")?.addEventListener("click", () => $(".notice-bar")?.remove());
@@ -247,6 +244,7 @@ $("#intake-form")?.addEventListener("submit", async event => {
     return;
   }
   let segmentation = null;
+  let apiRecorded = false;
   if (backendConnected) {
     try {
       const response = await fetch("/api/intake", {
@@ -265,6 +263,7 @@ $("#intake-form")?.addEventListener("submit", async event => {
         toast("Local API rejected the intake: " + (payload.reason ?? payload.error ?? "UNKNOWN"));
         return;
       }
+      apiRecorded = true;
       segmentation = payload.segmentation;
       if (segmentation) {
         lastSegmentation = segmentation;
@@ -299,7 +298,7 @@ $("#intake-form")?.addEventListener("submit", async event => {
   $("#intake-source-url").value = "";
   $("#intake-content").value = "";
   const segmentMessage = segmentation ? ` · ${segmentation.segmentCount} knowledge segments created` : "";
-  toast((backendConnected ? "Intake recorded by the loopback KRATT API" : "Local intake preview added") + segmentMessage + ". No external source was contacted.");
+  toast((apiRecorded ? "Intake recorded by the loopback KRATT API" : "Local intake preview added") + segmentMessage + ". No external source was contacted.");
   if (activeView === "signals") renderSignals();
 });
 
@@ -339,10 +338,6 @@ $("#verify-demo-journal")?.addEventListener("click", async () => {
   result.textContent = valid ? `LOCAL SAMPLE CHAIN VERIFIED · ${journal.length} events · ${previous?.slice(0,24)}…` : "INTEGRITY FAILURE · sample event chain differs.";
   result.classList.toggle("ok", valid);
   toast(valid ? "Sample event chain verified locally." : "Sample event chain integrity failure.");
-});
-
-$("#run-demo-intake")?.addEventListener("click", event => {
-  // The form submit handler owns the local-only preview action.
 });
 
 updateClock();
