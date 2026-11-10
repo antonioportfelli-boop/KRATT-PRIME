@@ -340,6 +340,20 @@ test("WidgetQuery rejects wrong actor and unsupported shared-widget decision con
     });
     assert.equal(wrongActor.status, "DENY");
     assert.equal(store.getDecisionIntent(sent.requestId), null);
+
+    const shared = await plane.ingestAuthenticatedUpdate({
+      receivedSecret: "local-test-webhook-secret",
+      update: {
+        update_id: 1203,
+        shared_widget_query: {
+          id: "shared-widget-query-unsupported",
+          from: { id: 123456 },
+          widget_id: "shared-widget-1",
+          data: "intent:APPROVE",
+        },
+      },
+    });
+    assert.equal(shared.status, "DENY");
   } finally { database.close(); }
 });
 
