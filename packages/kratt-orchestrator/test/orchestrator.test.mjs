@@ -204,11 +204,12 @@ test("non-canonical payloads are rejected before a write request is queued", () 
   ready(orchestrator, descriptor());
   const circular = {};
   circular.self = circular;
-  assert.throws(() => orchestrator.requestWrite({
+  const denied = orchestrator.requestWrite({
     adapterId:"github-main",
     capability:"repo.write",
     target:"feature/test",
     payload:circular,
     actor:"architect",
-  }), /CIRCULAR_VALUE/);
+  });
+  assert.equal(denied.reason, "WRITE_PAYLOAD_NOT_CANONICAL");
 });
