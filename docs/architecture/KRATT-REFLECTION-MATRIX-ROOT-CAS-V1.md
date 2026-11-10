@@ -31,7 +31,7 @@ This is a V1 implementation contract for the feature branch, not a claim that a 
 The SQLite adapter uses `BEGIN IMMEDIATE` and atomically:
 1. validates the proposal envelope and RootDelta digest;
 2. checks exact `expectedRootVersion + expectedRootDigest`;
-3. calls a mandatory synchronous trusted `verifyProposal(proposal, snapshot)` hook, which must re-check the durable signed architect decision and policy;
+3. calls the mandatory synchronous `createTrustedTelegramReflectionProposalVerifier` hook, which reloads the consumed decision and persisted public Ed25519 proof, rebuilds the exact request binding, and re-verifies the signature and expiry through the trusted architect public-key verifier;
 4. applies the restricted delta to a cloned document;
 5. increments root version and recomputes the snapshot digest;
 6. updates the singleton root with a version+digest predicate;
@@ -41,8 +41,10 @@ The SQLite adapter uses `BEGIN IMMEDIATE` and atomically:
 A stale root returns `STALE`; an exact replay returns `ALREADY_APPLIED`; an invalid signature or envelope fails closed. Root update, idempotency record, and audit event share one transaction. The adapter is single-host SQLite; multi-host use requires an equivalent serializable transactional store.
 
 ## Modules and tests
-- `packages/kratt-core/src/reflection-root-store.mjs`
+- `packages/kratt-core/src/reflection-root-store.mjs` — canonical snapshot, delta validation, SQLite CAS.
+- `packages/kratt-core/src/telegram-reflection-proposal-verifier.mjs` — trusted re-verification and `createTelegramReflectionCasAdapter` composition.
 - `packages/kratt-core/test/reflection-root-store.test.mjs`
+- `packages/kratt-core/test/telegram-trusted-persistence.test.mjs` — end-to-end signed Telegram decision → proposal → CAS.
 
 Synthetic tests cover initial snapshot integrity, restricted delta validation, successful CAS, replay, stale version, tampering, signature denial, restart persistence, and audit-chain verification.
 
@@ -51,10 +53,10 @@ This adapter does not yet make Telegram approval records a production root autho
 
 Before production:
 1. confirm the KRATT ontology's authoritative node/edge schema and schema version;
-2. wire `verifyProposal` to persisted approval proof plus trusted public-key verifier;
-3. add durable decision-to-proposal linkage and concurrency tests with two independent DB connections;
-4. add migration/backup/restore and multi-host adapter tests;
-5. threat-model patch path authorization and semantic policy constraints;
+2. provision the real architect public-key ring and trusted verifier through the host runtime; never commit private keys;
+3. confirm the domain-level node/edge schema and add semantic authorization rules for each patch path;
+4. add concurrency tests with two independent SQLite connections plus migration/backup/restore tests;
+5. implement a shared serializable database adapter before multi-host deployment;
 6. require separate explicit operational approval before enabling root mutation in a live environment.
 
 No production root was seeded, changed, deployed, or connected by this implementation.
