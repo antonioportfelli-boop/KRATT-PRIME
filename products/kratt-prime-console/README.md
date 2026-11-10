@@ -7,12 +7,18 @@ This is a standalone, local-first product console for the KRATT PRIME Signal-to-
 From the repository root:
 
 ```bash
+node packages/kratt-orchestrator/src/local-server.mjs
+```
+
+Open `http://127.0.0.1:4174`. The UI and local API are served from the same loopback-only process. Set `KRATT_PORT` to use another local port.
+
+For a static UI-only preview without the API:
+
+```bash
 python3 -m http.server 4173 --directory products/kratt-prime-console
 ```
 
-Open `http://localhost:4173`.
-
-No package install is required for the static preview.
+No package install is required for either preview.
 
 ## What is included
 
