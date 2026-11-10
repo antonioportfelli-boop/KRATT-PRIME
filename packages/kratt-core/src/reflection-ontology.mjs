@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createSqliteReflectionRootStore } from "./reflection-root-store.mjs";
+import { createSqliteReflectionRootStore, restoreSqliteReflectionRootBackup } from "./reflection-root-store.mjs";
 import { createTelegramReflectionCasAdapter } from "./telegram-reflection-proposal-verifier.mjs";
 
 export const KRATT_ONTOLOGY_VERSION = "kratt-ontology/v1";
@@ -221,6 +221,17 @@ export function createOntologyValidatedTelegramReflectionCasAdapter(options = {}
   const result = validateReflectionOntology(options.initialSnapshot?.document);
   if (!result.ok) throw new TypeError(`KRATT_ONTOLOGY_INITIAL_ROOT_INVALID:${result.errors.join(",")}`);
   return createTelegramReflectionCasAdapter({
+    ...options,
+    validateDocument: document => validateReflectionOntology(document).ok,
+  });
+}
+
+
+/** Restore a verified backup only when its root satisfies the canonical ontology validator. */
+export function restoreOntologyValidatedReflectionRootBackup(database, backup, options = {}) {
+  const result = validateReflectionOntology(backup?.snapshot?.document);
+  if (!result.ok) throw new TypeError(`KRATT_ONTOLOGY_BACKUP_INVALID:${result.errors.join(",")}`);
+  return restoreSqliteReflectionRootBackup(database, backup, {
     ...options,
     validateDocument: document => validateReflectionOntology(document).ok,
   });
