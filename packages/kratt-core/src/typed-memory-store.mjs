@@ -140,7 +140,7 @@ export function createSqliteTypedMemoryStore(database) {
       clauses.push("parent_id IS ?");
       parameters.push(parentId);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND")}` : "";
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = database.prepare(`
       SELECT sequence,record_json,record_digest,parent_id,root_digest,root_version,previous_hash,entry_hash
       FROM kratt_typed_memory ${where} ORDER BY sequence DESC LIMIT ?
