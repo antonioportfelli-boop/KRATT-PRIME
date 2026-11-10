@@ -83,6 +83,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     insertIntake: database.prepare("INSERT OR IGNORE INTO kratt_telegram_intakes (candidate_id,update_id,payload_json) VALUES (?,?,?)"),
     saveRequest: database.prepare("INSERT INTO kratt_telegram_review_requests (request_id,request_json,state) VALUES (?,?,'PENDING')"),
     getRequest: database.prepare("SELECT request_json,state FROM kratt_telegram_review_requests WHERE request_id=?"),
+    getDecision: database.prepare("SELECT decision_json FROM kratt_telegram_decisions WHERE request_id=?"),
     claimRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='PROCESSING' WHERE request_id=? AND state='PENDING'"),
     releaseRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='PENDING' WHERE request_id=? AND state='PROCESSING'"),
     cancelRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='CANCELLED' WHERE request_id=? AND state='PENDING'"),
@@ -191,6 +192,11 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     return request ? Object.freeze({ request, state: row.state }) : null;
   }
 
+  function getDecision(requestId) {
+    const row = statements.getDecision.get(requestId);
+    return row ? parseJson(row.decision_json) : null;
+  }
+
   function claimReviewRequest(requestId) {
     try { return Number(statements.claimRequest.run(requestId).changes) === 1; } catch { return false; }
   }
@@ -250,7 +256,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
 
   return Object.freeze({
     claimUpdate, persistIntake, completeUpdate, releaseUpdate,
-    saveReviewRequest, getReviewRequest, claimReviewRequest,
+    saveReviewRequest, getReviewRequest, getDecision, claimReviewRequest,
     releaseReviewRequest, cancelReviewRequest, expireReviewRequest, persistDecision,
     appendAuditEvent, snapshot,
   });
