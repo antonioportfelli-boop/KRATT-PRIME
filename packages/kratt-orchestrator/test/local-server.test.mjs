@@ -58,3 +58,56 @@ test("local server accepts bounded intake and rejects malformed source contracts
 test("local server refuses non-loopback bind addresses", () => {
   assert.throws(() => createLocalServer({ host:"0.0.0.0" }), /LOCAL_SERVER_MUST_BIND_LOOPBACK/);
 });
+
+
+test("local intake automatically segments supplied text and records provenance metadata", async () => {
+  const app = createLocalServer({ port: 0, host: "127.0.0.1" });
+  const address = await app.listen();
+  const origin = `http://127.0.0.1:${address.port}`;
+  try {
+    const response = await fetch(`${origin}/api/intake`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify({
+        label:"Evidence segmentation pilot",
+        sourceType:"manual_url",
+        sourceUrl:"https://example.test/brief",
+        content:"First paragraph contains a supported statement.\n\nSecond paragraph contains a separate unreviewed statement.",
+      }),
+    });
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.segmentation.segmentCount, 2);
+    assert.equal(payload.segmentation.segments[0].reviewState, "UNREVIEWED");
+    assert.equal(payload.segmentation.segments[0].sourceId, payload.intake.sourceId);
+
+    const state = await (await fetch(`${origin}/api/state`)).json();
+    assert.equal(state.segmentations.length, 1);
+    assert.equal(state.journal.at(-1).type, "KNOWLEDGE_SEGMENTED");
+    assert.equal(state.journal.at(-1).source, payload.intake.sourceId);
+  } finally {
+    await app.close();
+  }
+});
+
+test("invalid segmentation input is rejected before an intake is recorded", async () => {
+  const app = createLocalServer({ port: 0, host: "127.0.0.1" });
+  const address = await app.listen();
+  const origin = `http://127.0.0.1:${address.port}`;
+  try {
+    const response = await fetch(`${origin}/api/intake`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify({
+        label:"Invalid text",
+        sourceType:"manual_url",
+        content:"   ",
+      }),
+    });
+    assert.equal(response.status, 400);
+    const state = await (await fetch(`${origin}/api/state`)).json();
+    assert.equal(state.intakes.length, 0);
+  } finally {
+    await app.close();
+  }
+});
