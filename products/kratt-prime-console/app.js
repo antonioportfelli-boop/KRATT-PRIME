@@ -23,6 +23,7 @@ let toastHandle;
 let activeView = "overview";
 let backendConnected = false;
 let backendJournalRaw = null;
+let lastSegmentation = null;
 
 function timeNow() {
   return new Intl.DateTimeFormat("en-GB", { hour:"2-digit", minute:"2-digit", second:"2-digit", timeZone:"UTC" }).format(new Date()) + " UTC";
@@ -139,6 +140,31 @@ function renderSignals() {
   $("#signal-total").textContent = `${filtered.length} of ${signals.length} records`;
   $("#signal-count-nav").textContent = String(signals.length);
 }
+function renderSegments() {
+  const list = $("#segment-list");
+  if (!list) return;
+  if (!lastSegmentation?.segments?.length) {
+    list.innerHTML = '<div class="empty-state">Open New intake and paste source text to create traceable knowledge segments.</div>';
+    $("#segment-summary").textContent = "No source text has been segmented in this session.";
+    $("#segment-source").textContent = "NO SOURCE";
+    return;
+  }
+  $("#segment-summary").textContent = `${lastSegmentation.segmentCount} structural units · source digest ${lastSegmentation.sourceDigest.slice(0,22)}…`;
+  $("#segment-source").textContent = lastSegmentation.sourceId;
+  list.innerHTML = lastSegmentation.segments.map(segment => `
+    <article class="segment-card">
+      <div class="segment-card-head">
+        <b>SEGMENT ${String(segment.ordinal).padStart(2,"0")}</b>
+        <span class="tag tag-violet">${escapeHtml(segment.kind)}</span>
+        <span class="status-chip status-pending">${escapeHtml(segment.reviewState)}</span>
+      </div>
+      <p>${escapeHtml(segment.text)}</p>
+      <div class="segment-card-meta">
+        <span>OFFSETS ${segment.startOffset}–${segment.endOffset}</span>
+        <code>${escapeHtml(segment.contentDigest.slice(0,28))}…</code>
+      </div>
+    </article>`).join("");
+}
 function renderJournal() {
   const rows = journal.map(event => `<div class="event-item"><i class="event-dot" style="background:var(--${event.tone==="green"?"green":event.tone==="amber"?"amber":"violet"})"></i><code>${escapeHtml(event.type)}</code><span>${escapeHtml(event.ref)}</span><time>${escapeHtml(event.time)}</time></div>`).join("");
   const target = $("#orchestration-events");
@@ -147,13 +173,14 @@ function renderJournal() {
   if (full) full.innerHTML = rows;
 }
 function showView(view) {
-  const allowed = ["overview","signals","evidence","orchestration","connectors","governance","audit"];
+  const allowed = ["overview","signals","segments","evidence","orchestration","connectors","governance","audit"];
   if (!allowed.includes(view)) return;
   activeView = view;
   $$(".page-view").forEach(el => el.classList.toggle("active", el.id === `view-${view}`));
   $$(".nav-item").forEach(el => el.classList.toggle("active", el.dataset.view === view));
   $("#crumb-view").textContent = view === "audit" ? "Event journal" : view.charAt(0).toUpperCase() + view.slice(1);
   if (view === "signals") renderSignals();
+  if (view === "segments") renderSegments();
   if (view === "audit" || view === "orchestration") renderJournal();
   window.scrollTo({ top:0, behavior:"smooth" });
 }
@@ -239,6 +266,10 @@ $("#intake-form")?.addEventListener("submit", async event => {
         return;
       }
       segmentation = payload.segmentation;
+      if (segmentation) {
+        lastSegmentation = segmentation;
+        renderSegments();
+      }
       await refreshBackend();
     } catch {
       backendConnected = false;
