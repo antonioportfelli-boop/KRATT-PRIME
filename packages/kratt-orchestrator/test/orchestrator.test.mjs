@@ -22,15 +22,16 @@ function ready(orchestrator, spec = descriptor(), implementation = {}) {
   return adapter;
 }
 
-test("adapters begin discovered; connector identity never implies trust", () => {
+test("adapters begin discovered; connector identity never implies trust", async () => {
   const orchestrator = createOrchestrator({ now: () => stamp });
   const adapter = orchestrator.registerAdapter(descriptor(), { read: async () => [] });
   assert.equal(adapter.state, "DISCOVERED");
-  assert.equal(orchestrator.executeRead({
+  const blocked = await orchestrator.executeRead({
     adapterId: adapter.id,
     capability: "repo.read",
     input: {},
-  }).then(x => x.status), ""); // Promise is intentionally checked below.
+  });
+  assert.equal(blocked.status, "BLOCKED");
 });
 
 test("unverified adapter cannot be promoted without verifier evidence", () => {
