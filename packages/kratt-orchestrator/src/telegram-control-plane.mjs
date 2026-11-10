@@ -271,7 +271,7 @@ export function createTelegramControlPlane({
     if (!entry && store) {
       const stored = store.getReviewRequest(requestId);
       if (stored) {
-        entry = { request: stored.request, consumed: stored.state === "CONSUMED" || stored.state === "CANCELLED", processing: stored.state === "PROCESSING" };
+        entry = { request: stored.request, consumed: stored.state === "CONSUMED" || stored.state === "CANCELLED" || stored.state === "EXPIRED", processing: stored.state === "PROCESSING" };
         requests.set(requestId, entry);
       }
     }
@@ -377,7 +377,7 @@ export function createTelegramControlPlane({
     if (!entry && store) {
       const stored = store.getReviewRequest(requestId);
       if (stored) {
-        entry = { request: stored.request, consumed: stored.state === "CONSUMED" || stored.state === "CANCELLED", processing: stored.state === "PROCESSING" };
+        entry = { request: stored.request, consumed: stored.state === "CONSUMED" || stored.state === "CANCELLED" || stored.state === "EXPIRED", processing: stored.state === "PROCESSING" };
         requests.set(requestId, entry);
       }
     }
