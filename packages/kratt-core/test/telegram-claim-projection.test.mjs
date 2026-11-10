@@ -94,3 +94,38 @@ test("projection requires all read-only repositories and a valid root snapshot",
   const { service } = fixture();
   assert.equal(typeof service.get, "function");
 });
+
+test("projection permits multiple verified excerpts from the same source", async () => {
+  const content = "First verified statement. Second verified statement.";
+  const excerpts = [
+    { startOffset: 0, endOffset: 26 },
+    { startOffset: 27, endOffset: content.length },
+  ].map(item => {
+    const text = content.slice(item.startOffset, item.endOffset);
+    return {
+      sourceId: "one-source",
+      sourceDigest: digest(content),
+      startOffset: item.startOffset,
+      endOffset: item.endOffset,
+      excerptDigest: digest(text),
+    };
+  });
+  const claim = attachEvidenceCardDigest({
+    claimId: "claim-two-excerpts",
+    normalizedText: "Two statements from one source.",
+    claimStatus: "UNREVIEWED",
+    sourceRefs: excerpts,
+  });
+  const service = createTelegramClaimProjectionService({
+    claimRepository: { async getById() { return claim; } },
+    evidenceRepository: {
+      async listLinksForClaim() { return []; },
+      async getArtifact() { return null; },
+    },
+    sourceRepository: { async getById() { return { content, publisher: "One Publisher" }; } },
+    rootProvider: { async getSnapshot() { return { rootVersion: 1, rootDigest: digest("root") }; } },
+  });
+  const projection = await service.get("claim-two-excerpts");
+  assert.equal(projection.sourceRefs.length, 2);
+  assert.equal(projection.sourceRefs[0].sourceId, projection.sourceRefs[1].sourceId);
+});
