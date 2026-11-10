@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRssReadAdapter } from "../src/adapters/rss-read.mjs";
+import { createRssReadAdapter, registerRssReadAdapter } from "../src/adapters/rss-read.mjs";
+import { createOrchestrator } from "../src/orchestrator.mjs";
 
 const observedAt = "2026-11-10T12:00:00.000Z";
 const rss = `<?xml version="1.0"?>
@@ -125,4 +126,48 @@ test("invalid feed timestamps and missing fetch implementations are rejected", (
     fetchImpl:async () => new Response(rss, { headers:{ "Content-Type":"application/rss+xml" } }),
   });
   return assert.rejects(adapter.read({ capability:"feed.read", input:{ url:"https://feeds.example.com/rss" } }), /RSS_TRUSTED_CLOCK_UNAVAILABLE/);
+});
+
+
+test("RSS adapter is registered as discovered and runs only after trusted promotion", async () => {
+  let calls = 0;
+  const orchestrator = createOrchestrator({
+    now:() => observedAt,
+    verifyAdapterEvidence:(artifact, binding) =>
+      artifact?.signedByHostVerifier === true && artifact?.adapterId === binding.adapterId,
+  });
+  const registered = registerRssReadAdapter(orchestrator, {
+    allowedHosts:["feeds.example.com"],
+    now:() => observedAt,
+    fetchImpl:async () => {
+      calls += 1;
+      return new Response(rss, { headers:{ "Content-Type":"application/rss+xml" } });
+    },
+  });
+  assert.equal(registered.descriptor.state, "DISCOVERED");
+  assert.equal(registered.descriptor.permissions.write, false);
+
+  const blocked = await orchestrator.executeRead({
+    adapterId:"rss-primary",
+    capability:"feed.read",
+    input:{ url:"https://feeds.example.com/news.xml" },
+  });
+  assert.equal(blocked.status, "BLOCKED");
+  assert.equal(calls, 0);
+
+  assert.equal(orchestrator.transitionAdapter("rss-primary", "CONNECTED_UNVERIFIED").status, "OK");
+  assert.equal(orchestrator.transitionAdapter("rss-primary", "VERIFIED_READ_ONLY", {
+    verifierId:"host-feed-policy",
+    adapterId:"rss-primary",
+    signedByHostVerifier:true,
+  }).status, "OK");
+
+  const result = await orchestrator.executeRead({
+    adapterId:"rss-primary",
+    capability:"feed.read",
+    input:{ url:"https://feeds.example.com/news.xml" },
+  });
+  assert.equal(result.status, "OK");
+  assert.equal(result.output.itemCount, 1);
+  assert.equal(calls, 1);
 });
