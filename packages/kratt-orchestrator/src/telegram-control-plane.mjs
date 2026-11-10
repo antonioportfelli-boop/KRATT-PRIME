@@ -80,6 +80,7 @@ export function createTelegramControlPlane({
   allowedArchitectUserIds = [],
   webhookSecret,
   verifyApproval,
+  persistIntake = async () => true,
   persistDecision = async () => true,
 } = {}) {
   if (typeof now !== "function") throw new TypeError("TELEGRAM_TRUSTED_CLOCK_REQUIRED");
@@ -87,7 +88,7 @@ export function createTelegramControlPlane({
       !allowedArchitectUserIds.every(id => typeof id === "string" && /^[0-9]{1,24}$/.test(id))) {
     throw new TypeError("TELEGRAM_ARCHITECT_ALLOWLIST_INVALID");
   }
-  if (typeof persistDecision !== "function") throw new TypeError("TELEGRAM_PERSISTENCE_ADAPTER_INVALID");
+  if (typeof persistIntake !== "function" || typeof persistDecision !== "function") throw new TypeError("TELEGRAM_PERSISTENCE_ADAPTER_INVALID");
 
   const architects = new Set(allowedArchitectUserIds);
   const configuredWebhookSecret = typeof webhookSecret === "string" && webhookSecret.length > 0 ? webhookSecret : null;
@@ -120,7 +121,7 @@ export function createTelegramControlPlane({
     return body;
   }
 
-  function ingestAuthenticatedUpdate({ update, receivedSecret } = {}) {
+  async function ingestAuthenticatedUpdate({ update, receivedSecret } = {}) {
     if (!configuredWebhookSecret || !verifyTelegramWebhookSecret(receivedSecret, configuredWebhookSecret)) {
       return outcome("DENY", "TELEGRAM_WEBHOOK_AUTHENTICATION_FAILED");
     }
@@ -133,7 +134,9 @@ export function createTelegramControlPlane({
         emit("TELEGRAM_UPDATE_REPLAY_MISMATCH", { updateId: item.updateId }, `telegram-update-${item.updateId}`);
         return outcome("BLOCKED", "TELEGRAM_UPDATE_ID_PAYLOAD_MISMATCH");
       }
-      return outcome("DUPLICATE", "TELEGRAM_UPDATE_ALREADY_PROCESSED", { updateId: item.updateId, original: prior.result });
+      return prior.result === null
+        ? outcome("PENDING", "TELEGRAM_UPDATE_PROCESSING", { updateId: item.updateId })
+        : outcome("DUPLICATE", "TELEGRAM_UPDATE_ALREADY_PROCESSED", { updateId: item.updateId, original: prior.result });
     }
 
     const correlationId = `telegram-update-${item.updateId}`;
@@ -154,6 +157,12 @@ export function createTelegramControlPlane({
         reviewState: "UNREVIEWED",
         networkAccess: false,
       });
+      let intakePersisted = false;
+      try { intakePersisted = await persistIntake(intake) === true; } catch { intakePersisted = false; }
+      if (!intakePersisted) {
+        updates.delete(item.updateId);
+        return outcome("ERROR", "TELEGRAM_INTAKE_PERSISTENCE_FAILED");
+      }
       intakes.push(intake);
       emit("TELEGRAM_INTAKE_UNREVIEWED", { candidateId: intake.candidateId, contentDigest: intake.contentDigest }, correlationId);
       const result = outcome("OK", "TELEGRAM_INTAKE_RECORDED_UNREVIEWED", { intake });
