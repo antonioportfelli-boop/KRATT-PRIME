@@ -14,8 +14,9 @@ function validateHtml(html) {
     throw new TypeError("TELEGRAM_WIDGET_HTML_INVALID");
   }
   const size = bytes(html);
+  if (size > MAX_HTML_BYTES) throw new RangeError("TELEGRAM_WIDGET_HTML_TOO_LARGE");
   const compressed = deflateSync(Buffer.from(html, "utf8"), { level: 9 }).length;
-  if (size > MAX_HTML_BYTES || compressed > MAX_COMPRESSED_BYTES) {
+  if (compressed > MAX_COMPRESSED_BYTES) {
     throw new RangeError("TELEGRAM_WIDGET_HTML_TOO_LARGE");
   }
 }
@@ -59,7 +60,9 @@ export function createTelegramBotApiClient({ token, fetchImpl = globalThis.fetch
   }
 
   async function sendClaimReviewWidget({ chatId, chatType, html, chatData, caption } = {}) {
-    if (chatType !== "private" || !(typeof chatId === "string" || Number.isSafeInteger(chatId))) {
+    const validPrivateChatId = (typeof chatId === "number" && Number.isSafeInteger(chatId) && chatId > 0) ||
+      (typeof chatId === "string" && /^[0-9]{1,24}$/.test(chatId) && Number(chatId) > 0);
+    if (chatType !== "private" || !validPrivateChatId) {
       throw new TypeError("TELEGRAM_WIDGET_PRIVATE_CHAT_REQUIRED");
     }
     validateHtml(html);
@@ -88,8 +91,9 @@ export function createTelegramBotApiClient({ token, fetchImpl = globalThis.fetch
   }
 
   async function editMessageWidgetData({ chatId, messageId, chatData } = {}) {
-    if (!(typeof chatId === "string" || Number.isSafeInteger(chatId)) ||
-        !Number.isSafeInteger(messageId) || messageId < 1) {
+    const validPrivateChatId = (typeof chatId === "number" && Number.isSafeInteger(chatId) && chatId > 0) ||
+      (typeof chatId === "string" && /^[0-9]{1,24}$/.test(chatId) && Number(chatId) > 0);
+    if (!validPrivateChatId || !Number.isSafeInteger(messageId) || messageId < 1) {
       throw new TypeError("TELEGRAM_WIDGET_MESSAGE_REFERENCE_INVALID");
     }
     validateState(chatData, "CHAT_DATA");
