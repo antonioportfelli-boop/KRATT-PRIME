@@ -213,6 +213,9 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     if (!target || typeof target !== "string" || !target.trim() || !ID.test(actor ?? "")) {
       return result("DENY", "WRITE_REQUEST_SCOPE_INVALID");
     }
+    const requestedAt = now();
+    const requestedTime = Date.parse(requestedAt);
+    if (!Number.isFinite(requestedTime)) return result("BLOCKED", "TRUSTED_CLOCK_UNAVAILABLE");
     const requestId = randomUUID();
     const request = freeze({
       requestId,
@@ -222,7 +225,8 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
       actor,
       payloadDigest: digest(payload),
       correlationId,
-      requestedAt: now(),
+      requestedAt,
+      expiresAt: new Date(requestedTime + 5 * 60_000).toISOString(),
       state: "PENDING_APPROVAL",
     });
     pending.set(requestId, { request, payload });
@@ -249,7 +253,16 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
       actor: request.actor,
       payloadDigest: request.payloadDigest,
       correlationId: request.correlationId,
+      expiresAt: request.expiresAt,
     });
+    let currentTime;
+    try { currentTime = Date.parse(now()); } catch { currentTime = NaN; }
+    if (!Number.isFinite(currentTime) || currentTime >= Date.parse(request.expiresAt)) {
+      pending.delete(requestId);
+      transitionAdapter(request.adapterId, "VERIFIED_READ_ONLY");
+      emit("WRITE_EXPIRED", request.adapterId, { requestId, reason: "APPROVAL_WINDOW_EXPIRED" }, request.correlationId);
+      return result("DENY", "WRITE_REQUEST_EXPIRED");
+    }
     let approved = false;
     try { approved = verifyApproval(approval, binding) === true; } catch { approved = false; }
     if (!approved) {
@@ -289,6 +302,16 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
       emit("WRITE_FAILED", request.adapterId, { requestId, reason: "ADAPTER_HANDLER_FAILED" }, request.correlationId);
       return result("ERROR", "ADAPTER_HANDLER_FAILED");
     }
+  }
+
+  function cancelWriteRequest({ requestId, actor } = {}) {
+    const item = pending.get(requestId);
+    if (!item) return result("NOT_FOUND", "WRITE_REQUEST_NOT_FOUND");
+    if (item.request.actor !== actor) return result("DENY", "WRITE_CANCELLATION_ACTOR_MISMATCH");
+    pending.delete(requestId);
+    transitionAdapter(item.request.adapterId, "VERIFIED_READ_ONLY");
+    emit("WRITE_CANCELLED", item.request.adapterId, { requestId, actor }, item.request.correlationId);
+    return result("OK", "WRITE_REQUEST_CANCELLED", { requestId });
   }
 
   function recordLocalIntake({ label, sourceType, actor = "architect" } = {}) {
@@ -340,6 +363,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     executeRead,
     requestWrite,
     approveAndExecuteWrite,
+    cancelWriteRequest,
     recordLocalIntake,
     snapshot,
     verifyJournal,
