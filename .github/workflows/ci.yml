@@ -10,8 +10,6 @@ jobs:
   vite:
     name: typecheck + build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     strategy:
       matrix:
         node-version: [22.x]
@@ -24,10 +22,6 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
-      - name: Apply non-breaking dependency security updates
-        run: |
-          npm audit fix --package-lock-only
-          npm ci
       - name: Enforce dependency security audit
         run: npm audit --audit-level=high
       - name: KRATT core and orchestration contract tests
@@ -38,22 +32,3 @@ jobs:
         run: npm run typecheck
       - name: Build
         run: npm run build
-      - name: Commit verified dependency lock updates
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/feature/kratt-telegram-control-plane-v1'
-        env:
-          TARGET_BRANCH: ${{ github.ref_name }}
-        run: |
-          if [ "$TARGET_BRANCH" != "feature/kratt-telegram-control-plane-v1" ]; then
-            echo "Refusing dependency write outside the authorized feature branch."
-            exit 0
-          fi
-          git status --short
-          if git diff --quiet -- package.json package-lock.json; then
-            echo "No dependency lock changes."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
-          git commit -m "fix(deps): remediate npm security advisories"
-          git push origin "HEAD:${TARGET_BRANCH}"
