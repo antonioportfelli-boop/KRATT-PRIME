@@ -33,6 +33,7 @@ test("webhook secret comparison rejects missing, unequal and mismatched secrets"
   assert.equal(verifyTelegramWebhookSecret(secret, secret), true);
   assert.equal(verifyTelegramWebhookSecret(undefined, secret), false);
   assert.equal(verifyTelegramWebhookSecret("wrong", secret), false);
+  assert.equal(verifyTelegramWebhookSecret("é", "a"), false);
 });
 
 test("normalizes a text update without trusting its content", () => {
