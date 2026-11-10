@@ -21,6 +21,7 @@ const journal = [
 let eventSequence = 3;
 let toastHandle;
 let activeView = "overview";
+let backendConnected = false;
 
 function timeNow() {
   return new Intl.DateTimeFormat("en-GB", { hour:"2-digit", minute:"2-digit", second:"2-digit", timeZone:"UTC" }).format(new Date()) + " UTC";
@@ -64,6 +65,63 @@ function signalMarkup(item) {
 }
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
+}
+async function refreshBackend() {
+  try {
+    const healthResponse = await fetch("/api/health", { cache: "no-store" });
+    if (!healthResponse.ok) throw new Error("LOCAL_API_UNAVAILABLE");
+    const health = await healthResponse.json();
+    if (health.mode !== "local-development" || health.externalConnections !== false || health.externalWrites !== false) {
+      throw new Error("UNEXPECTED_BACKEND_MODE");
+    }
+    backendConnected = true;
+    $("#backend-status").innerHTML = "<span></span> LOCAL API ONLINE";
+    $("#local-node-state").textContent = "API ONLINE";
+    const stateResponse = await fetch("/api/state", { cache: "no-store" });
+    if (!stateResponse.ok) throw new Error("LOCAL_STATE_UNAVAILABLE");
+    const state = await stateResponse.json();
+    renderAdapterStates(state.adapters ?? []);
+    if (Array.isArray(state.journal) && state.journal.length) {
+      journal.splice(0, journal.length, ...state.journal.map(event => ({
+        type:event.type,
+        ref:event.source,
+        time:new Date(event.occurredAt).toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit", second:"2-digit", timeZone:"UTC" }),
+        tone:"cyan",
+        payload:{ digest:event.payloadDigest },
+        previousHash:event.previousHash,
+        hash:event.hash,
+      })));
+      eventSequence = journal.length;
+      renderJournal();
+    }
+    return true;
+  } catch {
+    backendConnected = false;
+    $("#backend-status").innerHTML = "<span></span> LOCAL PREVIEW";
+    $("#local-node-state").textContent = "PREVIEW";
+    return false;
+  }
+}
+function renderAdapterStates(adapters) {
+  const labels = {
+    DISCOVERED:["DISCOVERED","status-discovered"],
+    CONNECTED_UNVERIFIED:["UNVERIFIED","status-unverified"],
+    VERIFIED_READ_ONLY:["VERIFIED READ","status-verified"],
+    WRITE_PENDING_APPROVAL:["PENDING APPROVAL","status-pending"],
+    WRITE_ENABLED:["WRITE ENABLED","status-verified"],
+    DISABLED:["DISABLED","status-discovered"],
+    ERROR:["ERROR","status-conflict"],
+  };
+  for (const adapter of adapters) {
+    const card = document.querySelector(`[data-adapter-id="${adapter.id}"]`);
+    if (!card) continue;
+    const chip = $(".status-chip", card);
+    const [label, cssClass] = labels[adapter.state] ?? ["UNKNOWN","status-conflict"];
+    chip.textContent = label;
+    chip.className = `status-chip ${cssClass}`;
+    const footer = $(".connector-footer", card);
+    if (footer) footer.innerHTML = `<span>Read: ${adapter.permissions.read ? "declared" : "denied"}</span><span>Write: ${adapter.permissions.write ? "approval gate" : "denied"}</span>`;
+  }
 }
 function renderSignals() {
   const list = $("#all-signals");
@@ -147,6 +205,33 @@ $("#intake-form")?.addEventListener("submit", async event => {
   const label = $("#intake-label").value.trim();
   const sourceType = $("#intake-source").value;
   if (!label) return;
+  const apiSource = ({
+    "Manual URL list":"manual_url",
+    "RSS / Atom feed":"rss_atom",
+    "JSON / CSV import":"json_csv",
+    "Telegram adapter (not connected)":"telegram_pending"
+  })[sourceType] ?? "manual_url";
+  if (backendConnected) {
+    try {
+      const response = await fetch("/api/intake", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({ label, sourceType:apiSource, actor:"architect" })
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.status !== "OK") {
+        toast("Local API rejected the intake: " + (payload.reason ?? payload.error ?? "UNKNOWN"));
+        return;
+      }
+      await refreshBackend();
+    } catch {
+      backendConnected = false;
+      toast("Local API became unavailable. Intake was not sent; switch to local preview mode.");
+      return;
+    }
+  } else {
+    await appendEvent("INTAKE_REQUESTED", "LOCAL-INTAKE", { label, sourceType:apiSource, mode:"LOCAL_PREVIEW" }, "violet");
+  }
   const item = {
     id:"SIG-" + String(1284 + (signals.length - 8)).padStart(4,"0"),
     source:sourceType,
@@ -161,10 +246,9 @@ $("#intake-form")?.addEventListener("submit", async event => {
   signals.unshift(item);
   $("#metric-signals").textContent = (1284 + signals.length - 8).toLocaleString("en-US");
   renderSignals();
-  await appendEvent("INTAKE_REQUESTED", item.id, { label, sourceType, mode:"LOCAL_PREVIEW" }, "violet");
   dialog.close();
   $("#intake-label").value = "";
-  toast("Local intake preview added. No external source was contacted.");
+  toast(backendConnected ? "Intake recorded by the loopback KRATT API. No external source was contacted." : "Local intake preview added. No external source was contacted.");
   if (activeView === "signals") renderSignals();
 });
 
@@ -199,3 +283,4 @@ setInterval(updateClock, 1000);
 renderSignals();
 renderJournal();
 sealInitialJournal().then(renderJournal);
+refreshBackend();
