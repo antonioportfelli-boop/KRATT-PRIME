@@ -55,6 +55,7 @@ test("independent SQLite connections serialize competing root CAS proposals", ()
     const secondSnapshot = second.store.getSnapshot().snapshot;
     assert.equal(firstSnapshot.digest, secondSnapshot.digest);
     assert.equal(firstSnapshot.version, secondSnapshot.version);
+    assert.deepEqual(first.store.listMigrations().map(item => item.version), ["001_root_cas_v1"]);
 
     const proposalA = proposalFor(firstSnapshot, "REFLECTED_A");
     const proposalB = proposalFor(secondSnapshot, "REFLECTED_B");
