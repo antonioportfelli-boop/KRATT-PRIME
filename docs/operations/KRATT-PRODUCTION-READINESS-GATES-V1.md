@@ -3,7 +3,7 @@
 **Status:** production-readiness plan; all gates below remain closed until their evidence is attached.  
 **Current implementation branch:** `feature/kratt-telegram-control-plane-v1`  
 **Current PR:** #25, draft, base `feature/kratt-prime-50k-productization-v1`  
-**Latest verified code head:** `a7df21c1893ef8bcdd26bafc8a4969e47acb1c59`
+**Latest verified code head:** `8a63f38fa7864d506813e1b964a00fd7a7d83889`
 
 This document separates implementation evidence from permission to operate a production system. Passing unit tests and building the web console do not authorize a production deployment.
 
@@ -12,8 +12,8 @@ This document separates implementation evidence from permission to operate a pro
 - 152 Node.js tests passed, 0 failed on the latest verified head.
 - CI syntax checks, TypeScript typecheck and Vite build passed.
 - `npm audit --audit-level=high` reports 0 vulnerabilities on the latest verified head.
-- Latest push CI: https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/42836081541
-- Latest PR CI: https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/42836095193
+- Latest push CI: https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/42836209669
+- Latest PR CI: https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/42836220232
 - Dependency lock remediation: `source-map-js 1.2.2`, `vite 8.3.7`.
 - Root CAS, ontology validator, deterministic reflection reducer, typed-memory journal, backup verification and restore have synthetic/local tests.
 - Telegram transport is not mounted on a public listener; no live bot credentials or production root are configured.
