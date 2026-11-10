@@ -89,6 +89,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
   const journal = [];
   const pending = new Map();
   const intakes = [];
+  const segmentations = [];
 
   function emit(type, source, payload, correlationId = randomUUID()) {
     const occurredAt = now();
@@ -327,6 +328,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     }
     const intake = freeze({
       intakeId: randomUUID(),
+      sourceId: `local:${randomUUID()}`,
       label: label.trim(),
       sourceType,
       actor,
@@ -339,11 +341,32 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     return result("OK", "LOCAL_INTAKE_RECORDED", { intake });
   }
 
+  function recordLocalSegmentation({ sourceId, sourceDigest, segmentCount, actor = "architect" } = {}) {
+    if (typeof sourceId !== "string" || !ID.test(sourceId) ||
+        typeof sourceDigest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(sourceDigest) ||
+        !Number.isInteger(segmentCount) || segmentCount < 1 || segmentCount > 10000 ||
+        !ID.test(actor)) {
+      return result("DENY", "LOCAL_SEGMENTATION_METADATA_INVALID");
+    }
+    const record = freeze({
+      sourceId,
+      sourceDigest,
+      segmentCount,
+      actor,
+      recordedAt: now(),
+      state: "SEGMENTED_UNREVIEWED",
+    });
+    segmentations.push(record);
+    emit("KNOWLEDGE_SEGMENTED", sourceId, record);
+    return result("OK", "KNOWLEDGE_SEGMENTED", { record });
+  }
+
   function snapshot() {
     return freeze({
       adapters: [...adapters.values()],
       pendingWrites: [...pending.values()].map(x => x.request),
       intakes: [...intakes],
+      segmentations: [...segmentations],
       journal: [...journal],
       journalHead: journal.at(-1)?.hash ?? null,
     });
@@ -370,6 +393,7 @@ export function createOrchestrator({ now = () => new Date().toISOString(), verif
     approveAndExecuteWrite,
     cancelWriteRequest,
     recordLocalIntake,
+    recordLocalSegmentation,
     snapshot,
     verifyJournal,
   });
