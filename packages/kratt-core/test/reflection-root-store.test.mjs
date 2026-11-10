@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import {
   createRootSnapshot,
   createSqliteReflectionRootStore,
+  restoreSqliteReflectionRootBackup,
+  verifyReflectionRootBackup,
   validateRootDelta,
 } from "../src/reflection-root-store.mjs";
 
@@ -121,4 +123,53 @@ test("requires a trusted proposal verifier and a valid initial root", () => {
   const db = new DatabaseSync(":memory:");
   assert.throws(() => createSqliteReflectionRootStore(db, { initialSnapshot: createRootSnapshot(root()) }), /REFLECTION_ROOT_STORE_ADAPTERS_REQUIRED/);
   assert.throws(() => createRootSnapshot({ nodes: [], edges: [] }), /ROOT_SNAPSHOT_INPUT_INVALID/);
+});
+
+
+test("verified root backup restores snapshot, idempotency ledger, migrations and audit chain", () => {
+  const first = setup();
+  const proposal = proposalFor(first.store.getSnapshot().snapshot);
+  assert.equal(first.store.applyProposal(proposal).status, "APPLIED");
+  const exported = first.store.exportBackup();
+  assert.equal(exported.status, "OK");
+  assert.equal(verifyReflectionRootBackup(exported.backup).ok, true);
+
+  const restoredDb = new DatabaseSync(":memory:");
+  try {
+    const restored = restoreSqliteReflectionRootBackup(restoredDb, exported.backup, {
+      verifyProposal: () => true,
+      now: () => "2026-11-10T16:00:00.000Z",
+    });
+    assert.equal(restored.getSnapshot().snapshot.digest, first.store.getSnapshot().snapshot.digest);
+    assert.equal(restored.getSnapshot().snapshot.version, 1);
+    assert.equal(restored.applyProposal(proposal).status, "ALREADY_APPLIED");
+    assert.equal(restored.verifyAudit().ok, true);
+    assert.equal(restored.verifyAudit().count, first.store.verifyAudit().count);
+    assert.deepEqual(restored.listMigrations().map(item => item.version), ["001_root_cas_v1"]);
+  } finally {
+    restoredDb.close();
+    first.db.close();
+  }
+});
+
+test("root backup rejects tampering and refuses to overwrite a non-empty database", () => {
+  const first = setup();
+  const exported = first.store.exportBackup();
+  const tampered = structuredClone(exported.backup);
+  tampered.snapshot.document.metadata.schema = "tampered";
+  assert.equal(verifyReflectionRootBackup(tampered).ok, false);
+
+  const targetDb = new DatabaseSync(":memory:");
+  try {
+    createSqliteReflectionRootStore(targetDb, {
+      initialSnapshot: createRootSnapshot(root()),
+      verifyProposal: () => true,
+    });
+    assert.throws(() => restoreSqliteReflectionRootBackup(targetDb, exported.backup, {
+      verifyProposal: () => true,
+    }), /REFLECTION_BACKUP_RESTORE_TARGET_NOT_EMPTY/);
+  } finally {
+    targetDb.close();
+    first.db.close();
+  }
 });
