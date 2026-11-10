@@ -92,7 +92,7 @@ export function createTelegramControlPlane({
       !allowedArchitectUserIds.every(id => typeof id === "string" && /^[0-9]{1,24}$/.test(id))) {
     throw new TypeError("TELEGRAM_ARCHITECT_ALLOWLIST_INVALID");
   }
-  if (store && (!["claimUpdate","persistIntake","completeUpdate","releaseUpdate","saveReviewRequest","getReviewRequest","claimReviewRequest","releaseReviewRequest","cancelReviewRequest","expireReviewRequest","persistDecision","appendAuditEvent","snapshot"].every(key => typeof store[key] === "function"))) {
+  if (store && (!["claimUpdate","persistIntake","completeUpdate","releaseUpdate","saveReviewRequest","getReviewRequest","getDecision","claimReviewRequest","releaseReviewRequest","cancelReviewRequest","expireReviewRequest","persistDecision","appendAuditEvent","snapshot"].every(key => typeof store[key] === "function"))) {
     throw new TypeError("TELEGRAM_DURABLE_STORE_INVALID");
   }
   const saveIntake = persistIntake ?? store?.persistIntake?.bind(store);
