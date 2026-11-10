@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import {
   createOntologyValidatedReflectionRootStore,
+  createOntologyValidatedTelegramReflectionCasAdapter,
   KRATT_ONTOLOGY_VERSION,
   validateReflectionOntology,
 } from "../src/reflection-ontology.mjs";
@@ -112,5 +113,24 @@ test("ontology-validated root factory rejects an unversioned initial root", () =
     assert.throws(() => createOntologyValidatedReflectionRootStore(db, {
       initialSnapshot: createRootSnapshot(invalid), verifyProposal: () => true,
     }), /KRATT_ONTOLOGY_INITIAL_ROOT_INVALID/);
+  } finally { db.close(); }
+});
+
+
+test("Telegram CAS composition requires a valid ontology root before accepting trusted adapters", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    const adapter = createOntologyValidatedTelegramReflectionCasAdapter({
+      database: db,
+      initialSnapshot: createRootSnapshot(validDocument()),
+      decisionStore: {
+        getReviewRequest: () => null,
+        getDecision: () => null,
+      },
+      verifyApprovalProof: () => false,
+      now: () => Date.parse("2026-11-10T15:00:00.000Z"),
+    });
+    assert.equal(adapter.rootStore.getSnapshot().status, "OK");
+    assert.equal(adapter.rootStore.getSnapshot().snapshot.document.metadata.ontologyVersion, KRATT_ONTOLOGY_VERSION);
   } finally { db.close(); }
 });
