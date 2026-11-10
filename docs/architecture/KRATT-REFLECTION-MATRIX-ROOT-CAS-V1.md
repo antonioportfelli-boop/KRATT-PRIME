@@ -41,7 +41,8 @@ The SQLite adapter uses `BEGIN IMMEDIATE` and atomically:
 A stale root returns `STALE`; an exact replay returns `ALREADY_APPLIED`; an invalid signature or envelope fails closed. Root update, idempotency record, and audit event share one transaction. The adapter is single-host SQLite; multi-host use requires an equivalent serializable transactional store.
 
 ## Modules and tests
-- `packages/kratt-core/src/reflection-root-store.mjs` — canonical snapshot, delta validation, SQLite CAS.
+- `packages/kratt-core/src/reflection-root-store.mjs` — canonical snapshot, delta validation, SQLite CAS, versioned migration registry, digest-verified logical backup and empty-target restore.
+- `packages/kratt-core/src/reflection-ontology.mjs` — versioned semantic graph validation, strict typed relations and ontology-gated Telegram CAS composition.
 - `packages/kratt-core/src/telegram-reflection-proposal-verifier.mjs` — trusted re-verification and `createTelegramReflectionCasAdapter` composition.
 - `packages/kratt-core/test/reflection-root-store.test.mjs`
 - `packages/kratt-core/test/telegram-trusted-persistence.test.mjs` — end-to-end signed Telegram decision → proposal → CAS.
