@@ -164,6 +164,7 @@ Core interfaces are dependency-injected:
 - `createTelegramReviewWidgetService({ controlPlane, store, botApiClient })` for private review widget delivery.
 - `createTelegramWidgetQueryHandler({ store, botApiClient })` for authenticated decision-intent capture.
 - `createTelegramApprovalSigningRequest({ request, intent, keyId, approvedBy, issuedAt })` for an external Ed25519 signer payload.
+- `renderTelegramEvidenceReport({ projection, generatedAt })` and `createTelegramEvidenceReporter({ botApiClient })` for persistent source-grounded Rich Message reports.
 - `ingestAuthenticatedUpdate({ update, receivedSecret })` (async; intake persistence is injected through `persistIntake`)
 - `createClaimReviewRequest({ projection, actorTelegramUserId, chatId })`
 - `resolveClaimReview({ requestId, actorTelegramUserId, chatId, decision, reason, targetDigest, evidenceSnapshotDigest, rootDigest, policyVersion, proof })`
@@ -224,6 +225,7 @@ Implemented on `feature/kratt-telegram-control-plane-v1`:
 - Update processing uses bounded leases. Same update ID with a different payload digest is blocked; duplicate completed updates are idempotent.
 - The webhook ingress handler requires POST + JSON, checks Telegram's secret-token header before parsing, requires an injected rate-limit decision, bounds request size, and maps processing states to retry-safe HTTP responses.
 - The Claim Review Widget is self-contained, HTML-escaped, compressed-size checked, private-chat only, non-shared, and uses short `TelegramWidget.request` action codes. It has no network access and does not collect free-form keyboard input; reject/contest reasons are selected from controlled reason codes.
+- Rich Message evidence reports include claim status, source lineage, source excerpts, digest references, support/contradiction counts, contradiction candidates, and an explicit non-verdict boundary. Untrusted text is escaped and source links are limited to HTTP(S).
 - Widget sends are linked to a durable (chat ID, message ID) → review request mapping. WidgetQuery events are deduplicated and produce a durable `PENDING_SIGNATURE` decision intent only.
 - A separate Ed25519 signing request payload binds the exact intent and request. The external signer retains the private key; KRATT verifies the signature and atomically consumes the nonce before marking the intent SIGNED and persisting the decision.
 - Audit events for intake, request creation, decision intents, decisions, cancellation, and routed updates are committed with their corresponding durable state transition.
