@@ -71,6 +71,13 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
       PRIMARY KEY(chat_id,message_id),
       FOREIGN KEY(request_id) REFERENCES kratt_telegram_review_requests(request_id)
     );
+    CREATE TABLE IF NOT EXISTS kratt_telegram_decision_intents (
+      intent_id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL UNIQUE,
+      intent_json TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('PENDING_SIGNATURE','SIGNED','CANCELLED')),
+      FOREIGN KEY(request_id) REFERENCES kratt_telegram_review_requests(request_id)
+    );
     CREATE TABLE IF NOT EXISTS kratt_telegram_audit_events (
       sequence INTEGER PRIMARY KEY,
       event_id TEXT NOT NULL UNIQUE,
@@ -93,6 +100,10 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     getDecision: database.prepare("SELECT decision_json FROM kratt_telegram_decisions WHERE request_id=?"),
     linkReviewMessage: database.prepare("INSERT INTO kratt_telegram_review_messages (chat_id,message_id,request_id) VALUES (?,?,?)"),
     getRequestByMessage: database.prepare("SELECT r.request_json,r.state FROM kratt_telegram_review_messages m JOIN kratt_telegram_review_requests r ON r.request_id=m.request_id WHERE m.chat_id=? AND m.message_id=?"),
+    getDecisionIntent: database.prepare("SELECT intent_json,state FROM kratt_telegram_decision_intents WHERE request_id=?"),
+    insertDecisionIntent: database.prepare("INSERT INTO kratt_telegram_decision_intents (intent_id,request_id,intent_json,state) VALUES (?,?,?,'PENDING_SIGNATURE')"),
+    signDecisionIntent: database.prepare("UPDATE kratt_telegram_decision_intents SET state='SIGNED' WHERE request_id=? AND state='PENDING_SIGNATURE'"),
+    cancelDecisionIntent: database.prepare("UPDATE kratt_telegram_decision_intents SET state='CANCELLED' WHERE request_id=? AND state='PENDING_SIGNATURE'"),
     claimRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='PROCESSING' WHERE request_id=? AND state='PENDING'"),
     releaseRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='PENDING' WHERE request_id=? AND state='PROCESSING'"),
     cancelRequest: database.prepare("UPDATE kratt_telegram_review_requests SET state='CANCELLED' WHERE request_id=? AND state='PENDING'"),
@@ -219,6 +230,32 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     return request ? Object.freeze({ request, state: row.state }) : null;
   }
 
+  function getDecisionIntent(requestId) {
+    const row = statements.getDecisionIntent.get(requestId);
+    if (!row) return null;
+    const intent = parseJson(row.intent_json);
+    return intent ? Object.freeze({ intent, state: row.state }) : null;
+  }
+
+  function createDecisionIntent(intent, auditEvent) {
+    try {
+      return transaction(() => {
+        const request = statements.getRequest.get(intent.requestId);
+        if (!request || request.state !== "PENDING") return Object.freeze({ status: "CONFLICT" });
+        const prior = statements.getDecisionIntent.get(intent.requestId);
+        if (prior) {
+          const priorIntent = parseJson(prior.intent_json);
+          const same = priorIntent && priorIntent.actorTelegramUserId === intent.actorTelegramUserId &&
+            priorIntent.decision === intent.decision && priorIntent.reasonCode === intent.reasonCode;
+          return Object.freeze({ status: same ? "DUPLICATE" : "CONFLICT", intent: priorIntent, state: prior.state });
+        }
+        statements.insertDecisionIntent.run(intent.intentId, intent.requestId, stable(intent));
+        if (auditEvent) insertAuditEvent(auditEvent);
+        return Object.freeze({ status: "CREATED", intent });
+      });
+    } catch { return Object.freeze({ status: "ERROR" }); }
+  }
+
   function claimReviewRequest(requestId) {
     try { return Number(statements.claimRequest.run(requestId).changes) === 1; } catch { return false; }
   }
@@ -231,6 +268,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
     try {
       return transaction(() => {
         if (Number(statements.cancelRequest.run(requestId).changes) !== 1) throw new Error("TELEGRAM_REVIEW_NOT_PENDING");
+        statements.cancelDecisionIntent.run(requestId);
         if (auditEvent) insertAuditEvent(auditEvent);
         return true;
       });
@@ -242,6 +280,7 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
       return transaction(() => {
         const expired = database.prepare("UPDATE kratt_telegram_review_requests SET state='EXPIRED' WHERE request_id=? AND state='PENDING'").run(requestId);
         if (Number(expired.changes) !== 1) throw new Error("TELEGRAM_REVIEW_NOT_PENDING");
+        statements.cancelDecisionIntent.run(requestId);
         if (auditEvent) insertAuditEvent(auditEvent);
         return true;
       });
@@ -259,8 +298,15 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
         if (!current || current.state !== "PROCESSING") throw new Error("TELEGRAM_REVIEW_NOT_PROCESSING");
         const consumed = nonce.consume(proof.key_id, proof.nonce, proof.approval_id, proof.expires_at, Date.parse(record.verifiedAt));
         if (consumed !== true) throw new Error("TELEGRAM_APPROVAL_NONCE_REPLAYED");
+        const priorIntent = statements.getDecisionIntent.get(record.requestId);
+        if (priorIntent) {
+          const intent = parseJson(priorIntent.intent_json);
+          if (!intent || intent.decision !== record.decision || intent.actorTelegramUserId !== record.actorTelegramUserId ||
+              priorIntent.state !== "PENDING_SIGNATURE") throw new Error("TELEGRAM_DECISION_INTENT_MISMATCH");
+        }
         statements.insertDecision.run(record.decisionId, record.requestId, stable(record));
         if (Number(statements.consumeRequest.run(record.requestId).changes) !== 1) throw new Error("TELEGRAM_REVIEW_STATE_CONFLICT");
+        if (priorIntent) statements.signDecisionIntent.run(record.requestId);
         if (auditEvent) insertAuditEvent(auditEvent);
         return true;
       });
@@ -272,13 +318,15 @@ export function createSqliteTelegramStore(database, { nonceStore = createSqliteN
       intakes: statements.listIntakes.all().map(row => parseJson(row.payload_json)).filter(Boolean),
       reviewRequests: statements.listRequests.all().map(row => ({ request: parseJson(row.request_json), state: row.state })),
       decisions: statements.listDecisions.all().map(row => parseJson(row.decision_json)).filter(Boolean),
+      decisionIntents: database.prepare("SELECT intent_json,state FROM kratt_telegram_decision_intents ORDER BY rowid").all().map(row => ({ intent: parseJson(row.intent_json), state: row.state })),
       journal: statements.listEvents.all().map(row => parseJson(row.event_json)).filter(Boolean),
     });
   }
 
   return Object.freeze({
     claimUpdate, persistIntake, completeUpdate, releaseUpdate,
-    saveReviewRequest, getReviewRequest, getDecision, linkReviewMessage, getReviewRequestForMessage, claimReviewRequest,
+    saveReviewRequest, getReviewRequest, getDecision, linkReviewMessage, getReviewRequestForMessage,
+    getDecisionIntent, createDecisionIntent, claimReviewRequest,
     releaseReviewRequest, cancelReviewRequest, expireReviewRequest, persistDecision,
     appendAuditEvent, snapshot,
   });
