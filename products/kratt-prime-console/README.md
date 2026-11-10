@@ -34,14 +34,15 @@ No package install is required for either preview.
 
 ## Important boundary
 
-The UI is a **local demonstration shell**, not a connected production console. Its records are synthetic. It does not call Telegram, GitHub, Slack, RSS, remote services, or the KRATT orchestrator. It stores no credentials and cannot perform external writes.
+The UI is a **local development console**, not a production console. Its initial records are synthetic. When started with the Node local server, it calls the same-origin loopback API and can record bounded intake metadata in the local orchestration kernel. It does not call Telegram, GitHub, Slack, RSS or other external services. It stores no credentials and cannot perform external writes.
 
-The backend orchestration contract is implemented separately in:
+The local API and orchestration kernel are implemented in:
 
+- `packages/kratt-orchestrator/src/local-server.mjs`
 - `packages/kratt-orchestrator/src/orchestrator.mjs`
-- `packages/kratt-orchestrator/test/orchestrator.test.mjs`
+- `packages/kratt-orchestrator/test/`
 
-The next integration step is a reviewed local API adapter between this UI and the orchestrator, followed by source-specific read adapters. Credentials must remain server-side. External writes must remain request-bound, signed, scoped and fail-closed.
+The next integration step is to add individually reviewed source-specific read adapters with real identity verification, source provenance, retention controls and permission scopes. Credentials must remain server-side. External writes must remain request-bound, signed, scoped, expiring and fail-closed.
 
 ## Design principles
 
