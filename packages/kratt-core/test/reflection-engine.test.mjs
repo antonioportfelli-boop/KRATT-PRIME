@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { createRootSnapshot, validateRootDelta } from "../src/reflection-root-store.mjs";
 import { buildReflectionRootDelta, createTelegramReflectionDeltaBuilder } from "../src/reflection-engine.mjs";
 import { KRATT_ONTOLOGY_VERSION } from "../src/reflection-ontology.mjs";
+import { createTelegramReflectionProposalService } from "../src/telegram-reflection-proposal.mjs";
 
 const digest = value => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 function canonical(value) {
@@ -127,4 +128,59 @@ test("Telegram proposal bridge re-reads and binds the authoritative root before 
   await assert.rejects(() => stale({
     expectedRoot: { rootVersion: snapshot.version + 1, rootDigest: snapshot.digest },
   }), /TELEGRAM_REFLECTION_DELTA_ROOT_CHANGED/);
+});
+
+
+test("durable Telegram approval proposal service can use the deterministic reflection reducer", async () => {
+  const snapshot = createRootSnapshot(baseDocument(), { version: 9, createdAt: "2026-11-10T14:30:00.000Z" });
+  const candidate = node("claim-telegram-2", "CLAIM", {
+    normalizedText: "The system status is inactive", subjectId: "system-1", predicate: "status", objectValue: "inactive",
+    timeScope: "2026-Q4", extractionMethod: "model", claimStatus: "UNREVIEWED",
+    sourceRefs: [{ segmentId: "segment-1", sourceDigest: digest("source-1"), startOffset: 0, endOffset: 12, excerptDigest: digest("excerpt-1") }],
+  });
+  const decision = {
+    schemaVersion: "kratt-telegram-validation-decision/v1",
+    requestId: "request-reflection-1",
+    decisionId: "decision-reflection-1",
+    decision: "APPROVE",
+    verifiedAt: "2026-11-10T14:59:00.000Z",
+    claimId: "claim-1",
+    targetDigest: digest("target-claim"),
+    evidenceSnapshotDigest: digest("evidence-snapshot"),
+    rootDigest: snapshot.digest,
+    policyVersion: "strict/v1",
+  };
+  const request = {
+    requestId: decision.requestId,
+    claimId: decision.claimId,
+    targetDigest: decision.targetDigest,
+    evidenceSnapshotDigest: decision.evidenceSnapshotDigest,
+    rootDigest: decision.rootDigest,
+    policyVersion: decision.policyVersion,
+  };
+  const builder = createTelegramReflectionDeltaBuilder({
+    rootSnapshotProvider: { getSnapshot: () => ({ status: "OK", snapshot }) },
+    collectCandidateNodes: () => [candidate],
+    now: NOW,
+  });
+  const service = createTelegramReflectionProposalService({
+    decisionStore: {
+      getReviewRequest: () => ({ state: "CONSUMED", request }),
+      getDecision: () => decision,
+    },
+    projectionService: {
+      get: async () => ({
+        readOnly: true, truthVerdict: "NOT_ASSERTED", claimId: "claim-1",
+        claimDigest: digest("target-claim"), evidenceSnapshotDigest: digest("evidence-snapshot"),
+        rootDigest: snapshot.digest, rootVersion: snapshot.version,
+      }),
+    },
+    buildRootDelta: builder,
+  });
+  const result = await service.createProposal({ requestId: decision.requestId });
+  assert.equal(result.status, "OK");
+  assert.equal(result.proposal.status, "PROPOSAL_ONLY");
+  assert.equal(result.proposal.applyStatus, "NOT_APPLIED");
+  assert.equal(validateRootDelta(result.proposal.rootDelta).ok, true);
+  assert.ok(result.proposal.rootDelta.operations.some(operation => operation.value?.type === "CONTRADICTION"));
 });
