@@ -277,6 +277,23 @@ test("WidgetQuery intent proceeds to a separate Ed25519 signature before final d
     assert.equal(calls.some(call => call.method === "answer"), true);
     assert.equal(calls.some(call => call.method === "edit"), true);
 
+    const conflictingIntent = await plane.ingestAuthenticatedUpdate({
+      update: {
+        update_id: 1204,
+        widget_query: {
+          id: "widget-query-conflict",
+          from: { id: 123456 },
+          chat: { id: 123456, type: "private" },
+          message_id: 111,
+          type: { type: "data" },
+          data: "intent:REJECT:SOURCE_CONTRADICTED",
+        },
+      },
+      receivedSecret: "local-test-webhook-secret",
+    });
+    assert.equal(conflictingIntent.status, "BLOCKED");
+    assert.equal(store.getDecisionIntent(sent.requestId).intent.decision, "APPROVE");
+
     const request = store.getReviewRequest(sent.requestId).request;
     const signingRequest = createTelegramApprovalSigningRequest({
       request,
