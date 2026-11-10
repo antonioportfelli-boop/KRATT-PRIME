@@ -45,7 +45,7 @@ test("unverified adapter cannot be promoted without verifier evidence", () => {
   const adapter = orchestrator.registerAdapter(descriptor());
   assert.equal(orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY").reason, "ILLEGAL_ADAPTER_STATE_TRANSITION");
   assert.equal(orchestrator.transitionAdapter(adapter.id, "CONNECTED_UNVERIFIED").status, "OK");
-  assert.equal(orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY").reason, "TRUSTED_ADAPTER_VERIFIER_UNAVAILABLE");
+  assert.equal(orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY").reason, "TRUSTED_ADAPTER_VERIFICATION_REQUIRED");
 });
 
 test("verified read adapter executes only declared read capabilities", async () => {
@@ -218,4 +218,17 @@ test("non-canonical payloads are rejected before a write request is queued", () 
     actor:"architect",
   });
   assert.equal(denied.reason, "WRITE_PAYLOAD_NOT_CANONICAL");
+});
+
+
+test("caller-supplied verified boolean cannot establish adapter trust", () => {
+  const orchestrator = createOrchestrator({ now: () => stamp });
+  const adapter = orchestrator.registerAdapter(descriptor());
+  orchestrator.transitionAdapter(adapter.id, "CONNECTED_UNVERIFIED");
+  const promoted = orchestrator.transitionAdapter(adapter.id, "VERIFIED_READ_ONLY", {
+    verified:true,
+    verifierId:"caller-asserted",
+  });
+  assert.equal(promoted.status, "DENY");
+  assert.equal(promoted.reason, "TRUSTED_ADAPTER_VERIFIER_UNAVAILABLE");
 });
