@@ -1,11 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { createTelegramControlPlane } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
 import { createSqliteTelegramStore } from "../../kratt-orchestrator/src/telegram-sqlite-store.mjs";
 import { createTelegramReviewWidgetService } from "../../kratt-orchestrator/src/telegram-review-service.mjs";
 import { createTelegramWidgetQueryHandler } from "../../kratt-orchestrator/src/telegram-widget-query-handler.mjs";
 import { normalizeTelegramUpdate } from "../../kratt-orchestrator/src/telegram-control-plane.mjs";
+import { createTrustedTelegramDecisionVerifier } from "../src/telegram-approval-verifier.mjs";
+import { createTelegramApprovalSigningRequest } from "../src/telegram-approval-signing-request.mjs";
 import { renderClaimReviewWidget } from "../../kratt-orchestrator/src/telegram-review-widget.mjs";
 import { createTelegramBotApiClient } from "../../kratt-orchestrator/src/telegram-bot-api-client.mjs";
 
@@ -207,7 +210,7 @@ test("review widget service refuses group contexts and cancels when send fails",
   } finally { database.close(); }
 });
 
-test("WidgetQuery records a request-bound decision intent but never final approval", async () => {
+test("WidgetQuery intent proceeds to a separate Ed25519 signature before final decision", async () => {
   const database = new DatabaseSync(":memory:");
   try {
     const store = createSqliteTelegramStore(database);
@@ -217,17 +220,31 @@ test("WidgetQuery records a request-bound decision intent but never final approv
       async answerWidgetQuery(id, data) { calls.push({ method: "answer", id, data }); return true; },
       async editMessageWidgetData(args) { calls.push({ method: "edit", ...args }); return true; },
     };
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const nowMs = Date.parse("2026-11-10T12:00:00.000Z");
+    const authority = "kratt.claim.review";
+    const key = {
+      key_id: "telegram-review-key-1",
+      approver_id: "123456",
+      public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
+      authorities: [authority],
+    };
+    const verifyApproval = createTrustedTelegramDecisionVerifier({
+      trustedApprovalKeys: [key],
+      now: () => nowMs,
+      authority,
+    });
     const handleWidgetQuery = createTelegramWidgetQueryHandler({
       store,
       botApiClient,
       now: () => "2026-11-10T12:00:01.000Z",
     });
     const plane = createTelegramControlPlane({
-      now: () => "2026-11-10T12:00:00.000Z",
+      now: () => new Date(nowMs).toISOString(),
       allowedArchitectUserIds: ["123456"],
       webhookSecret: "local-test-webhook-secret",
       handleWidgetQuery,
-      verifyApproval: async () => false,
+      verifyApproval,
       store,
     });
     const service = createTelegramReviewWidgetService({ controlPlane: plane, store, botApiClient });
@@ -250,12 +267,39 @@ test("WidgetQuery records a request-bound decision intent but never final approv
     const result = await plane.ingestAuthenticatedUpdate({ update, receivedSecret: "local-test-webhook-secret" });
     assert.equal(result.status, "OK");
     assert.equal(result.requiresSignedConfirmation, true);
-    const intent = store.getDecisionIntent(sent.requestId);
-    assert.equal(intent.state, "PENDING_SIGNATURE");
-    assert.equal(intent.intent.decision, "APPROVE");
+    const storedIntent = store.getDecisionIntent(sent.requestId);
+    assert.equal(storedIntent.state, "PENDING_SIGNATURE");
+    assert.equal(storedIntent.intent.decision, "APPROVE");
     assert.equal(store.snapshot().decisions.length, 0);
     assert.equal(calls.some(call => call.method === "answer"), true);
     assert.equal(calls.some(call => call.method === "edit"), true);
+
+    const request = store.getReviewRequest(sent.requestId).request;
+    const signingRequest = createTelegramApprovalSigningRequest({
+      request,
+      intent: storedIntent.intent,
+      keyId: key.key_id,
+      approvedBy: key.approver_id,
+      issuedAt: new Date(nowMs).toISOString(),
+    });
+    const proof = {
+      ...signingRequest.proof,
+      signature: sign(null, Buffer.from(signingRequest.payload, "utf8"), privateKey).toString("base64url"),
+    };
+    const finalDecision = await plane.resolveClaimReview({
+      requestId: request.requestId,
+      actorTelegramUserId: "123456",
+      chatId: "123456",
+      decision: "APPROVE",
+      targetDigest: request.targetDigest,
+      evidenceSnapshotDigest: request.evidenceSnapshotDigest,
+      rootDigest: request.rootDigest,
+      policyVersion: request.policyVersion,
+      proof,
+    });
+    assert.equal(finalDecision.status, "OK");
+    assert.equal(store.getDecisionIntent(sent.requestId).state, "SIGNED");
+    assert.equal(store.snapshot().decisions.length, 1);
   } finally { database.close(); }
 });
 
