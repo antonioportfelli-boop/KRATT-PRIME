@@ -79,6 +79,9 @@ export function createLocalServer({ port = 4174, host = "127.0.0.1" } = {}) {
     if (request.method === "GET" && url.pathname === "/api/events") {
       return send(response, 200, { events: orchestrator.snapshot().journal });
     }
+    if (request.method === "GET" && url.pathname === "/api/verify") {
+      return send(response, 200, orchestrator.verifyJournal());
+    }
     if (request.method === "POST" && url.pathname === "/api/intake") {
       if (!request.headers["content-type"]?.includes("application/json")) {
         return send(response, 415, { error: "JSON_CONTENT_TYPE_REQUIRED" });
