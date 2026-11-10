@@ -97,7 +97,7 @@ export function createTelegramReflectionCasAdapter({
   const rootStore = createSqliteReflectionRootStore(database, {
     initialSnapshot,
     verifyProposal,
-    now: () => new Date(typeof now() === "string" ? Date.parse(now()) : now()).toISOString(),
+    now: () => {\n      const current = now();\n      return new Date(typeof current === "string" ? Date.parse(current) : current).toISOString();\n    },
   });
   return Object.freeze({ rootStore, verifyProposal });
 }
