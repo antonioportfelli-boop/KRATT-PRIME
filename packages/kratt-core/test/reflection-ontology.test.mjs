@@ -20,6 +20,10 @@ function node(id, type, attributes) {
   const value = { id, type, createdAt: "2026-11-10T14:00:00.000Z", attributes };
   return { ...value, recordDigest: digest(canonical(value)) };
 }
+function edge(id, from, to, relation) {
+  const value = { id, from, to, relation, createdAt: "2026-11-10T14:00:00.000Z" };
+  return { ...value, recordDigest: digest(canonical(value)) };
+}
 function validDocument() {
   const source = node("source-1", "SOURCE", {
     sourceDigest: digest("source"), observedAt: "2026-11-10T13:00:00.000Z", rightsStatus: "permitted",
@@ -38,9 +42,9 @@ function validDocument() {
   return {
     nodes: [source, segment, claim, evidence],
     edges: [
-      { id: "edge-1", from: "source-1", to: "segment-1", relation: "SOURCE_HAS_SEGMENT", createdAt: "2026-11-10T14:00:00.000Z" },
-      { id: "edge-2", from: "segment-1", to: "claim-1", relation: "SEGMENT_SUPPORTS_CLAIM", createdAt: "2026-11-10T14:00:00.000Z" },
-      { id: "edge-3", from: "evidence-1", to: "claim-1", relation: "EVIDENCE_SUPPORTS_CLAIM", createdAt: "2026-11-10T14:00:00.000Z" },
+      edge("edge-1", "source-1", "segment-1", "SOURCE_HAS_SEGMENT"),
+      edge("edge-2", "segment-1", "claim-1", "SEGMENT_SUPPORTS_CLAIM"),
+      edge("edge-3", "evidence-1", "claim-1", "EVIDENCE_SUPPORTS_CLAIM"),
     ],
     metadata: { ontologyVersion: KRATT_ONTOLOGY_VERSION },
   };
@@ -71,15 +75,15 @@ test("rejects model claim promotion, missing provenance and invalid relation end
   assert.ok(validateReflectionOntology(promoted).errors.includes("ONTOLOGY_MODEL_CLAIM_PROMOTION_FORBIDDEN"));
 
   const broken = validDocument();
-  broken.edges[0] = { ...broken.edges[0], to: "missing-segment" };
+  broken.edges[0] = edge("edge-1", "source-1", "missing-segment", "SOURCE_HAS_SEGMENT");
   assert.ok(validateReflectionOntology(broken).errors.includes("ONTOLOGY_EDGE_ENDPOINT_OR_RELATION_INVALID"));
 });
 
 test("rejects derivation and parent-child cycles", () => {
   const document = validDocument();
   document.edges.push(
-    { id: "edge-4", from: "claim-1", to: "evidence-1", relation: "DERIVED_FROM", createdAt: "2026-11-10T14:00:00.000Z" },
-    { id: "edge-5", from: "evidence-1", to: "claim-1", relation: "DERIVED_FROM", createdAt: "2026-11-10T14:00:00.000Z" },
+    edge("edge-4", "claim-1", "evidence-1", "DERIVED_FROM"),
+    edge("edge-5", "evidence-1", "claim-1", "DERIVED_FROM"),
   );
   assert.ok(validateReflectionOntology(document).errors.includes("ONTOLOGY_DERIVATION_CYCLE"));
 });
