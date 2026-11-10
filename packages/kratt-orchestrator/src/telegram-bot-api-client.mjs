@@ -4,6 +4,7 @@ const API_BASE = "https://api.telegram.org";
 const MAX_HTML_BYTES = 32_768;
 const MAX_COMPRESSED_BYTES = 4_096;
 const MAX_WIDGET_STATE_BYTES = 1_024;
+const MAX_RICH_MESSAGE_BYTES = 32_768;
 
 function bytes(value) {
   return Buffer.byteLength(value, "utf8");
@@ -82,6 +83,20 @@ export function createTelegramBotApiClient({ token, fetchImpl = globalThis.fetch
     return call("sendWidget", parameters);
   }
 
+  async function sendRichMessage({ chatId, markdown, protectContent = true, disableNotification = false } = {}) {
+    if (!(typeof chatId === "number" && Number.isSafeInteger(chatId) ||
+        typeof chatId === "string" && chatId.length > 0 && chatId.length <= 128) ||
+        typeof markdown !== "string" || markdown.length < 1 || bytes(markdown) > MAX_RICH_MESSAGE_BYTES) {
+      throw new TypeError("TELEGRAM_RICH_MESSAGE_INVALID");
+    }
+    return call("sendRichMessage", {
+      chat_id: chatId,
+      rich_message: { markdown },
+      protect_content: protectContent === true,
+      disable_notification: disableNotification === true,
+    });
+  }
+
   async function answerWidgetQuery(widgetQueryId, data = "") {
     if (typeof widgetQueryId !== "string" || widgetQueryId.length < 1 || widgetQueryId.length > 128 ||
         typeof data !== "string" || bytes(data) > MAX_WIDGET_STATE_BYTES) {
@@ -100,5 +115,5 @@ export function createTelegramBotApiClient({ token, fetchImpl = globalThis.fetch
     return call("editMessageWidgetData", { chat_id: chatId, message_id: messageId, chat_data: chatData });
   }
 
-  return Object.freeze({ sendClaimReviewWidget, answerWidgetQuery, editMessageWidgetData });
+  return Object.freeze({ sendClaimReviewWidget, sendRichMessage, answerWidgetQuery, editMessageWidgetData });
 }
