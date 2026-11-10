@@ -69,7 +69,7 @@ export function renderTelegramEvidenceReport({ projection, generatedAt } = {}) {
     "Source integrity and claim truth are separate assessments. This report does not convert source presence into a truth verdict.",
     `- Claim digest: \`${projection.claimDigest}\``,
     `- Evidence snapshot: \`${projection.evidenceSnapshotDigest}\``,
-    `- Root snapshot: \``${projection.rootDigest}\```,
+    `- Root snapshot: \`${projection.rootDigest}\``,
     "",
     "## Source lineage",
     sources.length ? sources.map(sourceBlock).join("\n\n") : "No source references are attached.",
