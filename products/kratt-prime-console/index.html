@@ -35,7 +35,7 @@
       </nav>
       <div class="sidebar-bottom">
         <div class="node-card">
-          <div class="node-card-head"><span class="live-dot"></span><b>LOCAL NODE</b><span class="node-state">PREVIEW</span></div>
+          <div class="node-card-head"><span class="live-dot"></span><b>LOCAL NODE</b><span class="node-state" id="local-node-state">PREVIEW</span></div>
           <div class="node-name">KRATT / PRIME-01</div>
           <div class="node-meta"><span>External writes</span><b class="muted">LOCKED</b></div>
           <div class="node-meta"><span>Evidence kernel</span><b class="good">READY</b></div>
@@ -48,7 +48,7 @@
       <header class="topbar">
         <div class="breadcrumbs"><span>KRATT PRIME</span><i>/</i><b id="crumb-view">Overview</b></div>
         <div class="topbar-actions">
-          <div class="preview-pill"><span></span> LOCAL PREVIEW</div>
+          <div class="preview-pill" id="backend-status"><span></span> LOCAL PREVIEW</div>
           <button class="icon-button" aria-label="Notifications" title="Notifications">♧<i></i></button>
           <div class="top-divider"></div>
           <div class="avatar avatar-small">AP</div>
@@ -151,11 +151,11 @@
         <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>INTEGRATION REGISTRY</div><h1>Connectors<span class="heading-dot">.</span></h1><p>Every external interface must prove its identity and capability before use.</p></div><div class="heading-actions"><span class="status-chip status-pending">NO LIVE CONNECTIONS</span></div></div>
         <div class="notice-bar"><span class="notice-icon">⛨</span><span><b>Trust boundary active</b> — connector cards are illustrative. This preview does not store credentials or contact external services.</span></div>
         <div class="connector-grid" id="connector-grid">
-          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol telegram">➤</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Telegram</h3><p>Channel and message signal ingestion.</p><div class="connector-capabilities"><span>message.read</span><span>channel.read</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
-          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol rss">◉</span><span class="status-chip status-verified">VERIFIED READ</span></div><h3>RSS / Atom</h3><p>Structured public feed collection.</p><div class="connector-capabilities"><span>feed.read</span><span>source.capture</span></div><div class="connector-footer"><span>Read: verified</span><span>Write: denied</span></div></article>
-          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol github">⌘</span><span class="status-chip status-unverified">UNVERIFIED</span></div><h3>GitHub</h3><p>Repository, commit and workflow evidence.</p><div class="connector-capabilities"><span>repo.read</span><span>workflow.read</span></div><div class="connector-footer"><span>Read: pending</span><span>Write: approval gate</span></div></article>
-          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol slack">#</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Slack</h3><p>Workspace intelligence and approved message context.</p><div class="connector-capabilities"><span>message.read</span><span>channel.read</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
-          <article class="connector-card"><div class="connector-card-head"><span class="connector-symbol web">⌕</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Web research</h3><p>Source discovery and citation capture.</p><div class="connector-capabilities"><span>search.read</span><span>page.capture</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
+          <article class="connector-card" data-adapter-id="telegram"><div class="connector-card-head"><span class="connector-symbol telegram">➤</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Telegram</h3><p>Channel and message signal ingestion.</p><div class="connector-capabilities"><span>message.read</span><span>channel.read</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
+          <article class="connector-card" data-adapter-id="rss-primary"><div class="connector-card-head"><span class="connector-symbol rss">◉</span><span class="status-chip status-verified">VERIFIED READ</span></div><h3>RSS / Atom</h3><p>Structured public feed collection.</p><div class="connector-capabilities"><span>feed.read</span><span>source.capture</span></div><div class="connector-footer"><span>Read: verified</span><span>Write: denied</span></div></article>
+          <article class="connector-card" data-adapter-id="github"><div class="connector-card-head"><span class="connector-symbol github">⌘</span><span class="status-chip status-unverified">UNVERIFIED</span></div><h3>GitHub</h3><p>Repository, commit and workflow evidence.</p><div class="connector-capabilities"><span>repo.read</span><span>workflow.read</span></div><div class="connector-footer"><span>Read: pending</span><span>Write: approval gate</span></div></article>
+          <article class="connector-card" data-adapter-id="slack"><div class="connector-card-head"><span class="connector-symbol slack">#</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Slack</h3><p>Workspace intelligence and approved message context.</p><div class="connector-capabilities"><span>message.read</span><span>channel.read</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
+          <article class="connector-card" data-adapter-id="web-research"><div class="connector-card-head"><span class="connector-symbol web">⌕</span><span class="status-chip status-discovered">DISCOVERED</span></div><h3>Web research</h3><p>Source discovery and citation capture.</p><div class="connector-capabilities"><span>search.read</span><span>page.capture</span></div><div class="connector-footer"><span>Read: proposed</span><span>Write: denied</span></div></article>
           <article class="connector-card connector-card-add"><div class="add-symbol">＋</div><h3>Register adapter</h3><p>Define a typed adapter contract before connecting a service.</p><span class="text-button">Contract-first integration</span></article>
         </div>
       </section>
