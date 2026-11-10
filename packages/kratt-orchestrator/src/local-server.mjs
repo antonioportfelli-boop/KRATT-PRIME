@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createOrchestrator } from "./orchestrator.mjs";
+import { segmentKnowledge } from "../../kratt-core/src/knowledge-segmentation.mjs";
 
 const UI_ROOT = fileURLToPath(new URL("../../../products/kratt-prime-console/", import.meta.url));
 const MIME = {
@@ -87,13 +88,42 @@ export function createLocalServer({ port = 4174, host = "127.0.0.1" } = {}) {
         return send(response, 415, { error: "JSON_CONTENT_TYPE_REQUIRED" });
       }
       try {
-        const body = await readJson(request);
-        const result = orchestrator.recordLocalIntake({
+        const body = await readJson(request, 300_000);
+        let preflight = null;
+        if (typeof body.content === "string" && body.content.length) {
+          preflight = segmentKnowledge({
+            sourceId: "local-preflight",
+            sourceUrl: body.sourceUrl ?? null,
+            observedAt: new Date().toISOString(),
+            content: body.content,
+            locale: body.locale ?? "und",
+            maxSegmentChars: body.maxSegmentChars ?? 1200,
+          });
+        }
+        const intake = orchestrator.recordLocalIntake({
           label: body.label,
           sourceType: body.sourceType,
           actor: body.actor ?? "architect",
         });
-        return send(response, result.status === "OK" ? 201 : 400, result);
+        if (intake.status !== "OK") return send(response, 400, intake);
+        let segmentation = null;
+        if (preflight) {
+          segmentation = segmentKnowledge({
+            sourceId: intake.intake.sourceId,
+            sourceUrl: body.sourceUrl ?? null,
+            observedAt: intake.intake.receivedAt,
+            content: body.content,
+            locale: body.locale ?? "und",
+            maxSegmentChars: body.maxSegmentChars ?? 1200,
+          });
+          orchestrator.recordLocalSegmentation({
+            sourceId: segmentation.sourceId,
+            sourceDigest: segmentation.sourceDigest,
+            segmentCount: segmentation.segmentCount,
+            actor: body.actor ?? "architect",
+          });
+        }
+        return send(response, 201, { status:"OK", reason:"LOCAL_INTAKE_RECORDED", intake:intake.intake, segmentation });
       } catch (error) {
         const reason = error instanceof SyntaxError ? "JSON_INVALID" : error.message;
         return send(response, reason === "REQUEST_BODY_TOO_LARGE" ? 413 : 400, { error: reason });
