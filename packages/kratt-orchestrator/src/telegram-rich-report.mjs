@@ -31,6 +31,8 @@ function sourceBlock(source, index) {
   const times = [
     source.capturedAt ? `captured ${escapeMarkdown(source.capturedAt)}` : null,
     source.observedAt ? `observed ${escapeMarkdown(source.observedAt)}` : null,
+    source.sourceLineageId ? `lineage ${escapeMarkdown(source.sourceLineageId)}` : null,
+    source.independenceGroupId ? `independence group ${escapeMarkdown(source.independenceGroupId)}` : null,
   ].filter(Boolean).join(" · ");
   return [
     `**${index + 1}. ${heading}**`,
