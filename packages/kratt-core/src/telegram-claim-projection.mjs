@@ -86,7 +86,6 @@ export function createTelegramClaimProjectionService({
             !DIGEST.test(reference.sourceDigest ?? "") || !DIGEST.test(reference.excerptDigest ?? "")) {
           throw new Error("TELEGRAM_PROJECTION_SOURCE_REFERENCE_INVALID");
         }
-        if (sourceIds.has(reference.sourceId)) throw new Error("TELEGRAM_PROJECTION_DUPLICATE_SOURCE_REFERENCE");
         sourceIds.add(reference.sourceId);
         const source = await sourceRepository.getById(reference.sourceId);
         if (!source || typeof source.content !== "string") throw new Error("TELEGRAM_PROJECTION_SOURCE_NOT_FOUND");
@@ -109,6 +108,8 @@ export function createTelegramClaimProjectionService({
           excerptDigest: reference.excerptDigest,
           capturedAt: source.capturedAt ?? null,
           observedAt: source.observedAt ?? null,
+          sourceLineageId: reference.sourceLineageId ?? source.sourceLineageId ?? null,
+          independenceGroupId: reference.independenceGroupId ?? source.independenceGroupId ?? null,
           startOffset: reference.startOffset,
           endOffset: reference.endOffset,
         }));
