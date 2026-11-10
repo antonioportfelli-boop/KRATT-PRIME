@@ -177,6 +177,8 @@
       <div class="dialog-head"><div><div class="eyebrow"><span class="eyebrow-line"></span>LOCAL DEMO ACTION</div><h2>Start a signal intake</h2><p>Preview the source contract. No network request will be made.</p></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div>
       <label for="intake-source">Source type</label><select id="intake-source"><option>Manual URL list</option><option>RSS / Atom feed</option><option>JSON / CSV import</option><option>Telegram adapter (not connected)</option></select>
       <label for="intake-label">Intake label</label><input id="intake-label" placeholder="e.g. Baltic infrastructure watch" required>
+      <label for="intake-source-url">Source URL (optional)</label><input id="intake-source-url" type="url" placeholder="https://…">
+      <label for="intake-content">Source text for automatic knowledge segmentation (optional)</label><textarea id="intake-content" rows="5" placeholder="Paste a bounded source excerpt. KRATT will split it into traceable, unreviewed knowledge segments."></textarea>
       <div class="dialog-note"><span>⛨</span><span>Imported content must retain source URL, observed time, capture method and content digest.</span></div>
       <div class="dialog-actions"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary" id="run-demo-intake" value="default">Run local preview</button></div>
     </form>
