@@ -75,9 +75,11 @@ function validateNode(node, errors) {
   add(errors, NODE_TYPES.has(node.type), "ONTOLOGY_NODE_TYPE_INVALID");
   add(errors, validTime(node.createdAt), "ONTOLOGY_NODE_TIMESTAMP_INVALID");
   add(errors, plain(node.attributes), "ONTOLOGY_NODE_ATTRIBUTES_INVALID");
+  add(errors, Object.keys(node).sort().join("|") === ["attributes", "createdAt", "id", "recordDigest", "type"].join("|"), "ONTOLOGY_NODE_FIELDS_INVALID");
   if (!NODE_TYPES.has(node.type) || !plain(node.attributes)) return;
   const required = NODE_FIELDS[node.type];
   add(errors, hasFields(node.attributes, required), `ONTOLOGY_${node.type}_ATTRIBUTES_INCOMPLETE`);
+  add(errors, Object.keys(node.attributes).sort().join("|") === [...required].sort().join("|"), `ONTOLOGY_${node.type}_ATTRIBUTES_UNKNOWN_OR_MISSING`);
   if (Object.hasOwn(node, "recordDigest")) {
     add(errors, DIGEST.test(node.recordDigest) && node.recordDigest === nodeDigest(node), "ONTOLOGY_NODE_DIGEST_INVALID");
   } else errors.push("ONTOLOGY_NODE_DIGEST_REQUIRED");
@@ -96,6 +98,11 @@ function validateNode(node, errors) {
     add(errors, ["human", "rules", "model", "parser"].includes(a.extractionMethod), "ONTOLOGY_CLAIM_EXTRACTION_INVALID");
     add(errors, ["UNREVIEWED", "UNDER_REVIEW", "SUPPORTED", "CONTESTED", "REJECTED", "APPROVED", "UNKNOWN"].includes(a.claimStatus), "ONTOLOGY_CLAIM_STATUS_INVALID");
     add(errors, Array.isArray(a.sourceRefs) && a.sourceRefs.length > 0, "ONTOLOGY_CLAIM_SOURCE_REQUIRED");
+    add(errors, Array.isArray(a.sourceRefs) && a.sourceRefs.every(ref => plain(ref) &&
+      Object.keys(ref).sort().join("|") === ["endOffset", "excerptDigest", "segmentId", "sourceDigest", "startOffset"].join("|") &&
+      typeof ref.segmentId === "string" && DIGEST.test(ref.sourceDigest) && DIGEST.test(ref.excerptDigest) &&
+      Number.isSafeInteger(ref.startOffset) && ref.startOffset >= 0 &&
+      Number.isSafeInteger(ref.endOffset) && ref.endOffset > ref.startOffset), "ONTOLOGY_CLAIM_SOURCE_REFERENCE_INVALID");
     if (a.extractionMethod === "model") add(errors, a.claimStatus === "UNREVIEWED", "ONTOLOGY_MODEL_CLAIM_PROMOTION_FORBIDDEN");
   }
   if (node.type === "EVIDENCE") {
@@ -149,11 +156,27 @@ export function validateReflectionOntology(document) {
         else nodes.set(node.id, node);
       }
     }
+    for (const node of nodes.values()) {
+      const a = node.attributes ?? {};
+      if (node.type === "SEGMENT" && nodes.get(a.sourceId)?.type !== "SOURCE") errors.push("ONTOLOGY_SEGMENT_SOURCE_NOT_FOUND");
+      if (node.type === "EVIDENCE" && nodes.get(a.sourceId)?.type !== "SOURCE") errors.push("ONTOLOGY_EVIDENCE_SOURCE_NOT_FOUND");
+      if (node.type === "CLAIM" && Array.isArray(a.sourceRefs) &&
+          a.sourceRefs.some(ref => nodes.get(ref.segmentId)?.type !== "SEGMENT")) errors.push("ONTOLOGY_CLAIM_SEGMENT_NOT_FOUND");
+      if (node.type === "CONTRADICTION" && Array.isArray(a.claimIds) &&
+          a.claimIds.some(id => nodes.get(id)?.type !== "CLAIM")) errors.push("ONTOLOGY_CONTRADICTION_CLAIM_NOT_FOUND");
+      if (node.type === "DECISION" && !nodes.has(a.targetId)) errors.push("ONTOLOGY_DECISION_TARGET_NOT_FOUND");
+    }
     const edgeIds = new Set(), derived = new Map(), parent = new Map();
     for (const edge of document.edges) {
       if (!plain(edge) || typeof edge.id !== "string" || typeof edge.from !== "string" ||
-          typeof edge.to !== "string" || typeof edge.relation !== "string" || !validTime(edge.createdAt)) {
+          typeof edge.to !== "string" || typeof edge.relation !== "string" || !validTime(edge.createdAt) ||
+          Object.keys(edge).sort().join("|") !== ["createdAt", "from", "id", "recordDigest", "relation", "to"].join("|")) {
         errors.push("ONTOLOGY_EDGE_SHAPE_INVALID"); continue;
+      }
+      const edgePayload = { ...edge };
+      delete edgePayload.recordDigest;
+      if (typeof edge.recordDigest !== "string" || edge.recordDigest !== `sha256:${createHash("sha256").update(canonical(edgePayload), "utf8").digest("hex")}`) {
+        errors.push("ONTOLOGY_EDGE_DIGEST_INVALID");
       }
       if (edgeIds.has(edge.id)) errors.push("ONTOLOGY_EDGE_ID_DUPLICATE");
       edgeIds.add(edge.id);
