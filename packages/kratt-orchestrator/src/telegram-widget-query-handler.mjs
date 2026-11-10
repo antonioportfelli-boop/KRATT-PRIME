@@ -62,10 +62,14 @@ export function createTelegramWidgetQueryHandler({ store, botApiClient, now = ()
   }
 
   return async function handleTelegramWidgetQuery({ envelope } = {}) {
-    if (!envelope || envelope.updateKind !== "widget_query") {
+    if (!envelope || !["widget_query","shared_widget_query"].includes(envelope.updateKind)) {
       return Object.freeze({ status: "DENY", reason: "TELEGRAM_WIDGET_QUERY_CONTEXT_UNSUPPORTED" });
     }
     const { widgetQueryId, widgetQueryData, actorTelegramUserId, chatId, chatType, widgetMessageId } = envelope;
+    if (envelope.updateKind === "shared_widget_query") {
+      await answer(widgetQueryId, "Shared-widget review decisions are not supported in KRATT V1.");
+      return Object.freeze({ status: "DENY", reason: "TELEGRAM_SHARED_WIDGET_REVIEW_UNSUPPORTED" });
+    }
     if (chatType !== "private" || !chatId || !Number.isSafeInteger(widgetMessageId) || widgetMessageId < 1) {
       await answer(widgetQueryId, "Review decisions are accepted only in the assigned private chat.");
       return Object.freeze({ status: "DENY", reason: "TELEGRAM_WIDGET_PRIVATE_CONTEXT_REQUIRED" });
