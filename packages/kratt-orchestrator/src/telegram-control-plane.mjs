@@ -182,7 +182,7 @@ export function createTelegramControlPlane({
       if (typeof handleWidgetQuery !== "function") {
         widgetResult = outcome("DENY", "TELEGRAM_WIDGET_QUERY_CONTEXT_UNSUPPORTED");
       } else {
-        try { widgetResult = await handleWidgetQuery({ envelope: item, update });
+        try { widgetResult = await handleWidgetQuery({ envelope: item, update }); }
         catch { widgetResult = outcome("ERROR", "TELEGRAM_WIDGET_QUERY_HANDLER_FAILED"); }
       }
       if (widgetResult?.status === "ERROR") {
