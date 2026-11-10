@@ -39,9 +39,9 @@ jobs:
       - name: Build
         run: npm run build
       - name: Commit verified dependency lock updates
-        if: success() && github.event_name == 'pull_request'
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/feature/kratt-telegram-control-plane-v1'
         env:
-          TARGET_BRANCH: ${{ github.head_ref }}
+          TARGET_BRANCH: ${{ github.ref_name }}
         run: |
           if [ "$TARGET_BRANCH" != "feature/kratt-telegram-control-plane-v1" ]; then
             echo "Refusing dependency write outside the authorized feature branch."
