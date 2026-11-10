@@ -188,7 +188,7 @@ export function createTelegramControlPlane({
       intakes.push(intake);
       emit("TELEGRAM_INTAKE_UNREVIEWED", { candidateId: intake.candidateId, contentDigest: intake.contentDigest }, correlationId);
       const result = outcome("OK", "TELEGRAM_INTAKE_RECORDED_UNREVIEWED", { intake });
-      updates.get(item.updateId).result = result;
+      if (!store) updates.get(item.updateId).result = result;
       return result;
     }
     const result = outcome("OK", "TELEGRAM_UPDATE_ROUTED", { envelope: record });
