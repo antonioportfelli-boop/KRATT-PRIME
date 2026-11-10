@@ -46,7 +46,7 @@ function extractLink(block) {
   if (linkTag) return cleanXmlText(linkTag[2]);
   const selfClosing = /<(?:[A-Za-z0-9_-]+:)?link\b([^>]*)\/?\s*>/i.exec(block);
   if (!selfClosing) return "";
-  return /\bhref\s*=\s*["']([^"']+)["']/i.exec(selfClosing[1])?.[1] ?? "";
+  return decodeEntities(/\bhref\s*=\s*["']([^"']+)["']/i.exec(selfClosing[1])?.[1] ?? "");
 }
 
 function parseDate(value) {
