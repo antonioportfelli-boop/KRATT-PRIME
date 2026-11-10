@@ -22,8 +22,8 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
-      - name: Contract tests
-        run: npm test
+      - name: KRATT core and orchestration contract tests
+        run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Build
