@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/kratt-telegram-control-plane-v1]
   pull_request:
-    branches: [main]
+    branches: [main, feature/kratt-prime-50k-productization-v1]
 
 jobs:
   vite:
@@ -22,10 +22,12 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
+      - name: Enforce dependency security audit
+        run: npm audit --audit-level=high
       - name: KRATT core and orchestration contract tests
         run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
       - name: Console and local API syntax
-        run: node --check products/kratt-prime-console/app.js && node --check packages/kratt-orchestrator/src/local-server.mjs
+        run: node --check products/kratt-prime-console/app.js && node --check packages/kratt-orchestrator/src/local-server.mjs && node --check packages/kratt-orchestrator/src/telegram-control-plane.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Build
