@@ -220,3 +220,33 @@ export function createRequestBoundApprovalVerifier({verifySignature, consumeNonc
 export function isPolicyDecision(value) {
   return value && POLICY_DECISIONS.includes(value.decision);
 }
+
+
+/**
+ * Pure request-bound approval signature check for asynchronous authorization.
+ * Unlike createRequestBoundApprovalVerifier, this function NEVER consumes a nonce.
+ * The caller must atomically consume the returned nonce claims in the same
+ * database transaction that creates the durable dispatch intent and outbox row.
+ */
+export function createRequestBoundApprovalSignatureVerifier({ verifySignature, now = () => Date.now() } = {}) {
+  if (typeof verifySignature !== "function" || typeof now !== "function")
+    throw new TypeError("TRUSTED_APPROVAL_SIGNATURE_DEPENDENCIES_REQUIRED");
+  return (artifact, binding) => {
+    if (!isApprovalArtifact(artifact) || !binding || typeof binding !== "object") return false;
+    let current;
+    try { current = now(); } catch { return false; }
+    const issued = Date.parse(artifact.issued_at), expires = Date.parse(artifact.expires_at);
+    if (!Number.isFinite(current) || issued > current + APPROVAL_CLOCK_SKEW_MS ||
+        expires <= current || expires <= issued || expires - issued > APPROVAL_MAX_AGE_MS ||
+        current - issued > APPROVAL_MAX_AGE_MS) return false;
+    if (artifact.task_id !== binding.task_id || artifact.actor !== binding.actor ||
+        artifact.provider !== binding.provider || artifact.operation !== binding.operation ||
+        artifact.target.resource_type !== binding.target?.resource_type ||
+        artifact.target.resource_id !== binding.target?.resource_id ||
+        artifact.authority !== binding.authority || artifact.request_digest !== binding.request_digest ||
+        artifact.decision !== "APPROVE") return false;
+    const payload = canonicalApprovalPayload(artifact);
+    try { return verifySignature(payload, artifact.signature, artifact) === true; }
+    catch { return false; }
+  };
+}
