@@ -46,13 +46,6 @@ export function createTrustedAuthorizationRuntime({
   if (typeof initialTrustedTime !== "number" || !Number.isFinite(initialTrustedTime)) {
     throw new TypeError("TRUSTED_CLOCK_UNAVAILABLE");
   }
-  let initialTrustedTime;
-  try { initialTrustedTime = now(); } catch {
-    throw new TypeError("TRUSTED_CLOCK_UNAVAILABLE");
-  }
-  if (typeof initialTrustedTime !== "number" || !Number.isFinite(initialTrustedTime)) {
-    throw new TypeError("TRUSTED_CLOCK_UNAVAILABLE");
-  }
 
   const consumeNonce = nonceStore.consume.bind(nonceStore);
   const readTrustedTime = () => {
