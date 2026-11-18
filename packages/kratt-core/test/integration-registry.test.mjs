@@ -95,7 +95,7 @@ test("denies a write when approval is absent or malformed", () => {
   assert.equal(authorizeIntegrationOperation({ integration: enabled, request: REQUEST, now: NOW }).reason,
     "REQUEST_BOUND_APPROVAL_REQUIRED");
   assert.equal(authorizeIntegrationOperation({
-    integration: enabled, request: REQUEST, approval: { ...APPROVAL, scope: "*" }, now: NOW,
+    integration: enabled, request: REQUEST, approval: { ...APPROVAL, scope: "repo:KRATT-PRIME:main" }, now: NOW,
   }).reason, "APPROVAL_BINDING_MISMATCH");
 });
 
