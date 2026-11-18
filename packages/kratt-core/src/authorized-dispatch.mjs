@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { validateTaskEnvelope, KRATT_SCHEMA_VERSION } from "./contracts.mjs";
-import { isPolicyDecision } from "./policy.mjs";
+import { canonicalTaskDigest, isPolicyDecision } from "./policy.mjs";
 
 const AUDIT_SCHEMA = "kratt-audit/v1";
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
@@ -169,13 +169,18 @@ export function createAuthorizedDispatchRuntime({
       const audit = await appendDenial(task, identity.id, "DENY", "PROVIDER_NOT_BOUND");
       return { status: "DENIED", reason: "PROVIDER_NOT_BOUND", audit_recorded: audit.ok };
     }
-    const adapter = providerAdapters[provider];
+    const adapter = Object.hasOwn(providerAdapters, provider) ? providerAdapters[provider] : null;
     if (!adapter || typeof adapter.dispatch !== "function") {
       const audit = await appendDenial(task, identity.id, "BLOCKED", "PROVIDER_ADAPTER_UNAVAILABLE");
       return { status: "BLOCKED", reason: "PROVIDER_ADAPTER_UNAVAILABLE", audit_recorded: audit.ok };
     }
 
-    const taskDigest = digestId(JSON.stringify(task));
+    const canonicalDigest = canonicalTaskDigest(task);
+    if (typeof canonicalDigest !== "string") {
+      const audit = await appendDenial(task, identity.id, "BLOCKED", "TASK_DIGEST_UNAVAILABLE");
+      return { status: "BLOCKED", reason: "TASK_DIGEST_UNAVAILABLE", audit_recorded: audit.ok };
+    }
+    const taskDigest = digestId(canonicalDigest);
     const idempotencyKey = `kratt:${task.task_id}:${taskDigest}`;
     const createdAt = auditTime(now);
     if (!createdAt) return { status: "BLOCKED", reason: "TRUSTED_CLOCK_UNAVAILABLE" };
