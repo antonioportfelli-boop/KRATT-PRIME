@@ -18,6 +18,7 @@ export const INTEGRATION_STATES = Object.freeze([
 
 const STATE_SET = new Set(INTEGRATION_STATES);
 const ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const SCOPE = /^[a-z0-9][a-z0-9._:/-]{0,254}\*?$/i;
 const ACTION = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+){0,7}$/;
 const SHA256 = /^[a-f0-9]{64}$/i;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -94,7 +95,7 @@ function requestShapeValid(request) {
     validText(request.principal) &&
     validText(request.operation, ACTION) &&
     (request.mode === "read" || request.mode === "write") &&
-    validText(request.scope) &&
+    validText(request.scope, SCOPE) &&
     typeof request.args_digest === "string" && SHA256.test(request.args_digest);
 }
 
@@ -107,7 +108,7 @@ function approvalShapeValid(approval) {
     validText(approval.integration_id) &&
     validText(approval.principal) &&
     validText(approval.operation, ACTION) &&
-    validText(approval.scope) &&
+    validText(approval.scope, SCOPE) &&
     typeof approval.args_digest === "string" && SHA256.test(approval.args_digest) &&
     approval.status === "approved" &&
     validUtc(approval.expires_at);
