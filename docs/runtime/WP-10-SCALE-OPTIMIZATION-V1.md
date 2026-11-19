@@ -80,7 +80,7 @@ The command runs runtime/core syntax checks, all Node contract tests, the existi
 - [x] Source-verified, scope-bound semantic retrieval evaluation.
 - [x] Shadow-only quality gate; no memory writes or truth promotion.
 - [x] Focused Node tests for valid, hostile, insufficient and contaminated inputs.
-- [ ] Run full repository CI on the final commit SHA.
+- [x] Run full repository CI on the final commit SHA: GitHub Actions run 44587980697 completed successfully on Node 22; npm ci, lint, full Node test suite, typecheck and build all passed.
 - [ ] Integrate verified runtime observations from the real worker/operator event source.
 - [ ] Collect representative, labelled retrieval datasets and conduct independent relevance review.
 - [ ] Establish cost/latency/recovery budgets from measured staging baselines before proposing real concurrency targets.
