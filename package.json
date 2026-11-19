@@ -12,7 +12,11 @@
     "preview": "vite preview",
     "pack": "node scripts/pack-deploy.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "test": "node --test packages/kratt-core/test/*.test.mjs"
+    "test": "node --test packages/kratt-core/test/*.test.mjs",
+    "start:wave8": "node packages/kratt-orchestrator/src/wave8-server.mjs",
+    "wave8:check": "node scripts/wave8-check-connections.mjs",
+    "wave8:migrate": "node scripts/wave8-apply-migration.mjs",
+    "wave8:webhook": "node scripts/wave8-configure-webhook.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",
