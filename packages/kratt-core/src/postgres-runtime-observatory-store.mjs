@@ -113,12 +113,15 @@ export function createPostgresRuntimeObservatoryStore(pool){
   return(result.rows??[]).map(fromRow);
  }
 
- async function listEvents(operationId,{limit=100}={}){
+ async function listEvents(operationId,{limit=100,beforeSequence}={}){
   if(!ID.test(operationId??""))throw new TypeError("OBSERVATORY_OPERATION_ID_INVALID");
   if(!Number.isInteger(limit)||limit<1||limit>500)throw new TypeError("OBSERVATORY_EVENT_LIMIT_INVALID");
+  if(beforeSequence!==undefined&&(!Number.isSafeInteger(beforeSequence)||beforeSequence<1))throw new TypeError("OBSERVATORY_EVENT_CURSOR_INVALID");
   const result=await pool.query(
-   "SELECT sequence,event_id,record_json,previous_hash,hash FROM kratt_runtime_operation_events WHERE operation_id=$1 ORDER BY sequence DESC LIMIT $2",
-   [operationId,limit]);
+   "SELECT sequence,event_id,record_json,previous_hash,hash FROM kratt_runtime_operation_events WHERE operation_id=$1 "+
+   (beforeSequence===undefined?"":"AND sequence<$3 ")+
+   "ORDER BY sequence DESC LIMIT $2",
+   beforeSequence===undefined?[operationId,limit]:[operationId,limit,beforeSequence]);
   return(result.rows??[]).map(row=>({
    sequence:Number(row.sequence),event_id:row.event_id,event:parseJson(row.record_json),
    previous_hash:String(row.previous_hash).trim(),hash:String(row.hash).trim(),
@@ -154,9 +157,8 @@ export function createPostgresRuntimeObservatoryStore(pool){
 
  async function checkReady(){
   try{
-   const result=await pool.query("SELECT sequence,hash FROM kratt_runtime_observatory_head WHERE singleton=TRUE");
-   const row=result.rows?.[0];
-   return{ready:!!row&&Number.isSafeInteger(Number(row.sequence))&&/^[a-f0-9]{64}$/.test(String(row.hash).trim())};
+   const result=await verifyChain();
+   return{ready:result.ok===true};
   }catch{return{ready:false};}
  }
 

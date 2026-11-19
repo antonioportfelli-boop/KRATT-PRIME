@@ -105,3 +105,13 @@ The quality gate runs Node contract tests, the existing app typecheck and build.
 ## Explicit non-claims
 
 A passing test suite does not prove that production adapters are connected, that real operation events have been emitted, or that a UI is consuming them. No production deployment, production migration, external webhook write, secret rotation, provider dispatch or main-branch update is part of Phase 10.
+
+## Wave 10.1 hardening addendum
+
+- Idempotent duplicate event acknowledgements no longer fail the observed-operation runner; event ID content conflicts remain rejected.
+- Startup and readiness verify the complete event hash chain, legal transitions and projection parity.
+- Event history API supports bounded descending cursor pagination.
+- Successful operation events require a non-null opaque output reference.
+- Malformed previous status values are rejected.
+- Integrity verification returns success only after a full chain check.
+- CI runs on feature branches as well as main.

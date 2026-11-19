@@ -40,7 +40,8 @@ export async function createWave8StagingServer({env=process.env,PoolClass,fetchI
   await assertSchema(pool);
   const store=createPostgresCompetitiveIntelStore(pool);
   const observatoryStore=createPostgresRuntimeObservatoryStore(pool);
-  if(!(await observatoryStore.checkReady()).ready)throw new Error("WAVE10_OBSERVATORY_NOT_READY");
+  const initialIntegrity=await observatoryStore.verifyChain();
+  if(initialIntegrity.ok!==true)throw new Error("WAVE10_OBSERVATORY_INTEGRITY_FAILED");
   const engines=await createWave8Engines({config,fetchImpl});
   const ingestion=createTelegramCompetitiveIngestion({
    webhookSecret:config.telegramWebhookSecret,botId:config.telegramBotId,
@@ -69,7 +70,7 @@ export async function createWave8StagingServer({env=process.env,PoolClass,fetchI
     try{webhookInfo=await telegram.getWebhookInfo();telegramReady=true;}
     catch{telegramReady=false;}
     let observatoryReady=false;
-    try{observatoryReady=(await observatoryStore.checkReady()).ready===true;}catch{observatoryReady=false;}
+    try{observatoryReady=(await observatoryStore.verifyChain()).ok===true;}catch{observatoryReady=false;}
     const webhookReady=webhookInfo.url===config.webhookPublicUrl;
     const ready=dbReady&&telegramReady&&observatoryReady;
     return json(response,ready?200:503,{status:ready?"READY":"NOT_READY",

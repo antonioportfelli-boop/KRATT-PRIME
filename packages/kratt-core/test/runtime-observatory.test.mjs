@@ -86,3 +86,5 @@ test("module summaries count real statuses and only average measured successful 
  assert.equal(summary.status_counts.queued,1);
  assert.equal(summary.average_success_duration_ms,3000);
 });
+
+test("malformed previous operation status is rejected",()=>{const previous={...projectOperation(event("queued"),1),status:"unknown"};assert.equal(validateOperationTransition(previous,event("running")).ok,false);});

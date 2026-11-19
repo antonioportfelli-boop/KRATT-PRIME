@@ -3,7 +3,8 @@ name: KRATT PRIME CI
 on:
   push:
     branches:
-      - integration/source-reconciliation-2026-10
+      - main
+      - feature/**
   pull_request:
     branches:
       - main

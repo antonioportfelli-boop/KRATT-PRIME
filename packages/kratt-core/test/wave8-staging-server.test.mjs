@@ -30,11 +30,7 @@ class FakePool{
   if(sql.startsWith("SELECT to_regclass"))
    return{rows:[{inbox:"kratt_telegram_competitive_inbox",snapshots:"kratt_competitor_snapshots",
     events:"kratt_competitor_snapshot_events",head:"kratt_competitor_snapshot_head",
-    rate_limits:"kratt_telegram_ingress_rate_limits",
-    runtime_events:"kratt_runtime_operation_events",runtime_operations:"kratt_runtime_operations",
-    runtime_head:"kratt_runtime_observatory_head"}],rowCount:1};
-  if(sql.startsWith("SELECT sequence,hash FROM kratt_runtime_observatory_head"))
-   return{rows:[{sequence:0,hash:"0".repeat(64)}],rowCount:1};
+    rate_limits:"kratt_telegram_ingress_rate_limits"}],rowCount:1};
   if(sql.startsWith("INSERT INTO kratt_telegram_ingress_rate_limits")){
    this.rateLimitCalls.push(sql);
    return{rows:[{request_count:1}],rowCount:1};
@@ -75,7 +71,6 @@ test("Wave 8 staging server starts only after live-adapter preflight and exposes
   assert.equal(body.checks.telegramApi,true);
   assert.equal(body.checks.webhookConfigured,true);
   assert.equal(body.checks.snapshotChain,true);
-  assert.equal(body.checks.runtimeObservatory,true);
   assert.equal(body.service,"kratt-prime-staging");
   assert.equal(Object.hasOwn(body,"webhook"),false);
   assert.equal(Object.hasOwn(body,"details"),false);

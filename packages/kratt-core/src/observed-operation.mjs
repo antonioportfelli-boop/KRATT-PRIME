@@ -36,7 +36,7 @@ export function createObservedOperationRunner({
   async function append(event){
    try{
     const result=await store.append(event);
-    return !!result?.ok&&!result.duplicate;
+    return result?.ok===true;
    }catch{return false;}
   }
   let queuedAt;
@@ -74,7 +74,7 @@ export function createObservedOperationRunner({
    if(durationMs<0)throw new Error("OBSERVATORY_CLOCK_MOVED_BACKWARD");
    if(status==="succeeded"){
     output=outputRef(result);
-    if(!safeRef(output))throw new Error("OBSERVATORY_OUTPUT_REFERENCE_INVALID");
+    if(output===null||!safeRef(output))throw new Error("OBSERVATORY_OUTPUT_REFERENCE_INVALID");
    }
    const terminal=create(status,finishedAt,startedAt,finishedAt,durationMs,output);
    if(!await append(terminal))

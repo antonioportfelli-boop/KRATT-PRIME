@@ -37,7 +37,12 @@ export function createRuntimeObservatoryApi({store,authorizeRead}={}){
     return item?{statusCode:200,body:{status:"OK",data:item}}:
      {statusCode:404,body:{status:"NOT_FOUND"}};
    }
-   if(action==="events")return{statusCode:200,body:{status:"OK",data:await store.listEvents(operationId)}};
+   if(action==="events"){
+    const limit=query?.limit===undefined?100:Number(query.limit);
+    const beforeSequence=query?.before_sequence===undefined?undefined:Number(query.before_sequence);
+    const data=await store.listEvents(operationId,{limit,beforeSequence});
+    return{statusCode:200,body:{status:"OK",data,next_before_sequence:data.length===limit?data[0].sequence:null}};
+   }
    if(action==="summary")return{statusCode:200,body:{status:"OK",data:await store.summarizeModules()}};
    const integrity=await store.verifyChain();
    return{statusCode:integrity.ok?200:503,body:{status:integrity.ok?"OK":"DEGRADED",

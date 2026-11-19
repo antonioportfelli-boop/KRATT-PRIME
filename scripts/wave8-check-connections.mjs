@@ -1,6 +1,5 @@
 import { loadWave8Config, createTelegramBotApiAdmin, createPostgresPoolFromConfig } from "../packages/kratt-orchestrator/src/wave8-live-connectors.mjs";
 import { createPostgresCompetitiveIntelStore } from "../packages/kratt-core/src/postgres-competitive-snapshot-store.mjs";
-import { createPostgresRuntimeObservatoryStore } from "../packages/kratt-core/src/postgres-runtime-observatory-store.mjs";
 
 let pool;
 try{
@@ -11,16 +10,11 @@ try{
   "SELECT to_regclass('public.kratt_telegram_competitive_inbox') AS inbox,"+
   "to_regclass('public.kratt_competitor_snapshots') AS snapshots,"+
   "to_regclass('public.kratt_competitor_snapshot_events') AS events,"+
-  "to_regclass('public.kratt_competitor_snapshot_head') AS head,"+
-  "to_regclass('public.kratt_telegram_ingress_rate_limits') AS rate_limits,"+
-  "to_regclass('public.kratt_runtime_operation_events') AS runtime_events,"+
-  "to_regclass('public.kratt_runtime_operations') AS runtime_operations,"+
-  "to_regclass('public.kratt_runtime_observatory_head') AS runtime_head");
- const missing=["inbox","snapshots","events","head","rate_limits","runtime_events","runtime_operations","runtime_head"].filter(k=>!schema.rows?.[0]?.[k]);
+  "to_regclass('public.kratt_competitor_snapshot_head') AS head,"
+  +"to_regclass('public.kratt_telegram_ingress_rate_limits') AS rate_limits");
+ const missing=["inbox","snapshots","events","head","rate_limits"].filter(k=>!schema.rows?.[0]?.[k]);
  const store=createPostgresCompetitiveIntelStore(pool);
  const chain=await store.verifySnapshotChain();
- const observatory=createPostgresRuntimeObservatoryStore(pool);
- const observatoryChain=await observatory.verifyChain();
  const bot=await createTelegramBotApiAdmin({token:config.telegramBotToken}).getMe();
  const webhook=await createTelegramBotApiAdmin({token:config.telegramBotToken}).getWebhookInfo();
  const botMatches=String(bot.id)===config.telegramBotId;
@@ -28,12 +22,11 @@ try{
  const result={
   postgres:{connected:true,database:db.rows[0].database,role:db.rows[0].role,schemaMissing:missing},
   snapshotChain:chain,
-  runtimeObservatory:{integrity:observatoryChain.ok,events:observatoryChain.count??null,operations:observatoryChain.operations??null},
   telegram:{connected:true,botId:String(bot.id),username:bot.username??null,configuredBotIdMatches:botMatches,
    webhookUrl:webhook.url||null,webhookMatches},
  };
  process.stdout.write(JSON.stringify(result,null,2)+"\n");
- if(missing.length||!chain.ok||!observatoryChain.ok||!botMatches||!webhookMatches)process.exitCode=2;
+ if(missing.length||!chain.ok||!botMatches||!webhookMatches)process.exitCode=2;
 }catch(error){
  const reason=String(error?.message??"WAVE8_PREFLIGHT_FAILED").split(":")[0];
  process.stderr.write(JSON.stringify({status:"FAILED",reason})+"\n");

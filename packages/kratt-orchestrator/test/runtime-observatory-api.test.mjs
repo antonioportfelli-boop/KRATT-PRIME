@@ -40,3 +40,5 @@ test("observatory API rejects writes and unknown resources",async()=>{
  assert.equal((await api.handle({method:"POST",path:"/observatory/operations"})).statusCode,405);
  assert.equal((await api.handle({path:"/observatory/secrets"})).statusCode,404);
 });
+
+test("operation event API passes a bounded sequence cursor",async()=>{const store=fakeStore();let captured;store.listEvents=async(_id,options)=>{captured=options;return[{sequence:8,status:"queued"}];};const api=createRuntimeObservatoryApi({store,authorizeRead:async()=>true});const result=await api.handle({path:"/observatory/operations/operation-01/events",query:{limit:"5",before_sequence:"12"}});assert.equal(captured.beforeSequence,12);assert.equal(captured.limit,5);assert.equal(result.body.next_before_sequence,8);});

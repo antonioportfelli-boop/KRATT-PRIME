@@ -46,3 +46,6 @@ test("an executed operation with an unrecordable terminal event is never reporte
  assert.equal(result.status,"OUTCOME_UNRECORDED");
  assert.equal(result.executed,true);
 });
+
+test("duplicate append acknowledgement remains idempotently successful",async()=>{let n=0,t=0;const runner=createObservedOperationRunner({store:{append:async()=>({ok:true,duplicate:++n>1})},clock:()=>new Date(Date.parse("2026-11-19T10:00:00.000Z")+t++*10)});const result=await runner.run({...base,execute:async()=>42,outputRef:()=>"output:sha256:aaaaaaaa"});assert.equal(result.status,"COMPLETED");});
+test("null output references cannot be reported completed",async()=>{const runner=createObservedOperationRunner({store:{append:async()=>({ok:true})}});const result=await runner.run({...base,execute:async()=>42,outputRef:()=>null});assert.equal(result.status,"OUTCOME_UNRECORDED");});

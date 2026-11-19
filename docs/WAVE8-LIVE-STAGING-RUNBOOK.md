@@ -155,25 +155,3 @@ The code is ready for configuration, but the actual external connections are not
 - explicit approval to send the Telegram post text to the OpenAI API.
 
 The GitHub CI suite uses mocked HTTP and PostgreSQL adapters. A successful CI run does not certify real network reachability, database TLS, cloud firewall rules, webhook deliveries, API quota or account-specific model access.
-
-
-## Phase 10 — Runtime Observatory
-
-Phase 10 adds a durable operation history and read API on top of the staging database:
-- `kratt_runtime_operation_events` is append-only and hash chained;
-- `kratt_runtime_operations` is a query projection, not the source of truth;
-- every event is schema-validated and lifecycle transitions are checked by the runtime;
-- the read API requires an injected server-side authorization decision for every request;
-- no raw request/response payloads, secrets or arbitrary exception messages are stored.
-
-Apply migration 0004 only in the intended staging environment:
-```sh
-WAVE10_APPLY_STAGING_MIGRATIONS=true node --env-file=.env.wave8 scripts/wave8-apply-migration.mjs
-```
-Use `WAVE10_EXPECTED_DATABASE` to confirm the target database. The existing Wave 8/9 migration opt-in variables remain accepted for compatibility.
-
-Run the integrity-only preflight:
-```sh
-node --env-file=.env.wave8 scripts/wave10-verify-runtime-observatory.mjs
-```
-A successful verification means the stored event hash chain and its latest-operation projection agree. It does not mean that every adapter is connected or that any production action occurred.

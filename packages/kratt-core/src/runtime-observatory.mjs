@@ -118,6 +118,7 @@ export function validateOperationTransition(previous,eventInput){
  }
  if(!plain(previous)||TERMINAL.has(previous.status))
   return{ok:false,reason:"OBSERVATORY_OPERATION_ALREADY_TERMINAL"};
+ if(!STATUSES.includes(previous.status))return{ok:false,reason:"OBSERVATORY_PREVIOUS_STATUS_INVALID"};
  for(const key of META_KEYS)if(previous[key]!==event[key])
   return{ok:false,reason:"OBSERVATORY_OPERATION_METADATA_CHANGED"};
  const previousTime=previous.last_occurred_at??previous.occurred_at;
