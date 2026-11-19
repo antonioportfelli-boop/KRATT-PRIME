@@ -1,0 +1,45 @@
+name: WP-10 scale optimization checks
+
+on:
+  push:
+    branches: [feature/wp10-scale-optimization-v1]
+    paths:
+      - 'packages/kratt-runtime/src/scale-optimizer.mjs'
+      - 'packages/kratt-runtime/src/semantic-retrieval-evaluator.mjs'
+      - 'packages/kratt-runtime/test/scale-optimizer.test.mjs'
+      - 'packages/kratt-runtime/test/semantic-retrieval-evaluator.test.mjs'
+      - 'docs/runtime/WP-10-SCALE-OPTIMIZATION-V1.md'
+      - 'docs/memory/SEMANTIC-RETRIEVAL-EVALUATION-V1.md'
+      - '.github/workflows/wp10-scale-optimization.yml'
+  pull_request:
+    branches: [feature/durable-worker-leases-fencing-v1]
+    paths:
+      - 'packages/kratt-runtime/src/scale-optimizer.mjs'
+      - 'packages/kratt-runtime/src/semantic-retrieval-evaluator.mjs'
+      - 'packages/kratt-runtime/test/scale-optimizer.test.mjs'
+      - 'packages/kratt-runtime/test/semantic-retrieval-evaluator.test.mjs'
+      - 'docs/runtime/WP-10-SCALE-OPTIMIZATION-V1.md'
+      - 'docs/memory/SEMANTIC-RETRIEVAL-EVALUATION-V1.md'
+      - '.github/workflows/wp10-scale-optimization.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wp10-scale-optimization
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
