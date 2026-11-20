@@ -54,5 +54,5 @@ test("Control Desk explicitly distinguishes denied, unbound and degraded API sta
   assert.match(app, /error\?\.status === 401 \|\| error\?\.status === 403/);
   assert.match(app, /error\?\.status === 404/);
   assert.match(app, /API DEGRADED/);
-  assert.match(app, /OBSERVABILITY_INTEGRITY_NOT_VERIFIED/);
+  assert.match(app, /OBSERVATORY_INTEGRITY_NOT_VERIFIED/);
 });
