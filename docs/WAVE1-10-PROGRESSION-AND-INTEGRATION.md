@@ -124,3 +124,16 @@ The page is not included in the AURA deployment surface and this branch does not
 This branch does not certify that all ten waves have been merged, that any real staging service is currently connected, that a Telegram webhook is active, or that a live database migration has been run. Recorded PR descriptions and previous CI claims are inventory references; they are not substitutes for rerunning checks against the final reconciled head.
 
 No production dispatch, deployment, key provisioning, secret rotation, permission change, production migration or write to \`main\` is part of this work.
+
+
+## 9. Branch quality workflow
+
+The isolated branch workflow \`.github/workflows/wave-progression.yml\` runs on every push to this progression branch. It executes, in order:
+
+1. Node 22 locked dependency installation;
+2. the dedicated Wave Registry and gate tests;
+3. the complete KRATT Core + orchestrator contract test suite;
+4. the existing application typecheck;
+5. the existing application production build.
+
+The workflow is branch-scoped and read-only. Its presence does not change the repository's default branch or release settings. A green result must be confirmed from the actual Actions run on the final branch head; the existence of the YAML file is not evidence that the workflow passed.
