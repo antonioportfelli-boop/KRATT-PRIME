@@ -204,11 +204,14 @@ const records = [
       "feature/phase10-runtime-observatory-v1",
       "feature/wave10-observatory-hardening-remediation-v1",
       "feature/wave10-observatory-hardening-v1",
+      "feature/wave1-10-progression-alignment-2026-11-20",
+      "feature/wave1-10-observatory-http-integration-2026-11-20",
     ],
     pullRequests: [
-      { number: 36, state: "open", relation: "observatory-core-draft" },
-      { number: 38, state: "open", relation: "observatory-ingestion-hardening-draft" },
-      { number: 39, state: "open", relation: "parallel-observatory-hardening-draft" },
+      { number: 36, state: "open", merged: false, draft: true, relation: "observatory-core-draft" },
+      { number: 38, state: "open", merged: false, draft: false, relation: "observatory-hardening-open-not-merged" },
+      { number: 39, state: "closed", merged: true, draft: false, relation: "merged-into-phase10-candidate" },
+      { number: 40, state: "closed", merged: true, draft: false, relation: "merged-into-wave10-remediation-branch" },
     ],
     requiredEvidence: [
       "observatory-integrity-tests",
@@ -217,7 +220,7 @@ const records = [
       "ui-read-contract-tests",
       "operator-staging-attestation",
     ],
-    lineageNote: "PRs #38 and #39 both stack on PR #36, not on each other. Reconcile their overlapping changes before selecting one canonical hardening head. WP-10 scale/semantic retrieval PR #37 is adjacent work on a separate worker-lease base.",
+    lineageNote: "As inspected 2026-11-20: PR #40 is merged into feature/wave10-observatory-hardening-remediation-v1 (head bdda0df); PR #39 is merged separately into feature/phase10-runtime-observatory-v1 (head de5e3f0); PR #38 remains open and unmerged. Those candidate lines are divergent and must be reconciled before a canonical Wave 10 promotion. WP-10 PR #37 remains adjacent work on a separate worker-lease base.",
   },
 ];
 
@@ -234,6 +237,22 @@ function freezeRecord(record) {
 
 export const WAVE_REGISTRY = Object.freeze(records.map(freezeRecord));
 export const WAVE_IDS = Object.freeze(WAVE_REGISTRY.map((wave) => wave.id));
+
+export const WAVE_SOURCE_SNAPSHOT = Object.freeze({
+  observedOn: "2026-11-20",
+  main: Object.freeze({ ref: "main", sha: "ef3422809bbc54381a9ca3a15904727074ca0b16" }),
+  alignmentMergedInto: Object.freeze({
+    branch: "feature/wave10-observatory-hardening-remediation-v1",
+    sha: "bdda0df167d529ddbb583afbbfde39482ab91f5d",
+    pullRequest: 40,
+  }),
+  parallelPhase10Candidate: Object.freeze({
+    branch: "feature/phase10-runtime-observatory-v1",
+    sha: "de5e3f084464f8051f34544b5314bb22bc2a235a",
+    pullRequest: 39,
+  }),
+  reconciliationRequired: true,
+});
 
 export function getWaveById(id) {
   return WAVE_REGISTRY.find((wave) => wave.id === id) ?? null;
@@ -281,9 +300,19 @@ export function validateWaveRegistry(registry = WAVE_REGISTRY) {
         errors.push("WAVE_BRANCH_REF_INVALID:" + wave.id);
       }
     }
+    const prNumbers = new Set();
     for (const pr of wave.pullRequests) {
-      if (!Number.isSafeInteger(pr.number) || pr.number < 1 || !["open", "closed"].includes(pr.state)) {
+      if (!Number.isSafeInteger(pr.number) || pr.number < 1 ||
+          !["open", "closed"].includes(pr.state) ||
+          pr.merged !== undefined && typeof pr.merged !== "boolean" ||
+          pr.draft !== undefined && typeof pr.draft !== "boolean" ||
+          typeof pr.relation !== "string" || !pr.relation.trim()) {
         errors.push("WAVE_PULL_REQUEST_REF_INVALID:" + wave.id);
+      }
+      if (prNumbers.has(pr.number)) errors.push("WAVE_PULL_REQUEST_DUPLICATE:" + wave.id + ":" + pr.number);
+      prNumbers.add(pr.number);
+      if (pr.merged === true && pr.state !== "closed") {
+        errors.push("WAVE_PULL_REQUEST_MERGED_STATE_INVALID:" + wave.id + ":" + pr.number);
       }
     }
   });
@@ -302,27 +331,105 @@ export function validateWaveRegistry(registry = WAVE_REGISTRY) {
   return { ok: errors.length === 0, errors };
 }
 
-export function evaluateWaveGate(id, { completedWaveIds = [], evidence = [] } = {}) {
+function readDenseStringArray(value, maximum) {
+  if (!Array.isArray(value) || value.length > maximum) return null;
+  try {
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== value.length + 1 || !keys.includes("length") ||
+        keys.some((key) => typeof key !== "string" ||
+          key !== "length" && !/^(?:0|[1-9][0-9]*)$/.test(key))) return null;
+    const result = [];
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable ||
+          typeof descriptor.value !== "string") return null;
+      result.push(descriptor.value);
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function snapshotEvidenceRecord(input) {
+  try {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const keys = Reflect.ownKeys(input);
+    if (keys.length !== 3 || keys.some((key) =>
+      typeof key !== "string" || !["kind", "ref", "verified"].includes(key))) return null;
+    const values = Object.create(null);
+    for (const key of ["kind", "ref", "verified"]) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return null;
+      values[key] = descriptor.value;
+    }
+    if (typeof values.kind !== "string" || !EVIDENCE_KINDS.has(values.kind) ||
+        typeof values.ref !== "string" || !REF.test(values.ref) || values.ref.includes("..") ||
+        typeof values.verified !== "boolean") return null;
+    return Object.freeze(values);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A wave gate requires an injected trusted evidence verifier. The verified field
+ * is only part of the bounded evidence envelope; it is never trusted on its own.
+ * Do not use this helper as the KRATT cryptographic authorization boundary.
+ */
+export function evaluateWaveGate(id, input = {}) {
   const wave = getWaveById(id);
   if (!wave) return { ok: false, eligible: false, reason: "WAVE_NOT_FOUND" };
-  if (!Array.isArray(completedWaveIds) || !Array.isArray(evidence)) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, eligible: false, reason: "WAVE_GATE_INPUT_INVALID" };
+  }
+
+  let completedInput;
+  let evidenceInput;
+  let verifyEvidence;
+  try {
+    const keys = Reflect.ownKeys(input);
+    if (keys.some((key) =>
+      typeof key !== "string" ||
+      !["completedWaveIds", "evidence", "verifyEvidence"].includes(key))) {
+      return { ok: false, eligible: false, reason: "WAVE_GATE_INPUT_INVALID" };
+    }
+    const completedDescriptor = Object.getOwnPropertyDescriptor(input, "completedWaveIds");
+    const evidenceDescriptor = Object.getOwnPropertyDescriptor(input, "evidence");
+    const verifierDescriptor = Object.getOwnPropertyDescriptor(input, "verifyEvidence");
+    if (completedDescriptor && !("value" in completedDescriptor) ||
+        evidenceDescriptor && !("value" in evidenceDescriptor) ||
+        verifierDescriptor && !("value" in verifierDescriptor)) {
+      return { ok: false, eligible: false, reason: "WAVE_GATE_INPUT_INVALID" };
+    }
+    completedInput = completedDescriptor ? completedDescriptor.value : [];
+    evidenceInput = evidenceDescriptor ? evidenceDescriptor.value : [];
+    verifyEvidence = verifierDescriptor ? verifierDescriptor.value : null;
+  } catch {
+    return { ok: false, eligible: false, reason: "WAVE_GATE_INPUT_INVALID" };
+  }
+
+  const completedWaveIds = readDenseStringArray(completedInput, 10);
+  if (!completedWaveIds || !Array.isArray(evidenceInput) || evidenceInput.length > 256 ||
+      verifyEvidence !== null && typeof verifyEvidence !== "function") {
     return { ok: false, eligible: false, reason: "WAVE_GATE_INPUT_INVALID" };
   }
 
   const completed = new Set(completedWaveIds);
-  const verifiedKinds = new Set(
-    evidence
-      .filter((item) =>
-        item &&
-        typeof item === "object" &&
-        item.verified === true &&
-        EVIDENCE_KINDS.has(item.kind) &&
-        typeof item.ref === "string" &&
-        REF.test(item.ref) &&
-        !item.ref.includes("..")
-      )
-      .map((item) => item.kind),
-  );
+  const verifiedKinds = new Set();
+  for (let index = 0; index < evidenceInput.length; index++) {
+    let descriptor;
+    try { descriptor = Object.getOwnPropertyDescriptor(evidenceInput, String(index)); }
+    catch { descriptor = null; }
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) continue;
+    const evidence = snapshotEvidenceRecord(descriptor.value);
+    if (!evidence || evidence.verified !== true || typeof verifyEvidence !== "function") continue;
+    let verified = false;
+    try { verified = verifyEvidence(evidence) === true; } catch { verified = false; }
+    if (verified) verifiedKinds.add(evidence.kind);
+  }
 
   const missingDependencies = wave.dependsOn.filter((dependency) => !completed.has(dependency));
   const missingEvidence = wave.requiredEvidence.filter((kind) => !verifiedKinds.has(kind));
