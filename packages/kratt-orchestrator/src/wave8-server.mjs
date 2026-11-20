@@ -5,6 +5,8 @@ import { loadWave8Config, createTelegramBotApiAdmin,
 import { createPostgresTelegramIngressRateLimiter } from "../../kratt-core/src/postgres-telegram-ingress-rate-limiter.mjs";
 import { createPostgresCompetitiveIntelStore } from "../../kratt-core/src/postgres-competitive-snapshot-store.mjs";
 import { createPostgresRuntimeObservatoryStore } from "../../kratt-core/src/postgres-runtime-observatory-store.mjs";
+import { createRuntimeObservatoryApi } from "./runtime-observatory-api.mjs";
+import { createRuntimeObservatoryHttpAdapter } from "./runtime-observatory-http-adapter.mjs";
 import { createObservedTelegramIngestion } from "./observed-telegram-ingestion.mjs";
 import { createTelegramCompetitiveIngestion } from "../../kratt-core/src/telegram-competitive-ingestion.mjs";
 import { createTelegramCompetitiveWebhookHandler } from "./telegram-competitive-webhook-handler.mjs";
@@ -32,7 +34,12 @@ async function assertSchema(pool){
  if(missing.length)throw new Error("WAVE8_DATABASE_SCHEMA_MISSING:"+missing.join(","));
 }
 
-export async function createWave8StagingServer({env=process.env,PoolClass,fetchImpl=globalThis.fetch}={}){
+export async function createWave8StagingServer({
+ env=process.env,PoolClass,fetchImpl=globalThis.fetch,
+ resolveObservatoryPrincipal,authorizeObservatoryRead,
+}={}){
+ if(authorizeObservatoryRead!==undefined&&typeof authorizeObservatoryRead!=="function")
+  throw new TypeError("OBSERVATORY_READ_AUTHORIZER_INVALID");
  const config=loadWave8Config(env);
  const pool=await createPostgresPoolFromConfig(config,{PoolClass});
  let closed=false;
@@ -42,6 +49,16 @@ export async function createWave8StagingServer({env=process.env,PoolClass,fetchI
   const store=createPostgresCompetitiveIntelStore(pool);
   const observatoryStore=createPostgresRuntimeObservatoryStore(pool);
   if(!(await observatoryStore.checkReady()).ready)throw new Error("WAVE10_OBSERVATORY_NOT_READY");
+  const observatoryApi=createRuntimeObservatoryApi({
+   store:observatoryStore,
+   authorizeRead:async context=>{
+    if(!context.principal||typeof authorizeObservatoryRead!=="function")return false;
+    try{return await authorizeObservatoryRead(context);}catch{return false;}
+   },
+  });
+  const observatoryHttp=createRuntimeObservatoryHttpAdapter({
+   api:observatoryApi,resolvePrincipal:resolveObservatoryPrincipal,
+  });
   const engines=await createWave8Engines({config,fetchImpl});
   const ingestion=createTelegramCompetitiveIngestion({
    webhookSecret:config.telegramWebhookSecret,botId:config.telegramBotId,
@@ -78,6 +95,10 @@ export async function createWave8StagingServer({env=process.env,PoolClass,fetchI
      service:"kratt-prime-staging",
      checks:{postgres:dbReady,telegramApi:telegramReady,webhookConfigured:webhookReady,
       snapshotChain:chain.ok===true,runtimeObservatory:observatoryReady}});
+   }
+   if(url.pathname==="/observatory"||url.pathname.startsWith("/observatory/")){
+    const result=await observatoryHttp.handle({request,method:request.method,url:request.url});
+    return json(response,result?.statusCode??404,result?.body??{status:"NOT_FOUND"});
    }
    if(request.method==="POST"&&url.pathname===config.webhookPath)
     return handler(request,response);
