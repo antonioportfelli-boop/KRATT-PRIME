@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createSteelFactoryProtocolAdapter } from "../src/steel-factory-protocol-adapter.mjs";
 import { validateTaskEnvelope } from "../src/contracts.mjs";
 const at="2026-11-18T16:00:00.000Z",sha="0123456789012345678901234567890123456789";
@@ -44,4 +45,92 @@ test("rejects impossible calendar timestamps in STEEL action receipts",async()=>
  const invalid={...receipt,timestamp:"2026-02-30T16:00:00.000Z"};
  const result=await adapter.verifyReceipt({envelope,receipt:invalid,expectedAction:"repo:write",expectedScope:envelope.scope});
  assert.equal(result.reason,"STEEL_PROTOCOL_INPUT_INVALID");
+});
+
+
+test("rejects invisible and bidirectional override characters in task objectives", () => {
+ const adapter=createSteelFactoryProtocolAdapter({
+  verifyActionReceipt:async()=>true,evidenceClaimMap:{tests_passed:"TESTS_PASSED"},
+ });
+ for(const objective of ["update\u200b files","update\u202e files","update\ufeff files"]){
+  const hostile={...envelope,objective};
+  const result=adapter.adaptTask({envelope:hostile,action:"repo:write",scope:envelope.scope,actor:"FORGE-001",createdAt:at});
+  assert.equal(result.reason,"STEEL_TASK_ENVELOPE_INVALID");
+ }
+});
+
+test("nested receipt evidence accessors are rejected without invoking getters",async()=>{
+ let getterCalls=0;
+ const evidence={};
+ Object.defineProperty(evidence,"claim",{
+  enumerable:true,
+  get(){getterCalls++;return "forged";}
+ });
+ const hostile={...receipt,evidence};
+ const adapter=createSteelFactoryProtocolAdapter({
+  verifyActionReceipt:async()=>true,evidenceClaimMap:{tests_passed:"TESTS_PASSED"},
+ });
+ const result=await adapter.verifyReceipt({
+  envelope,receipt:hostile,expectedAction:"repo:write",expectedScope:envelope.scope,
+ });
+ assert.equal(result.reason,"STEEL_PROTOCOL_INPUT_INVALID");
+ assert.equal(getterCalls,0);
+});
+
+test("scope array accessors and holes are rejected before reading their values",()=>{
+ let getterCalls=0;
+ const scope=[];
+ Object.defineProperty(scope,"0",{
+  configurable:true,enumerable:true,
+  get(){getterCalls++;return "packages/core/a.mjs";}
+ });
+ scope.length=1;
+ const adapter=createSteelFactoryProtocolAdapter({
+  verifyActionReceipt:async()=>true,evidenceClaimMap:{tests_passed:"TESTS_PASSED"},
+ });
+ const result=adapter.adaptTask({
+  envelope,action:"repo:write",scope,actor:"FORGE-001",createdAt:at,
+ });
+ assert.equal(result.ok,false);
+ assert.equal(getterCalls,0);
+});
+
+test("expected receipt scope is snapshotted and accessor-backed scope is rejected",async()=>{
+ let getterCalls=0;
+ const expectedScope=[];
+ Object.defineProperty(expectedScope,"0",{
+  configurable:true,enumerable:true,
+  get(){getterCalls++;return "packages/core/a.mjs";}
+ });
+ expectedScope.length=1;
+ const adapter=createSteelFactoryProtocolAdapter({
+  verifyActionReceipt:async()=>true,evidenceClaimMap:{tests_passed:"TESTS_PASSED"},
+ });
+ const result=await adapter.verifyReceipt({
+  envelope,receipt,expectedAction:"repo:write",expectedScope,
+ });
+ assert.equal(result.reason,"STEEL_PROTOCOL_INPUT_INVALID");
+ assert.equal(getterCalls,0);
+});
+
+
+test("STEEL Factory Protocol v1 source snapshot pins all four upstream contract files", () => {
+ const source = JSON.parse(readFileSync(
+  new URL("../contracts/steel-factory-protocol-v1.sources.json", import.meta.url),
+  "utf8",
+ ));
+ assert.equal(source.protocolVersion, 1);
+ assert.equal(
+  source.upstream.repository,
+  "3XTRINITY-CORPORATION-AND-SOFTWARE/STEEL-3XTRINITY-CORPORATION-OFFICIAL-APP-",
+ );
+ assert.deepEqual(source.upstream.sources.map((item) => item.path), [
+  "factory/protocol/types.ts",
+  "factory/protocol/spec.ts",
+  "factory/protocol/protocol.schema.json",
+  "factory/tests/protocol.test.ts",
+ ]);
+ for (const item of source.upstream.sources) {
+  assert.match(item.blobSha, /^[0-9a-f]{40}$/);
+ }
 });

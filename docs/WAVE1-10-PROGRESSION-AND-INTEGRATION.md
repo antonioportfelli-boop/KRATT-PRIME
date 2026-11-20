@@ -137,3 +137,14 @@ The isolated branch workflow \`.github/workflows/wave-progression.yml\` runs on 
 5. the existing application production build.
 
 The workflow is branch-scoped and read-only. Its presence does not change the repository's default branch or release settings. A green result must be confirmed from the actual Actions run on the final branch head; the existence of the YAML file is not evidence that the workflow passed.
+
+
+## 10. Snapshot update — 2026-11-20
+
+The alignment PR #40 has since been merged into \`feature/wave10-observatory-hardening-remediation-v1\`, producing base head \`bdda0df167d529ddbb583afbbfde39482ab91f5d\`. PR #39 has separately been merged into \`feature/phase10-runtime-observatory-v1\`, producing head \`de5e3f084464f8051f34544b5314bb22bc2a235a\`. PR #38 remains open and unmerged. These are divergent candidate lines; do not assume that the Phase 10 candidate automatically includes the alignment PR or vice versa. The latest inspected main SHA remains \`ef3422809bbc54381a9ca3a15904727074ca0b16\`.
+
+This continuation adds a real HTTP mount for the protected read API in the Wave 8 staging server. The host must inject both \`resolveObservatoryPrincipal\` and \`authorizeObservatoryRead\`. Both are server-side callbacks. If either is absent, requests remain denied. The adapter does not read identity or roles from caller-controlled headers.
+
+The STEEL adapter now snapshots protocol input data before validation and rejects nested accessors, sparse arrays, cycles, unsafe keys, invisible/bidi objective characters and oversized JSON. Upstream STEEL Protocol v1 blob SHAs are pinned in \`packages/kratt-core/contracts/steel-factory-protocol-v1.sources.json\`.
+
+See \`docs/WAVE1-10-CRITICAL-GAPS-AND-DELIVERY.md\` for the refreshed PR lineage, ranked critical work and the operator-only acceptance gates.

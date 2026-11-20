@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/wave1-10-progression-alignment-2026-11-20
+      - feature/wave1-10-observatory-http-integration-2026-11-20
 
 permissions:
   contents: read

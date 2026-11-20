@@ -100,8 +100,13 @@ test("Wave 8 staging server starts only after live-adapter preflight and exposes
  try{
   const live=await fetch("http://127.0.0.1:"+port+"/health/live");
   const ready=await fetch("http://127.0.0.1:"+port+"/health/ready");
+  const observatoryDenied=await fetch("http://127.0.0.1:"+port+"/observatory/integrity");
+  const observatoryWrite=await fetch("http://127.0.0.1:"+port+"/observatory/operations",{method:"POST"});
   assert.equal(live.status,200);
   assert.equal(ready.status,200);
+  assert.equal(observatoryDenied.status,403,"the mounted read API must deny by default without a server principal");
+  assert.equal((await observatoryDenied.json()).reason,"OBSERVATORY_READ_NOT_AUTHORIZED");
+  assert.equal(observatoryWrite.status,405,"the mounted Observatory surface must never accept writes");
   const body=await ready.json();
   assert.equal(body.status,"READY");
   assert.equal(body.checks.postgres,true);

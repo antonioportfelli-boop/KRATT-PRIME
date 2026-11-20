@@ -1,0 +1,40 @@
+{
+  "protocolVersion": 1,
+  "observedOn": "2026-11-20",
+  "upstream": {
+    "repository": "3XTRINITY-CORPORATION-AND-SOFTWARE/STEEL-3XTRINITY-CORPORATION-OFFICIAL-APP-",
+    "branch": "main",
+    "sources": [
+      {
+        "path": "factory/protocol/types.ts",
+        "blobSha": "f4bac7b6273867b488b3f6044b14bacc7faf0716"
+      },
+      {
+        "path": "factory/protocol/spec.ts",
+        "blobSha": "b17f0964420b2a7509ccf3689c0f3f8bc0ae5006"
+      },
+      {
+        "path": "factory/protocol/protocol.schema.json",
+        "blobSha": "3525f956e7a06eaf76413a96c8d9a7d184d41c3a"
+      },
+      {
+        "path": "factory/tests/protocol.test.ts",
+        "blobSha": "d9eaa683a490634619ac37e9d2f73f3c2d3f807a"
+      }
+    ]
+  },
+  "consumer": {
+    "repository": "antonioportfelli-boop/KRATT-PRIME",
+    "adapter": "packages/kratt-core/src/steel-factory-protocol-adapter.mjs",
+    "tests": "packages/kratt-core/test/steel-factory-protocol-adapter.test.mjs"
+  },
+  "compatibilityControls": [
+    "closed TaskEnvelope and ActionReceipt field sets",
+    "protocol major version 1",
+    "safe JSON snapshot before field validation",
+    "objective invisible/bidi character rejection",
+    "branch ref component validation",
+    "exact repository/base/action/scope receipt binding",
+    "independent ActionReceipt verifier required before VERIFIED evidence is accepted"
+  ]
+}
