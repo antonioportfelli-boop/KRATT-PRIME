@@ -60,6 +60,7 @@ export function createRuntimeObservatoryHttpAdapter({ api, resolvePrincipal } = 
   }
 
   async function handle({ request, method = request?.method, url = request?.url } = {}) {
+    const requestMethod = method ?? "GET";
     let parsed;
     try {
       parsed = new URL(url ?? "/", "http://localhost");
@@ -71,7 +72,7 @@ export function createRuntimeObservatoryHttpAdapter({ api, resolvePrincipal } = 
     if (path !== "/observatory" && !path.startsWith("/observatory/")) return null;
 
     let principal = null;
-    if (method === "GET" && typeof resolvePrincipal === "function") {
+    if (requestMethod === "GET" && typeof resolvePrincipal === "function") {
       try {
         principal = snapshotPrincipal(await resolvePrincipal(request));
       } catch {
@@ -79,8 +80,12 @@ export function createRuntimeObservatoryHttpAdapter({ api, resolvePrincipal } = 
       }
     }
 
+    if (requestMethod === "GET" && !principal) {
+      return { statusCode: 403, body: { status: "DENIED", reason: "OBSERVATORY_READ_NOT_AUTHORIZED" } };
+    }
+
     return api.handle({
-      method,
+      method: requestMethod,
       path,
       principal,
       query: queryObject(parsed.searchParams),
