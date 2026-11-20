@@ -150,3 +150,29 @@ test("operation history omits internal hash-chain material at the HTTP boundary"
   assert.equal(result.body.data[0].event.status, "queued");
   assert.equal(Object.hasOwn(result.body.data[0], "hash"), false);
 });
+
+
+test("nested principal claim arrays are copied only from own data properties", async () => {
+  let getterCalls = 0;
+  const roles = [];
+  Object.defineProperty(roles, "0", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalls++;
+      return "observatory:read";
+    },
+  });
+  roles.length = 1;
+  const adapter = createRuntimeObservatoryHttpAdapter({
+    api: createApi(async () => true),
+    resolvePrincipal: () => ({ id: "operator-1", roles }),
+  });
+  const result = await adapter.handle({
+    method: "GET",
+    url: "/observatory/modules",
+    request: {},
+  });
+  assert.equal(result.statusCode, 403);
+  assert.equal(getterCalls, 0);
+});
