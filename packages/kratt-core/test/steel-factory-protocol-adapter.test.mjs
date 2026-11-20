@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createSteelFactoryProtocolAdapter } from "../src/steel-factory-protocol-adapter.mjs";
 import { validateTaskEnvelope } from "../src/contracts.mjs";
 const at="2026-11-18T16:00:00.000Z",sha="0123456789012345678901234567890123456789";
@@ -110,4 +111,26 @@ test("expected receipt scope is snapshotted and accessor-backed scope is rejecte
  });
  assert.equal(result.reason,"STEEL_PROTOCOL_INPUT_INVALID");
  assert.equal(getterCalls,0);
+});
+
+
+test("STEEL Factory Protocol v1 source snapshot pins all four upstream contract files", () => {
+ const source = JSON.parse(readFileSync(
+  new URL("../contracts/steel-factory-protocol-v1.sources.json", import.meta.url),
+  "utf8",
+ ));
+ assert.equal(source.protocolVersion, 1);
+ assert.equal(
+  source.upstream.repository,
+  "3XTRINITY-CORPORATION-AND-SOFTWARE/STEEL-3XTRINITY-CORPORATION-OFFICIAL-APP-",
+ );
+ assert.deepEqual(source.upstream.sources.map((item) => item.path), [
+  "factory/protocol/types.ts",
+  "factory/protocol/spec.ts",
+  "factory/protocol/protocol.schema.json",
+  "factory/tests/protocol.test.ts",
+ ]);
+ for (const item of source.upstream.sources) {
+  assert.match(item.blobSha, /^[0-9a-f]{40}$/);
+ }
 });
