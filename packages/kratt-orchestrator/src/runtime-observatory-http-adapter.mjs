@@ -1,16 +1,35 @@
-function isPlainRecord(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+function snapshotPrincipal(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (prototype !== Object.prototype && prototype !== null) return null;
   const keys = Reflect.ownKeys(value);
-  if (keys.length === 0 || keys.some((key) => typeof key !== "string")) return false;
+  if (keys.length === 0 || keys.length > 32 || keys.some((key) => typeof key !== "string")) return null;
+  const snapshot = Object.create(null);
   for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return false;
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return null;
+    const field = descriptor.value;
+    if (field === null || typeof field === "string" && field.length <= 4096 ||
+        typeof field === "boolean" || typeof field === "number" && Number.isFinite(field)) {
+      snapshot[key] = field;
+      continue;
+    }
+    if (!Array.isArray(field) || field.length > 256) return null;
+    const arrayKeys = Reflect.ownKeys(field);
+    if (arrayKeys.length !== field.length + 1 || !arrayKeys.includes("length") ||
+        arrayKeys.some((arrayKey) => typeof arrayKey !== "string" ||
+          arrayKey !== "length" && !/^(?:0|[1-9][0-9]*)$/.test(arrayKey))) return null;
+    const copied = [];
+    for (let index = 0; index < field.length; index++) {
+      const item = Object.getOwnPropertyDescriptor(field, String(index));
+      if (!item || !("value" in item) || !item.enumerable ||
+          typeof item.value !== "string" || item.value.length > 256) return null;
+      copied.push(item.value);
+    }
+    snapshot[key] = Object.freeze(copied);
   }
-  return true;
+  return Object.freeze(snapshot);
 }
-
 function queryObject(searchParams) {
   const query = Object.create(null);
   for (const [key, value] of searchParams) {
@@ -54,15 +73,7 @@ export function createRuntimeObservatoryHttpAdapter({ api, resolvePrincipal } = 
     let principal = null;
     if (method === "GET" && typeof resolvePrincipal === "function") {
       try {
-        const candidate = await resolvePrincipal(request);
-        if (isPlainRecord(candidate)) {
-          const snapshot = Object.create(null);
-          for (const key of Reflect.ownKeys(candidate)) {
-            const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
-            snapshot[key] = descriptor.value;
-          }
-          principal = Object.freeze(snapshot);
-        }
+        principal = snapshotPrincipal(await resolvePrincipal(request));
       } catch {
         principal = null;
       }
