@@ -1,0 +1,4 @@
+import { loadWave8Config,createPostgresPoolFromConfig } from "../packages/kratt-orchestrator/src/wave8-live-connectors.mjs";
+import { createPostgresRuntimeObservatoryStore } from "../packages/kratt-core/src/postgres-runtime-observatory-store.mjs";
+let pool;
+try{const config=loadWave8Config();pool=await createPostgresPoolFromConfig(config);const integrity=await createPostgresRuntimeObservatoryStore(pool).verifyChain();if(integrity.ok!==true)throw new Error("OBSERVATORY_INTEGRITY_NOT_VERIFIED");process.stdout.write(JSON.stringify({status:"VERIFIED",event_count:integrity.count,operation_count:integrity.operations})+"\\n");}catch(error){process.stderr.write(JSON.stringify({status:"FAILED",reason:String(error?.message??"OBSERVATORY_VERIFY_FAILED").split(":")[0]})+"\\n");process.exitCode=1;}finally{if(pool)try{await pool.end();}catch{}}
