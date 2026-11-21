@@ -3,11 +3,14 @@ name: KRATT PRIME CI
 on:
   push:
     branches:
+      - integration/source-reconciliation-2026-10
+      - feature/wave10-observatory-hardening-remediation-v1
       - main
       - feature/**
   pull_request:
     branches:
       - main
+      - feature/phase10-runtime-observatory-v1
 
 permissions:
   contents: read

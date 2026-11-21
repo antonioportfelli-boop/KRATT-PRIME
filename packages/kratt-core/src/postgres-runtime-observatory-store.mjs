@@ -170,7 +170,7 @@ export function createPostgresRuntimeObservatoryStore(pool){
     "SELECT sequence,event_id,operation_id,event_type,occurred_at,record_json,previous_hash,hash FROM kratt_runtime_operation_events ORDER BY sequence");
    const head=await client.query("SELECT sequence,hash FROM kratt_runtime_observatory_head WHERE singleton=TRUE");
    const projections=await client.query(
-    "SELECT operation_id,status,last_event_id,last_sequence FROM kratt_runtime_operations");
+    "SELECT * FROM kratt_runtime_operations");
    await client.query("COMMIT");opened=false;
    let previousHash=ZERO,expected=1;
    const latest=new Map();
@@ -198,11 +198,14 @@ export function createPostgresRuntimeObservatoryStore(pool){
     return{ok:false,count:events.rows?.length??0,broken_sequence:expected,reason:"HEAD_MISMATCH"};
    if((projections.rows??[]).length!==latest.size)
     return{ok:false,count:events.rows.length,broken_sequence:expected,reason:"PROJECTION_COUNT_MISMATCH"};
+   const projectionFields=["operation_id","correlation_id","module_id","adapter_id","capability",
+    "capability_state","status","queued_at","started_at","finished_at","duration_ms","input_ref",
+    "output_ref","evidence_refs","environment","runtime_version","last_occurred_at","last_event_id","last_sequence"];
    for(const row of projections.rows??[]){
-    const projection=latest.get(row.operation_id);
-    if(!projection||projection.status!==row.status||projection.last_event_id!==row.last_event_id||
-     projection.last_sequence!==Number(row.last_sequence))
-     return{ok:false,count:events.rows.length,broken_sequence:projection?.last_sequence??expected,reason:"PROJECTION_MISMATCH"};
+    const expectedProjection=latest.get(row.operation_id),actualProjection=fromRow(row);
+    if(!expectedProjection||!actualProjection||projectionFields.some(key=>
+     stableOperationJson(expectedProjection[key])!==stableOperationJson(actualProjection[key])))
+     return{ok:false,count:events.rows.length,broken_sequence:expectedProjection?.last_sequence??expected,reason:"PROJECTION_MISMATCH"};
    }
    return{ok:true,count:events.rows.length,operations:latest.size,head_hash:previousHash};
   }catch{

@@ -70,11 +70,17 @@ export function createOperationEvent(input){
   fail("OBSERVATORY_RUNTIME_VERSION_INVALID");
  if(!Array.isArray(input.evidence_refs)||input.evidence_refs.length>32)fail("OBSERVATORY_EVIDENCE_REFS_INVALID");
  const evidence_refs=input.evidence_refs.map(item=>{
-  if(!plain(item)||Reflect.ownKeys(item).length!==3||
-   !["kind","ref","digest"].every(key=>Object.hasOwn(item,key)))fail("OBSERVATORY_EVIDENCE_REF_INVALID");
-  if(!EVIDENCE_KINDS.includes(item.kind)||!REF.test(item.ref??"")||item.ref.includes("..")||item.ref.includes("://")||
-   !(item.digest===null||DIGEST.test(item.digest??"")))fail("OBSERVATORY_EVIDENCE_REF_INVALID");
-  return Object.freeze({kind:item.kind,ref:item.ref,digest:item.digest});
+  if(!plain(item))fail("OBSERVATORY_EVIDENCE_REF_INVALID");
+  const itemKeys=Reflect.ownKeys(item);
+  if(itemKeys.length!==3||itemKeys.some(key=>typeof key!=="string"||!["kind","ref","digest"].includes(key)))
+   fail("OBSERVATORY_EVIDENCE_REF_INVALID");
+  const descriptors=Object.fromEntries(itemKeys.map(key=>[key,Object.getOwnPropertyDescriptor(item,key)]));
+  if(itemKeys.some(key=>!descriptors[key]||!("value"in descriptors[key])||!descriptors[key].enumerable))
+   fail("OBSERVATORY_EVIDENCE_ACCESSOR_REJECTED");
+  const kind=descriptors.kind.value,reference=descriptors.ref.value,digest=descriptors.digest.value;
+  if(!EVIDENCE_KINDS.includes(kind)||!REF.test(reference??"")||reference.includes("..")||reference.includes("://")||
+   !(digest===null||DIGEST.test(digest??"")))fail("OBSERVATORY_EVIDENCE_REF_INVALID");
+  return Object.freeze({kind,ref:reference,digest});
  });
  if(input.status==="queued"){
   if(input.started_at!==null||input.finished_at!==null||input.duration_ms!==null)

@@ -59,8 +59,8 @@ class FakePool{
   if(sql.startsWith("SELECT sequence,event_id,operation_id,event_type,occurred_at,record_json,previous_hash,hash FROM kratt_runtime_operation_events")){
    return{rowCount:this.events.length,rows:[...this.events].sort((a,b)=>a.sequence-b.sequence)};
   }
-  if(sql.startsWith("SELECT operation_id,status,last_event_id,last_sequence FROM kratt_runtime_operations")){
-   const rows=[...this.operations.values()].map(x=>({operation_id:x.operation_id,status:x.status,last_event_id:x.last_event_id,last_sequence:x.last_sequence}));
+  if(sql.startsWith("SELECT * FROM kratt_runtime_operations")){
+   const rows=[...this.operations.values()];
    return{rowCount:rows.length,rows};
   }
   if(sql.startsWith("SELECT * FROM kratt_runtime_operations WHERE operation_id=")){
@@ -128,4 +128,12 @@ test("integrity verification detects a changed event hash",async()=>{
  assert.equal(result.reason,"EVENT_CHAIN_INVALID");
 });
 
+test("integrity verification detects projection tampering beyond the status pointer",async()=>{
+ const pool=new FakePool(),store=createPostgresRuntimeObservatoryStore(pool);
+ await store.append(event("queued"));await store.append(event("running"));await store.append(event("succeeded"));
+ pool.operations.get("operation-01").input_ref="input:tampered";
+ const result=await store.verifyChain();
+ assert.equal(result.ok,false);
+ assert.equal(result.reason,"PROJECTION_MISMATCH");
+});
 test("listEvents applies a descending sequence cursor",async()=>{const pool=new FakePool(),store=createPostgresRuntimeObservatoryStore(pool);await store.append(event("queued"));await store.append(event("running"));const rows=await store.listEvents("operation-01",{limit:1,beforeSequence:2});assert.equal(rows.length,1);assert.equal(rows[0].event.status,"queued");});

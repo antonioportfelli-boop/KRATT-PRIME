@@ -5,6 +5,7 @@ import { loadWave8Config, createTelegramBotApiAdmin,
 import { createPostgresTelegramIngressRateLimiter } from "../../kratt-core/src/postgres-telegram-ingress-rate-limiter.mjs";
 import { createPostgresCompetitiveIntelStore } from "../../kratt-core/src/postgres-competitive-snapshot-store.mjs";
 import { createPostgresRuntimeObservatoryStore } from "../../kratt-core/src/postgres-runtime-observatory-store.mjs";
+import { createObservedTelegramIngestion } from "./observed-telegram-ingestion.mjs";
 import { createTelegramCompetitiveIngestion } from "../../kratt-core/src/telegram-competitive-ingestion.mjs";
 import { createTelegramCompetitiveWebhookHandler } from "./telegram-competitive-webhook-handler.mjs";
 
@@ -58,7 +59,8 @@ export async function createWave8StagingServer({env=process.env,PoolClass,fetchI
   if(String(bot.id)!==config.telegramBotId)throw new Error("TELEGRAM_BOT_ID_MISMATCH");
   let webhookInfo=await telegram.getWebhookInfo();
   let dbReady=true,telegramReady=true;
-  const handler=createTelegramCompetitiveWebhookHandler({ingestion,allowRequest:rateLimiter,maxBodyBytes:64*1024});
+  const observedIngestion=createObservedTelegramIngestion({ingestion,store:observatoryStore,environment:"staging"});
+  const handler=createTelegramCompetitiveWebhookHandler({ingestion:observedIngestion,allowRequest:rateLimiter,maxBodyBytes:64*1024});
   const server=createServer(async(request,response)=>{
    const url=new URL(request.url??"/","http://localhost");
    if(request.method==="GET"&&url.pathname==="/health/live")

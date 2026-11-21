@@ -1,0 +1,30 @@
+name: Wave progression alignment
+
+on:
+  push:
+    branches:
+      - feature/wave1-10-progression-alignment-2026-11-20
+
+permissions:
+  contents: read
+
+jobs:
+  progression-and-app:
+    name: Progression contracts, typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Wave registry and evidence gates
+        run: node --test packages/kratt-core/test/wave-progression.test.mjs
+      - name: Complete contract suite
+        run: npm test
+      - name: Application typecheck
+        run: npm run typecheck
+      - name: Application production build
+        run: npm run build

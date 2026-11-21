@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/wave10-observatory-hardening-remediation-v1]
   pull_request:
-    branches: [main]
+    branches: [main, feature/phase10-runtime-observatory-v1]
 
 jobs:
   vite:

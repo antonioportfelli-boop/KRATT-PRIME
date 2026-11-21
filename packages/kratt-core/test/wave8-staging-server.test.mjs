@@ -25,11 +25,20 @@ async function freePort(){
  return port;
 }
 class FakePool{
- constructor(config){this.config=config;this.ended=false;this.rateLimitCalls=[];}
+ constructor(config){
+  this.config=config;this.ended=false;this.rateLimitCalls=[];
+  this.observatoryHead={sequence:0,hash:"0".repeat(64)};
+  this.observatoryEvents=[];this.observatoryOperations=new Map();
+ }
  async query(sql){
   if(sql.startsWith("SELECT to_regclass"))
    return{rows:[{inbox:"kratt_telegram_competitive_inbox",snapshots:"kratt_competitor_snapshots",
     events:"kratt_competitor_snapshot_events",head:"kratt_competitor_snapshot_head",
+    rate_limits:"kratt_telegram_ingress_rate_limits",
+    runtime_events:"kratt_runtime_operation_events",runtime_operations:"kratt_runtime_operations",
+    runtime_head:"kratt_runtime_observatory_head"}],rowCount:1};
+  if(sql.startsWith("SELECT sequence,hash FROM kratt_runtime_observatory_head"))
+   return{rows:[{...this.observatoryHead}],rowCount:1};
     rate_limits:"kratt_telegram_ingress_rate_limits"}],rowCount:1};
   if(sql.startsWith("INSERT INTO kratt_telegram_ingress_rate_limits")){
    this.rateLimitCalls.push(sql);
@@ -40,8 +49,37 @@ class FakePool{
   throw new Error("FAKE_POOL_QUERY_UNSUPPORTED");
  }
  async connect(){
-  return {query:async sql=>{
+  return {query:async(sql,values=[])=>{
    if(sql.startsWith("BEGIN")||sql==="COMMIT"||sql==="ROLLBACK")return{rows:[],rowCount:0};
+   if(sql.startsWith("SELECT sequence,hash FROM kratt_runtime_observatory_head"))
+    return{rows:[{...this.observatoryHead}],rowCount:1};
+   if(sql.startsWith("SELECT sequence,hash,record_json FROM kratt_runtime_operation_events")){
+    const row=this.observatoryEvents.find(item=>item.event_id===values[0]);
+    return{rows:row?[row]:[],rowCount:row?1:0};
+   }
+   if(sql.startsWith("SELECT * FROM kratt_runtime_operations WHERE operation_id=")){
+    const row=this.observatoryOperations.get(values[0]);
+    return{rows:row?[row]:[],rowCount:row?1:0};
+   }
+   if(sql.startsWith("INSERT INTO kratt_runtime_operation_events")){
+    const [sequence,event_id,operation_id,event_type,occurred_at,record_json,previous_hash,hash]=values;
+    this.observatoryEvents.push({sequence,event_id,operation_id,event_type,occurred_at,
+     record_json:JSON.parse(record_json),previous_hash,hash});
+    return{rows:[],rowCount:1};
+   }
+   if(sql.startsWith("INSERT INTO kratt_runtime_operations")){
+    const [operation_id,correlation_id,module_id,adapter_id,capability,capability_state,status,queued_at,
+     started_at,finished_at,duration_ms,input_ref,output_ref,evidence_refs,environment,runtime_version,
+     last_occurred_at,last_event_id,last_sequence]=values;
+    this.observatoryOperations.set(operation_id,{operation_id,correlation_id,module_id,adapter_id,capability,
+     capability_state,status,queued_at,started_at,finished_at,duration_ms,input_ref,output_ref,
+     evidence_refs:JSON.parse(evidence_refs),environment,runtime_version,last_occurred_at,last_event_id,last_sequence});
+    return{rows:[],rowCount:1};
+   }
+   if(sql.startsWith("UPDATE kratt_runtime_observatory_head")){
+    this.observatoryHead={sequence:values[0],hash:values[1]};
+    return{rows:[],rowCount:1};
+   }
    if(sql.startsWith("SELECT sequence,event_id,snapshot_id,record_json"))return{rows:[],rowCount:0};
    if(sql.startsWith("SELECT sequence,hash FROM kratt_competitor_snapshot_head"))return{rows:[{sequence:0,hash:"0".repeat(64)}],rowCount:1};
    throw new Error("FAKE_POOL_CLIENT_QUERY_UNSUPPORTED");
@@ -80,6 +118,8 @@ test("Wave 8 staging server starts only after live-adapter preflight and exposes
   });
   assert.ok(webhook.status<500);
   assert.equal(runtime.pool.rateLimitCalls.length,1,"live webhook must use the shared PostgreSQL limiter");
+  assert.deepEqual(runtime.pool.observatoryEvents.map(event=>event.record_json.status),["queued","running","succeeded"],
+   "the real webhook composition must persist its operation lifecycle");
   assert.equal(urls.length,3); // getMe at startup, then getWebhookInfo at startup and readiness.
   const missing=await fetch("http://127.0.0.1:"+port+"/not-found");
   assert.equal(missing.status,404);

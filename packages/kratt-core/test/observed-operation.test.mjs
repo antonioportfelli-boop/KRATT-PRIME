@@ -39,6 +39,13 @@ test("failed and cancelled operations are recorded without serializing raw error
  assert.equal(events.at(-1).status,"cancelled");
  assert.doesNotMatch(JSON.stringify(events),/secret token/);
 });
+test("an identical idempotent append is accepted as durable evidence",async()=>{
+ const events=[];
+ const runner=createObservedOperationRunner({store:{append:async event=>{events.push(event);return{ok:true,duplicate:true};}}});
+ const result=await runner.run({...base,execute:async()=>42});
+ assert.equal(result.status,"COMPLETED");
+ assert.deepEqual(events.map(event=>event.status),["queued","running","succeeded"]);
+});
 test("an executed operation with an unrecordable terminal event is never reported as completed",async()=>{
  let calls=0;
  const runner=createObservedOperationRunner({store:{append:async()=>({ok:++calls<3})}});

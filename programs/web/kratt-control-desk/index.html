@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0f14" />
+    <meta name="description" content="KRATT PRIME Wave 1–10 progression inventory and protected Runtime Observatory read view." />
+    <title>KRATT PRIME · Wave Control Desk</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to workspace</a>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">K</span>
+          <div>
+            <p class="eyebrow">3XTRINITY · CONTROL PLANE</p>
+            <h1>KRATT PRIME <span>/ Wave Control Desk</span></h1>
+          </div>
+        </div>
+        <div class="topbar-meta">
+          <span class="environment-chip">LOCAL INVENTORY</span>
+          <span class="api-pill" id="api-status" data-state="unbound">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="api-status-label">API UNBOUND</span>
+          </span>
+        </div>
+      </header>
+
+      <main id="main">
+        <section class="intro-grid" aria-labelledby="intro-title">
+          <div class="intro-copy">
+            <p class="eyebrow">PROGRESSION · 01—10</p>
+            <h2 id="intro-title">Build in sequence.<br /><span>Verify every boundary.</span></h2>
+            <p class="intro-text">
+              A governed view of the ten-wave roadmap. Complexity rises one layer at a time;
+              a branch or a polished screen is not proof that a release gate has passed.
+            </p>
+          </div>
+          <div class="readout-card">
+            <div class="readout-heading">
+              <span class="eyebrow">RELEASE POSTURE</span>
+              <span class="readout-state">DRAFT / REVIEW</span>
+            </div>
+            <div class="readout-main">10 <span>progressive layers</span></div>
+            <div class="readout-foot">
+              <span>MAIN PROTECTED</span>
+              <span>PRODUCTION DISABLED</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="summary-strip" aria-label="Wave inventory summary">
+          <div class="summary-cell">
+            <span class="summary-label">WAVES</span>
+            <strong id="wave-count">10</strong>
+            <span class="summary-note">ordered levels</span>
+          </div>
+          <div class="summary-cell">
+            <span class="summary-label">HIGHEST COMPLEXITY</span>
+            <strong>10/10</strong>
+            <span class="summary-note">observability</span>
+          </div>
+          <div class="summary-cell">
+            <span class="summary-label">RUNTIME API</span>
+            <strong id="operation-count">—</strong>
+            <span class="summary-note">operations read</span>
+          </div>
+          <div class="summary-cell">
+            <span class="summary-label">MODULES</span>
+            <strong id="module-count">—</strong>
+            <span class="summary-note">protected summary</span>
+          </div>
+        </section>
+
+        <section class="workspace-section" aria-labelledby="waves-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">ROADMAP REGISTER</p>
+              <h2 id="waves-heading">Wave sequence</h2>
+            </div>
+            <p class="section-note">Select a wave to inspect dependencies, evidence and branch lineage.</p>
+          </div>
+          <div class="wave-layout">
+            <div class="wave-grid" id="wave-grid" aria-label="Wave selection"></div>
+            <aside class="detail-panel" aria-live="polite" aria-labelledby="detail-title">
+              <div class="panel-topline">
+                <span class="eyebrow" id="detail-kicker">WAVE 01 / FOUNDATION</span>
+                <span class="complexity-mark" id="detail-complexity">LEVEL 1</span>
+              </div>
+              <h3 id="detail-title">Core contracts and agent foundation</h3>
+              <p class="detail-summary" id="detail-summary"></p>
+              <div class="detail-block">
+                <h4>Capabilities</h4>
+                <div class="tag-list" id="detail-capabilities"></div>
+              </div>
+              <div class="detail-block">
+                <h4>Dependencies</h4>
+                <div class="tag-list" id="detail-dependencies"></div>
+              </div>
+              <div class="detail-block">
+                <h4>Required evidence</h4>
+                <ul class="evidence-list" id="detail-evidence"></ul>
+              </div>
+              <div class="detail-block">
+                <h4>Branch lineage</h4>
+                <ul class="branch-list" id="detail-branches"></ul>
+              </div>
+              <p class="lineage-note" id="detail-lineage-note"></p>
+            </aside>
+          </div>
+        </section>
+
+        <section class="runtime-section" aria-labelledby="runtime-heading">
+          <div class="section-heading runtime-heading">
+            <div>
+              <p class="eyebrow">PROTECTED READ SURFACE</p>
+              <h2 id="runtime-heading">Runtime Observatory</h2>
+            </div>
+            <button class="refresh-button" id="refresh-runtime" type="button">
+              <span aria-hidden="true">↻</span> Refresh protected API
+            </button>
+          </div>
+          <p class="runtime-explainer">
+            This panel calls same-origin <code>GET</code> endpoints only. The host must provide
+            the server-side Observatory authorizer; this page does not bypass a denial or create
+            operation events.
+          </p>
+          <div class="runtime-state" id="runtime-message" role="status">
+            <span class="state-indicator" aria-hidden="true"></span>
+            <div>
+              <strong>Not connected</strong>
+              <p>Runtime data is unbound until a protected Observatory API is mounted on this origin.</p>
+            </div>
+          </div>
+          <div class="operation-panel">
+            <div class="operation-heading">
+              <h3>Recent operations</h3>
+              <span class="eyebrow">READ ONLY · MAX 20</span>
+            </div>
+            <div class="operation-list" id="operation-list">
+              <p class="empty-state">No runtime operations loaded.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>KRATT PRIME · WAVE CONTROL DESK</span>
+        <span>READ-ONLY PROTOTYPE · NO DEPLOYMENT OR EXTERNAL WRITES</span>
+      </footer>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

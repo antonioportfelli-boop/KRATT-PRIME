@@ -1,7 +1,8 @@
 # Phase 10 — Runtime Observatory v1
 
 **Repository:** `antonioportfelli-boop/KRATT-PRIME`  
-**Branch:** `feature/phase10-runtime-observatory-v1`  
+**Candidate branch:** `feature/phase10-runtime-observatory-v1`  
+**Hardening branch:** `feature/wave10-observatory-hardening-remediation-v1`  
 **Status:** implementation candidate; staging-only, not deployed.
 
 ## Purpose
@@ -26,6 +27,7 @@ The Observatory is a control-plane capability. AURA remains a separate visualize
    - On return/throw, it records the actual terminal outcome and measured duration.
    - If the operation ran but its terminal result cannot be persisted, the wrapper returns `OUTCOME_UNRECORDED`; it does not claim success or automatically replay the operation.
    - Error text and raw request/response content are never placed in operation records.
+   - An identical idempotent append is accepted as already durable; a failed queue/start append prevents execution.
 
 3. **PostgreSQL persistence** — `packages/kratt-core/src/postgres-runtime-observatory-store.mjs`
    - `kratt_runtime_operation_events` is the append-only source of truth.
@@ -39,12 +41,15 @@ The Observatory is a control-plane capability. AURA remains a separate visualize
    - Read endpoints: `GET /observatory/operations`, `GET /observatory/operations/{id}`, `GET /observatory/operations/{id}/events`, `GET /observatory/modules`, `GET /observatory/integrity`.
    - Every request requires an injected server-side `authorizeRead` function. Missing, false, thrown or malformed authorization results are denied.
    - The API is a library adapter, not a publicly mounted unauthenticated endpoint. A host must supply its real policy authorizer before mounting it.
+   - List filters are bounded and validated before storage access; invalid client filters return HTTP 400.
+   - Event history responses omit internal previous/hash-chain values.
    - Integrity responses expose pass/fail and counts, not internal hashes.
 
 5. **Staging integration**
    - Migration `0004_runtime_observatory.sql` adds the head, append-only event table and latest-operation projection.
    - The staging server verifies that the required Phase 10 tables exist and that the observatory head is readable before startup.
    - `GET /health/ready` reports a boolean `runtimeObservatory` check without returning SQL details.
+   - The actual Telegram competitive webhook ingestion is wrapped by the observed-operation runner. Each delivery attempt gets a unique operation ID and stable update correlation; only opaque references and lifecycle metadata are persisted.
    - The existing staging migration runner now applies migrations 0002, 0003 and 0004 in order, only after explicit staging opt-in and database-name confirmation.
    - `scripts/wave10-verify-runtime-observatory.mjs` runs a read-only full-chain and projection consistency check.
 
