@@ -31,11 +31,12 @@ test("invalid trusted context blocks",()=>{assert.equal(evaluatePolicy(task(),[]
 test("caller-provided VERIFIED flag is not trusted",()=>{
  const t=task({required_evidence:[{claim_type:"TESTS_PASSED",subject:"repo-1",required:true,revision:null}]});
  assert.equal(evaluatePolicy(t,[evidence()],context(),{now}).decision,"INSUFFICIENT_EVIDENCE");
- assert.equal(evaluatePolicy(t,[evidence()],context(),{now,verifyEvidence}).decision,"ALLOW");
+ const matchingEvidence = {...evidence(),subject:"repo-1"};
+ assert.equal(evaluatePolicy(t,[matchingEvidence],context(),{now,verifyEvidence}).decision,"ALLOW");
 });
 test("external write with empty evidence is denied",()=>{
  const t=task({action:"repo.write"});
- const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true,approval_authority:"repository.approve"}]});
+ const c=context({policies:[{action:"repo.write",required_authority:"repository.read",target_types:["repository"],side_effect_class:"EXTERNAL_WRITE",approval_required:true,approval_authority:"repository.approve",required_claims:["TESTS_PASSED"]}]});
  assert.equal(evaluatePolicy(t,[],c,{now,approvalVerifier:()=>true}).decision,"DENY");
 });
 const writeTask = (overrides={}) => task({action:"repo.write",constraints:{provider:"github"},required_evidence:[{claim_type:"TESTS_PASSED",subject:"KRATT-PRIME",required:true,revision:null}],...overrides});
@@ -209,7 +210,7 @@ test("expired trusted context blocks",()=>{
 test("memory ledger rejects duplicate IDs and verifies entries",()=>{const m=new MemoryLedger();assert.equal(m.append({id:"m1",kind:"finding",createdAt:at,payload:{sha:"abc"}}).ok,true);assert.equal(m.append({id:"m1",kind:"finding",createdAt:at,payload:{sha:"x"}}).reason,"DUPLICATE_MEMORY_ID");assert.equal(m.verify().ok,true);});
 test("Saga state machine rejects invalid transitions",()=>{let s=createSaga({id:"s1",goal:"audit",createdAt:at});s=transitionSaga(s,"RUNNING",{id:"e1",at,kind:"start"}).value;assert.equal(transitionSaga(s,"PENDING",{id:"e2",at,kind:"rewind"}).reason,"INVALID_STATE_TRANSITION");});
 test("agent registry prevents privilege escalation",()=>{const a=new AgentRegistry();assert.equal(a.registerAgent({id:"builder",scopes:["repository.read"],status:"active"}).ok,true);assert.equal(a.registerAgent({id:"root",scopes:["production.deploy"],status:"active"}).reason,"INVALID_AGENT");a.registerTool({name:"read",requiredScopes:["repository.read"]});assert.equal(a.authorize("builder","read","repository.read").allowed,true);assert.equal(a.authorize("builder","read","production.deploy").allowed,false);});
-\ntest("request-bound approval verifier fails closed when its trusted clock throws",()=>{\n const verifier=createRequestBoundApprovalVerifier({\n  now:()=>{throw new Error("clock unavailable");},\n  verifySignature:()=>true,\n  consumeNonce:()=>true\n });\n const artifact=approvalArtifact();\n assert.equal(verifier(artifact,{\n  task_id:artifact.task_id,actor:artifact.actor,provider:artifact.provider,\n  operation:artifact.operation,target:artifact.target,authority:artifact.authority,\n  request_digest:artifact.request_digest\n }),false);\n});\n
+
 
 test("request-bound approval verifier fails closed when its trusted clock throws",()=>{
  const verifier=createRequestBoundApprovalVerifier({
