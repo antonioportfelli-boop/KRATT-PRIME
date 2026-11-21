@@ -1,3 +1,10 @@
+import {
+  POLICY_DECISIONS,
+  validateApprovalArtifact,
+  validateEvidenceRecord,
+  validateTaskEnvelope,
+  validateTrustedContext
+} from "./contracts.mjs";
 import { createHash } from "node:crypto";
 import { POLICY_DECISIONS, validateEvidenceRecord, validateTaskEnvelope, validateTrustedContext } from "./contracts.mjs";
 
@@ -13,6 +20,24 @@ function decision(taskId, value, reasons, evidenceIds, evaluatedAt) {
   });
 }
 
+function safelyVerify(verifier, ...args) {
+  if (typeof verifier !== "function") return false;
+  try { return verifier(...args) === true; }
+  catch { return false; }
+}
+
+/**
+ * Deterministic policy evaluator.
+ *
+ * The trusted context and verifier callbacks must be supplied by a server-owned
+ * composition root. Never pass model-, task-, or connector-authored verifier
+ * functions here. This module does not itself establish the authenticity of
+ * that composition root.
+ *
+ * options: { now, maxContextAgeMs, approval, verifyApproval, verifyEvidence }
+ */
+export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, options = {}) {
+  const trustedOptions = options && typeof options === "object" ? options : {};
 /**
  * Pure authorization evaluator.
  *
@@ -29,10 +54,33 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   const taskId = task.ok ? task.value.task_id : "invalid";
   const context = validateTrustedContext(trustedContextInput);
   const evaluatedAt = context.ok ? context.value.evaluated_at : null;
-  if (!task.ok) return decision(taskId,"DENY",["INVALID_TASK_ENVELOPE"],[],evaluatedAt);
-  if (!context.ok) return decision(taskId,"BLOCKED",["INVALID_TRUSTED_CONTEXT"],[],null);
+  if (!task.ok) return decision(taskId, "DENY", ["INVALID_TASK_ENVELOPE"], [], evaluatedAt);
+  if (!context.ok) return decision(taskId, "BLOCKED", ["INVALID_TRUSTED_CONTEXT"], [], null);
 
   const t = task.value, c = context.value;
+  const now = Number.isFinite(trustedOptions.now) ? trustedOptions.now : Date.now();
+  const maxContextAgeMs = Number.isFinite(trustedOptions.maxContextAgeMs) && trustedOptions.maxContextAgeMs >= 0
+    ? trustedOptions.maxContextAgeMs : 5 * 60 * 1000;
+
+  if (t.status !== "PENDING")
+    return decision(t.task_id, "DENY", [t.status === "CANCELLED" ? "TASK_CANCELLED" : "TASK_NOT_PENDING"], [], evaluatedAt);
+  if (c.kill_switch)
+    return decision(t.task_id, "DENY", ["GLOBAL_KILL_SWITCH_ACTIVE"], [], evaluatedAt);
+
+  const contextTime = Date.parse(c.evaluated_at), contextExpiry = Date.parse(c.expires_at);
+  if (contextTime > now || contextExpiry <= now || now - contextTime > maxContextAgeMs)
+    return decision(t.task_id, "BLOCKED", ["TRUSTED_CONTEXT_STALE_OR_EXPIRED"], [], evaluatedAt);
+
+  if (!Array.isArray(evidenceInput) || evidenceInput.length > 256)
+    return decision(t.task_id, "INSUFFICIENT_EVIDENCE", ["INVALID_EVIDENCE_SET"], [], evaluatedAt);
+  if (!c.policies.length)
+    return decision(t.task_id, "BLOCKED", ["MISSING_POLICY"], [], evaluatedAt);
+
+  const matchingRules = c.policies.filter(p => p.action === t.action);
+  if (matchingRules.length > 1)
+    return decision(t.task_id, "BLOCKED", ["POLICY_CONFLICT"], [], evaluatedAt);
+  const rule = matchingRules[0];
+  if (!rule) return decision(t.task_id, "DENY", ["UNSUPPORTED_ACTION"], [], evaluatedAt);
   if (t.status === "CANCELLED") return decision(t.task_id,"DENY",["TASK_CANCELLED"],[],evaluatedAt);
   if (!Array.isArray(evidenceInput) || evidenceInput.length > 256)
     return decision(t.task_id,"INSUFFICIENT_EVIDENCE",["INVALID_EVIDENCE_SET"],[],evaluatedAt);
@@ -46,10 +94,16 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   const rule = applicable[0];
 
   if (!c.authorities.includes(rule.required_authority))
-    return decision(t.task_id,"DENY",["MISSING_TRUSTED_AUTHORIZATION"],[],evaluatedAt);
-  const inScope = rule.target_types.includes(t.target.resource_type) &&
-    c.allowed_targets.some(x => x.resource_type === t.target.resource_type && x.resource_id === t.target.resource_id);
-  if (!inScope) return decision(t.task_id,"DENY",["TARGET_OUT_OF_SCOPE"],[],evaluatedAt);
+    return decision(t.task_id, "DENY", ["MISSING_TRUSTED_AUTHORIZATION"], [], evaluatedAt);
+
+  const target = c.allowed_targets.find(x =>
+    x.resource_type === t.target.resource_type &&
+    x.resource_id === t.target.resource_id &&
+    (x.branch === undefined ? t.constraints.branch === undefined : x.branch === t.constraints.branch) &&
+    (x.path === undefined ? t.constraints.path === undefined : x.path === t.constraints.path)
+  );
+  if (!rule.target_types.includes(t.target.resource_type) || !target)
+    return decision(t.task_id, "DENY", ["TARGET_OUT_OF_SCOPE"], [], evaluatedAt);
 
   const now = options.now;
   const contextTime = Date.parse(c.evaluated_at);
