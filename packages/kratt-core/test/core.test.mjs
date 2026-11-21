@@ -115,6 +115,16 @@ test("trusted runtime rejects a clock that throws or returns non-finite values a
  assert.throws(()=>createTrustedAuthorizationRuntime({...dependencies,now:()=>"not-a-number"}),/TRUSTED_CLOCK_UNAVAILABLE/);
 });
 
+test("policy evaluator blocks when trusted options are null or missing",()=>{
+ assert.equal(evaluatePolicy(task(),[],context(),null).decision,"BLOCKED");
+ assert.equal(evaluatePolicy(task(),[],context()).decision,"BLOCKED");
+ assert.deepEqual(evaluatePolicy(task(),[],context(),null).reasons,["TRUSTED_CLOCK_UNAVAILABLE"]);
+});
+test("request-bound approval verifier requires an explicitly injected trusted clock",()=>{
+ assert.throws(()=>createRequestBoundApprovalVerifier({verifySignature:()=>true,consumeNonce:()=>true}),/TRUSTED_APPROVAL_DEPENDENCIES_REQUIRED/);
+ assert.throws(()=>createRequestBoundApprovalVerifier({verifySignature:()=>true,consumeNonce:()=>true,now:123}),/TRUSTED_APPROVAL_DEPENDENCIES_REQUIRED/);
+});
+
 test("trusted composition root rejects asynchronous nonce adapters and missing trusted clock",()=>{
  const {publicKey,privateKey}=generateKeyPairSync("ed25519");
  const key={key_id:"clock-key",approver_id:"security-owner",public_key_pem:publicKey.export({type:"spki",format:"pem"}),authorities:["repository.approve"]};
