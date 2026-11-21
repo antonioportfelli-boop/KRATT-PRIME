@@ -223,7 +223,7 @@ const records = [
       "ui-read-contract-tests",
       "operator-staging-attestation",
     ],
-    lineageNote: "PRs #38 and #39 both stack on PR #36, not on each other. Reconcile their overlapping changes before selecting one canonical hardening head. WP-10 scale/semantic retrieval PR #37 is adjacent work on a separate worker-lease base.",
+    lineageNote: "PR #39 is merged into the Phase 10 candidate; PR #40 is merged into the Wave 10 hardening branch. PR #38 remains open. PRs #41 and #42 are open draft continuations on related integration branches and must be reconciled before one canonical promotion. WP-10 PR #37 remains adjacent work on a separate worker-lease base.",
   },
 ];
 
