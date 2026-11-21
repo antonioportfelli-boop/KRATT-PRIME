@@ -288,7 +288,10 @@ export function validateWaveRegistry(registry = WAVE_REGISTRY) {
       }
     }
     for (const pr of wave.pullRequests) {
-      if (!Number.isSafeInteger(pr.number) || pr.number < 1 || !["open", "closed"].includes(pr.state) ||\n          pr.draft !== undefined && typeof pr.draft !== "boolean" ||\n          pr.merged !== undefined && typeof pr.merged !== "boolean" ||\n          pr.merged === true && pr.state !== "closed") {
+      if (!Number.isSafeInteger(pr.number) || pr.number < 1 || !["open", "closed"].includes(pr.state) ||
+          pr.draft !== undefined && typeof pr.draft !== "boolean" ||
+          pr.merged !== undefined && typeof pr.merged !== "boolean" ||
+          pr.merged === true && pr.state !== "closed") {
         errors.push("WAVE_PULL_REQUEST_REF_INVALID:" + wave.id);
       }
     }
