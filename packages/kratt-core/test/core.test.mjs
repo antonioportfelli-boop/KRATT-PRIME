@@ -31,7 +31,8 @@ test("invalid trusted context blocks",()=>{assert.equal(evaluatePolicy(task(),[]
 test("caller-provided VERIFIED flag is not trusted",()=>{
  const t=task({required_evidence:[{claim_type:"TESTS_PASSED",subject:"KRATT-PRIME",required:true,revision:null}]});
  assert.equal(evaluatePolicy(t,[evidence()],context(),{now}).decision,"INSUFFICIENT_EVIDENCE");
- assert.equal(evaluatePolicy(t,[evidence()],context(),{now,verifyEvidence}).decision,"ALLOW");
+ const matchingEvidence = {...evidence(),subject:"repo-1"};
+ assert.equal(evaluatePolicy(t,[matchingEvidence],context(),{now,verifyEvidence}).decision,"ALLOW");
 });
 test("external write with empty evidence is denied",()=>{
  const t=task({action:"repo.write"});
