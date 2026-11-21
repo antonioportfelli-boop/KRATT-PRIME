@@ -87,3 +87,28 @@ test("the validator rejects duplicate IDs and forward dependencies", () => {
   assert.equal(result.ok, false);
   assert.ok(result.errors.includes("WAVE_DEPENDENCY_NOT_EARLIER:WAVE-02:WAVE-02"));
 });
+test("Wave 10 registry reflects merged and still-open continuation PRs", () => {
+  const wave = getWaveById("WAVE-10");
+  const byNumber = new Map(wave.pullRequests.map((pr) => [pr.number, pr]));
+  assert.deepEqual([...byNumber.keys()], [36, 38, 39, 40, 41, 42]);
+  assert.equal(byNumber.get(39).state, "closed");
+  assert.equal(byNumber.get(39).merged, true);
+  assert.equal(byNumber.get(40).state, "closed");
+  assert.equal(byNumber.get(40).merged, true);
+  for (const number of [36, 38, 41, 42]) {
+    assert.equal(byNumber.get(number).state, "open");
+    assert.equal(byNumber.get(number).merged, false);
+  }
+  assert.deepEqual(validateWaveRegistry(), { ok: true, errors: [] });
+});
+
+test("the validator rejects a merged pull request that is still marked open", () => {
+  const invalid = WAVE_REGISTRY.map((wave) => ({
+    ...wave,
+    pullRequests: wave.pullRequests.map((pr) => ({ ...pr })),
+  }));
+  invalid[9].pullRequests.find((pr) => pr.number === 39).state = "open";
+  const result = validateWaveRegistry(invalid);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.includes("WAVE_PULL_REQUEST_REF_INVALID:WAVE-10"));
+});
