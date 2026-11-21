@@ -45,7 +45,7 @@ What this does not prove:
 ### PR #42 — trusted Wave evidence gates
 
 Earlier head: 70f5140f2957561e9d7dbb5b754cbf2abb57c992  
-Current audited head after additional hardening: b9e2d785ad28cbed1e4bab6a5bf34914aee5b364  
+Evidence-gate implementation head audited: b9e2d785ad28cbed1e4bab6a5bf34914aee5b364\nAudit document commit/current branch head: 7b12f9a5a58de74e2e3f3d20fab1795abb2e3b7a  
 Base: feature/wave1-10-progression-alignment-2026-11-20  
 State: open draft
 
