@@ -8,7 +8,7 @@
 
 ## 1. Why this branch exists
 
-The repository contains substantial Wave 1–10 work, but the GitHub metadata shows that many feature candidates were created as siblings from \`main\`, not as one verified cumulative branch chain. Wave 10 itself has a core candidate (PR #36) and two separate hardening drafts (PR #38 and PR #39) which both target the Wave 10 core branch. They are not stacked on each other.
+The repository contains substantial Wave 1–10 work, but the GitHub metadata shows that many feature candidates were created as siblings from \`main\`, not as one verified cumulative branch chain. Wave 10 has a core candidate (PR #36), a hardening candidate (PR #38), and follow-on continuations. PR #39 was merged into the Phase 10 candidate branch; PR #40 was merged into the Wave 10 hardening branch; PR #41 and PR #42 remain separate open draft continuations that must be reconciled.
 
 The objective here is not to merge those candidates blindly. This branch introduces a common inventory, dependency order, acceptance evidence contract and a distinct read-only view so the next integration steps can be executed in a reviewable sequence.
 
@@ -25,7 +25,7 @@ The objective here is not to merge those candidates blindly. This branch introdu
 | 07 | 7/10 | Ingestion | Telegram webhook, inbox/replay control, immutable snapshots | PR #33 open |
 | 08 | 8/10 | Staging composition | Strict parser, staging server, connector preflight and explicit consent | PRs #34 and #35 are sibling drafts |
 | 09 | 9/10 | Resilience | Multi-replica limiter, schema gates, readiness and ordered migrations | Wave 9 branch and content in the Phase 10 candidate |
-| 10 | 10/10 | Observability | Operation lifecycle, append-only history, projection integrity and protected read API | PR #36 core; #38 and #39 parallel hardening drafts |
+| 10 | 10/10 | Observability | Operation lifecycle, append-only history, projection integrity and protected read API | PR #36 open core; #38 open hardening; #39 merged into Phase 10 candidate; #40 merged into Wave 10 hardening; #41/#42 open continuations |
 
 The authoritative machine-readable list and gate logic live in \`packages/kratt-core/src/wave-progression.mjs\`. Its dependencies are logical release dependencies, not a claim that Git commits already form a single ancestry chain.
 
@@ -51,12 +51,12 @@ A higher level does not waive a lower-level control. No wave may be promoted bec
 ### 4.1 Preserve source and branch lineage
 
 - Keep \`main\` unchanged.
-- Keep PRs #36–#39 in draft state until their overlap and CI are independently reconciled.
+- Keep PR #36 and the open continuations review-only until their overlap, branch ancestry and CI are reconciled. PR #39 is already merged into the Phase 10 candidate, and PR #40 is already merged into the Wave 10 hardening branch.
 - Compare PR #27 with #28 before choosing a Wave 3 canonical head.
 - Compare PR #30 with the selected Wave 3 result; verify the exact transaction boundaries in source rather than relying on PR prose.
 - Verify that Wave 5 uses the real \`factory/protocol/types.ts\` and \`factory/protocol/protocol.schema.json\` from STEEL; do not maintain a competing schema.
 - Reconcile Wave 8 PRs #34 and #35 before using Wave 9 migration/readiness assumptions.
-- Treat Wave 10 PR #38 as the current hardening parent for this branch. PR #39 is a parallel hardening candidate and must be diff-reviewed; do not silently combine it.
+- PR #38 remains open and unmerged. PR #39 is merged into the Phase 10 candidate; PR #40 is merged into the Wave 10 hardening branch. PR #41 adds Observatory HTTP/STEEL hardening and PR #42 adds trusted Wave gates on related branches. Reconcile them into one canonical continuation without discarding either implementation.
 
 ### 4.2 Promotion gates
 
