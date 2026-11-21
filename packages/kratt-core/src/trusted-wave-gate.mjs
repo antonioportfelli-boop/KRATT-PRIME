@@ -32,10 +32,12 @@ function snapshotOptions(input) {
     values[key] = descriptor.value;
   }
 
-  const evidence = values.evidence ?? [];
-  const completionEvidence = values.completionEvidence ?? [];
+  const evidence = Object.hasOwn(values, "evidence") ? values.evidence : [];
+  const completionEvidence = Object.hasOwn(values, "completionEvidence") ? values.completionEvidence : [];
   const verifyEvidence = values.verifyEvidence;
-  const verificationTimeoutMs = values.verificationTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const verificationTimeoutMs = Object.hasOwn(values, "verificationTimeoutMs")
+    ? values.verificationTimeoutMs
+    : DEFAULT_TIMEOUT_MS;
 
   if (typeof verifyEvidence !== "function" ||
       !Number.isSafeInteger(verificationTimeoutMs) ||
