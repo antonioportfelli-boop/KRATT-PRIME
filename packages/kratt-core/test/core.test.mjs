@@ -10,7 +10,6 @@ let DatabaseSync = null;
 try { ({ DatabaseSync } = await import("node:sqlite")); } catch { /* SQLite runtime unavailable on this Node build. */ }
 import { createTrustedAuthorizationRuntime } from "../src/trusted-runtime.mjs";
 import { createSqliteNonceStore } from "../src/sqlite-nonce-store.mjs";
-import { KRATT_SCHEMA_VERSION, validateTaskEnvelope } from "../src/contracts.mjs";
 import { evaluatePolicy, createRequestBoundApprovalVerifier, canonicalApprovalPayload, canonicalTaskDigest } from "../src/policy.mjs";
 import { MemoryLedger } from "../src/memory-ledger.mjs";
 import { createSaga, transitionSaga } from "../src/saga.mjs";
