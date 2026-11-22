@@ -66,3 +66,9 @@ test("required approval is surfaced as pending rather than granted", async () =>
   const decision = await authorize(req);
   assert.equal(decision.decision, "REQUIRE_APPROVAL");
 });
+test("rejects a resource label that does not bind to the record id", async () => {
+  await assert.rejects(
+    create()({ ...req, resource: "semantic-record:other-record" }),
+    { name: "TypeError", message: "SEMANTIC_POLICY_REQUEST_INVALID" }
+  );
+});
