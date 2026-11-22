@@ -53,6 +53,11 @@ function mockPool({ initialized = true } = {}) {
         const row = state.events.find(item => item.memory_id === values[0]);
         return { rowCount: row ? 1 : 0, rows: row ? [row] : [] };
       }
+      if (normalized.includes("WHERE sequence>$1")) {
+        const [after, kind] = values;
+        const rows = state.events.filter(item => item.sequence > after && (!kind || item.record_json.kind === kind));
+        return { rowCount: rows.length, rows };
+      }
       throw new Error("Unexpected pool SQL: " + normalized);
     }
   };
