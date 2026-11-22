@@ -204,11 +204,14 @@ test("invalid semantic records cannot reach policy, evidence or memory", async (
   assert.equal(ledger.size, 0);
 });
 
-test("same record replay reports duplicate without adding another entry", async () => {
+test("same record replay reports duplicate and policy digest equals persisted canonical digest", async () => {
   const { runtime, ledger } = setup();
   const first = await runtime.ingest({ requestId, principalId, record: makeRecord() });
   const second = await runtime.ingest({ requestId, principalId, record: makeRecord() });
   assert.equal(first.status, "STORED");
   assert.equal(second.status, "DUPLICATE");
+  const stored = ledger.list({ kind: "WORD_SEMANTIC_RECORD" })[0].record.payload;
+  assert.equal(stored.record_digest, first.recordDigest);
+  assert.equal(stored.record_digest, second.recordDigest);
   assert.equal(ledger.list({ kind: "WORD_SEMANTIC_RECORD" }).length, 1);
 });
