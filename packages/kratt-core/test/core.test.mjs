@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { KRATT_SCHEMA_VERSION, validateApprovalArtifact, validateTaskEnvelope } from "../src/contracts.mjs";
-import { evaluatePolicy } from "../src/policy.mjs";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
