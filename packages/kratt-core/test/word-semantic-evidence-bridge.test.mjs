@@ -317,3 +317,64 @@ test("verified authority evidence is not treated as execution authorization", as
   assert.equal(result.policyAuthority, false);
   assert.equal(ledger.verify().ok, true);
 });
+
+test("effect measurement evidence remains distinct from effect claim evidence", async () => {
+  const { ledger, bridge } = makeBridge();
+  const record = semanticRecord();
+  record.effects.push({
+    effect_id: "effect-measured",
+    effect_type: "TECHNICAL",
+    target_refs: ["system:kratt"],
+    direction: "POSITIVE",
+    magnitude: 1,
+    evidence_refs: ["evidence-source"],
+    measurement_refs: ["evidence-measurement"],
+    causal_status: "CAUSALLY_ESTABLISHED"
+  });
+  const measurement = evidence(
+    "evidence-measurement",
+    "measurement-run",
+    "sha256:" + "c".repeat(64)
+  );
+  const result = await bridge.ingest({
+    record,
+    evidence: [evidence("evidence-source"), measurement]
+  });
+  assert.equal(result.ok, true);
+  const graph = ledger.list({ kind: "WORD_SEMANTIC_RECORD" })[0].record.payload.provenance_graph;
+  const effectNode = graph.nodes.find(node => node.id === "effect:effect-measured");
+  assert.deepEqual(effectNode.evidence_ids, ["evidence-source"]);
+  assert.ok(graph.edges.some(edge =>
+    edge.from === "effect:effect-measured" && edge.to === "evidence:evidence-measurement"
+      && edge.relation === "MEASURED_BY"
+  ));
+  assert.ok(graph.edges.some(edge =>
+    edge.from === "effect:effect-measured" && edge.to === "evidence:evidence-source"
+      && edge.relation === "SUPPORTED_BY"
+  ));
+  assert.equal(result.authorizationGranted, false);
+});
+
+test("candidate authority evidence references cannot be omitted from verification", async () => {
+  const { ledger, bridge } = makeBridge();
+  const record = semanticRecord();
+  record.authorities.push({
+    authority_id: "authority-candidate",
+    authority_type: "DELEGATED",
+    issuer_ref: "actor:owner",
+    subject_ref: "actor:agent",
+    action_scope: "Prepare a draft patch",
+    resource_scope: "feature/*",
+    jurisdiction: "KRATT",
+    valid_from: now,
+    valid_until: null,
+    evidence_refs: ["evidence-authority-missing"],
+    status: "CANDIDATE"
+  });
+  const result = await bridge.ingest({
+    record,
+    evidence: [evidence("evidence-source")]
+  });
+  assert.equal(result.reason, "SEMANTIC_EVIDENCE_REFERENCE_MISSING:evidence-authority-missing");
+  assert.equal(ledger.size, 0);
+});

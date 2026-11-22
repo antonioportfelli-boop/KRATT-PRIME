@@ -78,8 +78,7 @@ function createProvenanceGraph(record, verifiedEvidence) {
   }
   for (const item of record.effects) {
     addNode("effect:" + item.effect_id, "EFFECT", item,
-      [...item.evidence_refs, ...item.measurement_refs], null,
-      { kind: "EFFECT_CLAIM", actor_ref: null });
+      item.evidence_refs, null, { kind: "EFFECT_CLAIM", actor_ref: null });
   }
   for (const item of record.powers) {
     addNode("power:" + item.power_id, "POWER", item, item.evidence_refs,
