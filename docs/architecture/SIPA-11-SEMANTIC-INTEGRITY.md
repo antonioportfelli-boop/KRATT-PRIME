@@ -1,6 +1,6 @@
 # SIPA-11 — Semantic Integrity, Polymorphosis & Anti-Weakening Architecture
 
-Status: design baseline on a feature branch; implementation and runtime behavior are not yet verified.
+Status: runtime implementation and adversarial tests are added on feature/sipa-11-semantic-integrity-2026-11-22; GitHub CI verification is pending. Provider-specific Meridian, independent postflight, and correction persistence adapters remain deployment-owned.
 
 ## Purpose
 
@@ -84,4 +84,4 @@ Connector adapters are transport and evidence boundaries, not truth authorities.
 
 ## Initial delivery boundary
 
-This branch begins with architecture and contract documentation. Runtime implementation must be introduced in the repository's established core/module boundaries after inspecting existing contracts and test conventions. Do not duplicate existing authorization, evidence, or integration-governance systems.
+Implemented runtime boundary: the semantic-integrity module decorates the existing authorized dispatcher. It does not replace policy evaluation, principal authentication, request-bound approval verification, durable nonce consumption, idempotency, or command intent persistence. The Talmud gate runs before the dispatcher; Anti-Talmud uses a separately loaded postflight observation after the dispatcher; findings are appended to the Meridian adapter and create a proposal-only correction. No correction is applied automatically. The caller must supply trusted loaders and durable persistence adapters. This branch does not contain production credentials or provider endpoints.

@@ -1,6 +1,6 @@
 # SIPA-11 — Acceptance and Adversarial Test Matrix
 
-Status: acceptance criteria for implementation; these are not executed test results.
+Status: focused core, policy, and semantic adversarial tests have been added to the repository's Node.js test suite. They are pending GitHub CI execution. The full connector matrix below remains a broader acceptance target, not a claim of completed connector coverage.
 
 ## Core semantic weakening tests
 
