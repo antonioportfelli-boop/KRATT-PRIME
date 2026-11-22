@@ -31,6 +31,21 @@ The migration runner requires all three conditions: `APP_ENV=staging`, `WAVE11_A
 
 No migration has been executed against a database by this change.
 
+## Runtime composition root
+
+The application-level composition root is `packages/kratt-orchestrator/src/phase11-runtime.mjs`. It receives the durable Phase 11 run store, the Wave 10 observability store, policy/approval/test-evidence/GitHub adapters, and the optional semantic pipeline. It constructs the phase engine privately and exposes only the Wave 10-observed facade:
+
+- `propose(input)`
+- `execute(input)`
+- `commitApproved(input)`
+- `runSemanticPipeline(input)`
+- `getRun(runId)`
+- `watchEvents(runId)`
+
+The raw engine instance is not returned, preventing normal application callers from bypassing the observability wrapper. The composition root does not invent authentication, signing keys, durable storage, provider connectivity or approval authority; those remain injected, server-owned dependencies.
+
+Verification commands are exposed as `npm run phase11:verify`. The migration command is `npm run phase11:migrate` and is still staging-only with the explicit Wave 11 opt-in and database-name confirmation.
+
 ## Wave 10 runtime observability integration
 
 `packages/kratt-core/src/phase11-wave10-integration.mjs` composes the governed Phase 11 engine with the existing Wave 10 `createObservedOperationRunner` contract.
