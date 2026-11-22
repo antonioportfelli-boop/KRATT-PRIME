@@ -15,7 +15,8 @@ const now = "2026-11-21T21:00:00.000Z";
 function make() {
   const result = createWordSemanticRecord({
     recordId: "semantic-1",
-    sourceRef: "source:directive-1",
+    sourceRef: "github:semantic-source",
+    sourceEvidenceId: "evidence-source",
     sourceDigest: "a".repeat(64),
     contextId: "ctx:engineering",
     createdAt: now,

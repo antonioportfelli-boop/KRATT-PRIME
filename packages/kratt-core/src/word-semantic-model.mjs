@@ -34,7 +34,7 @@ const TOP_LEVEL_KEYS = [
   "contents", "senses", "principles", "intents", "speech_acts", "effects", "powers", "authorities"
 ];
 const FORM_KEYS = ["token_id", "surface", "language", "normalization", "span"];
-const SOURCE_KEYS = ["source_ref", "source_digest"];
+const SOURCE_KEYS = ["source_ref", "source_digest", "source_evidence_id"];
 const CONTENT_KEYS = [
   "content_id", "content_type", "payload", "language", "domain", "referent_refs",
   "evidence_refs", "attribution", "confidence"
@@ -66,7 +66,7 @@ function uniqueNodeIds(record) {
 export function validateWordSemanticRecord(record) {
   if (!exact(record, TOP_LEVEL_KEYS) || record.schema_version !== WORD_SEMANTIC_SCHEMA
       || !ID.test(record.record_id ?? "") || !exact(record.source, SOURCE_KEYS)
-      || !bounded(record.source.source_ref, 1000) || !DIGEST.test(record.source.source_digest ?? "")
+      || !bounded(record.source.source_ref, 1000) || !DIGEST.test(record.source.source_digest ?? "") || !ID.test(record.source.source_evidence_id ?? "")
       || !ID.test(record.context_id ?? "") || !Number.isFinite(Date.parse(record.created_at ?? ""))) {
     return fail("SOURCE_OCCURRENCE_INVALID");
   }
@@ -227,14 +227,14 @@ export function evaluateWordSemantics(record, {
 }
 
 export function createWordSemanticRecord({
-  recordId, sourceRef, sourceDigest, contextId, form, createdAt,
+  recordId, sourceRef, sourceDigest, sourceEvidenceId, contextId, form, createdAt,
   contents = [], senses = [], principles = [], intents = [], speechActs = [],
   effects = [], powers = [], authorities = []
 } = {}) {
   return validateWordSemanticRecord({
     schema_version: WORD_SEMANTIC_SCHEMA,
     record_id: recordId,
-    source: { source_ref: sourceRef, source_digest: sourceDigest },
+    source: { source_ref: sourceRef, source_digest: sourceDigest, source_evidence_id: sourceEvidenceId },
     context_id: contextId,
     created_at: createdAt,
     form,
