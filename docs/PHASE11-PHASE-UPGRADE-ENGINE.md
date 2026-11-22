@@ -12,7 +12,7 @@ Phase 11 adds a resource-aware, agent-driven phase upgrade pipeline to KRATT PRI
 4. A remote route is not executable until an independently verified, unexpired approval binds the run, request, provider, data scope and transfer class.
 5. The selected local or cloud adapter runs six ordered agents: architect, planner, coder, tester, critic and documentarian.
 6. The coder returns bounded file proposals. The engine rejects path traversal, protected paths, credential-like content, oversized payloads and invalid base blob SHAs.
-7. The tester must provide positive test evidence and the critic must report no blockers. The result becomes READY_FOR_APPROVAL; no repository write occurs.
+7. The tester must provide positive test results with evidence references. A separately injected trusted test-evidence verifier must validate each reference against the exact run, request, source revision, target branch and patch digest. A bare `passed: true` claim is never sufficient. Missing, rejected, expired or unverifiable test evidence blocks the run before it can become READY_FOR_APPROVAL; no repository write occurs.
 8. A separate approval must bind the exact run, request, repository, feature branch, source revision, patch digest and expiry. A second policy evaluation is required before the injected GitHub writer can create a commit.
 9. The GitHub writer must enforce optimistic concurrency against the submitted source revision. Merge and deployment remain separate, human-controlled operations.
 
@@ -38,7 +38,7 @@ Do not deploy the test in-memory store as a production persistence implementatio
 
 ## Agent adapter contract
 
-runAgent({ agent, run, computeRoute, priorResults, signal }) returns an object with a bounded summary. The CODER stage additionally returns patches; the TESTER stage returns a non-empty list of { name, passed: true, evidenceRef? }; the CRITIC stage returns an empty blockers list. Agents can propose code but cannot directly write repositories or change permissions.
+runAgent({ agent, run, computeRoute, priorResults, signal }) returns an object with a bounded summary. The CODER stage additionally returns patches; the TESTER stage returns a non-empty list of { name, passed: true, evidenceRef }. Each test evidence reference is checked by the trusted test-evidence verifier against the exact patch digest and run context. The CRITIC stage returns an empty blockers list. Agents can propose code but cannot directly write repositories or change permissions.
 
 ## Statuses
 
