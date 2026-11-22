@@ -7,7 +7,156 @@ export const SEMANTIC_EVIDENCE_BRIDGE_VERSION = "1.0.0";
 export const SEMANTIC_MEMORY_KIND = "WORD_SEMANTIC_RECORD";
 
 const bad = reason => Object.freeze({ ok: false, reason });
+const stable = value => {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])]));
+  }
+  return value;
+};
+const canonical = value => JSON.stringify(stable(value));
 const sha256 = value => createHash("sha256").update(value, "utf8").digest("hex");
+const digest = value => "sha256:" + sha256(canonical(value));
+
+
+function createProvenanceGraph(record, verifiedEvidence) {
+  const nodes = [];
+  const edges = [];
+  const ids = new Set();
+  const sourceId = "source:" + record.record_id;
+
+  function addNode(id, type, data, evidenceIds = [], confidence = null, attribution = null) {
+    if (ids.has(id)) throw new Error("SEMANTIC_GRAPH_NODE_COLLISION");
+    ids.add(id);
+    nodes.push({
+      id, type, data: structuredClone(data),
+      evidence_ids: [...new Set(evidenceIds)].sort(),
+      confidence,
+      attribution: attribution ? structuredClone(attribution) : null
+    });
+  }
+  function addEdge(from, to, relation, evidenceIds = [], confidence = null) {
+    if (!ids.has(from) || !ids.has(to)) throw new Error("SEMANTIC_GRAPH_DANGLING_EDGE");
+    const core = {
+      from, to, relation,
+      evidence_ids: [...new Set(evidenceIds)].sort(),
+      confidence
+    };
+    const id = "edge:" + sha256(canonical(core));
+    if (!edges.some(edge => edge.id === id)) edges.push({ id, ...core });
+  }
+
+  addNode(sourceId, "SOURCE_OCCURRENCE", {
+    source_ref: record.source.source_ref,
+    source_digest: record.source.source_digest,
+    source_evidence_id: record.source.source_evidence_id,
+    context_id: record.context_id,
+    created_at: record.created_at
+  }, [record.source.source_evidence_id], 1, { kind: "SOURCE", actor_ref: null });
+  addNode("form:" + record.form.token_id, "FORM", record.form,
+    [record.source.source_evidence_id], 1, { kind: "SOURCE", actor_ref: null });
+
+  for (const item of record.contents) {
+    addNode("content:" + item.content_id, "CONTENT", item, item.evidence_refs,
+      item.confidence, item.attribution);
+  }
+  for (const item of record.senses) {
+    addNode("sense:" + item.sense_id, "SENSE", item, item.evidence_refs,
+      item.confidence, { kind: "INTERPRETATION", actor_ref: null });
+  }
+  for (const item of record.principles) {
+    addNode("principle:" + item.principle_id, "PRINCIPLE", item,
+      item.source_refs, null, { kind: "NORMATIVE_SOURCE", actor_ref: null });
+  }
+  for (const item of record.intents) {
+    addNode("intent:" + item.intent_id, "INTENT", item, item.evidence_refs,
+      item.confidence, { kind: item.attribution_kind, actor_ref: item.actor_ref });
+  }
+  for (const item of record.speech_acts) {
+    addNode("speech-act:" + item.act_id, "SPEECH_ACT", item, item.evidence_refs,
+      null, { kind: "CONTEXTUAL_ACT", actor_ref: item.speaker_ref });
+  }
+  for (const item of record.effects) {
+    addNode("effect:" + item.effect_id, "EFFECT", item,
+      [...item.evidence_refs, ...item.measurement_refs], null,
+      { kind: "EFFECT_CLAIM", actor_ref: null });
+  }
+  for (const item of record.powers) {
+    addNode("power:" + item.power_id, "POWER", item, item.evidence_refs,
+      null, { kind: "POWER_DESCRIPTION", actor_ref: item.holder_ref });
+  }
+  for (const item of record.authorities) {
+    addNode("authority:" + item.authority_id, "AUTHORITY_CLAIM", item,
+      item.evidence_refs, null, { kind: "AUTHORITY_CLAIM", actor_ref: item.issuer_ref });
+  }
+
+  for (const [evidenceId, item] of verifiedEvidence) {
+    addNode("evidence:" + evidenceId, "EVIDENCE", {
+      evidence_id: item.evidence_id,
+      subject: item.subject,
+      claim_type: item.claim_type,
+      source: item.source,
+      observed_at: item.observed_at,
+      verification_method: item.verification_method,
+      artifact_digest: item.artifact_digest
+    }, [evidenceId]);
+  }
+
+  addEdge(sourceId, "form:" + record.form.token_id, "HAS_FORM",
+    [record.source.source_evidence_id], 1);
+  for (const item of record.contents) {
+    addEdge(sourceId, "content:" + item.content_id, "HAS_CONTENT",
+      item.evidence_refs, item.confidence);
+  }
+  for (const item of record.senses) {
+    for (const contentId of item.content_refs) {
+      addEdge("content:" + contentId, "sense:" + item.sense_id, "INTERPRETED_AS",
+        item.evidence_refs, item.confidence);
+    }
+  }
+  for (const item of record.principles) {
+    addEdge(sourceId, "principle:" + item.principle_id, "CARRIES_PRINCIPLE", item.source_refs);
+  }
+  for (const item of record.intents) {
+    addEdge(sourceId, "intent:" + item.intent_id, "ATTRIBUTED_INTENT",
+      item.evidence_refs, item.confidence);
+  }
+  for (const item of record.speech_acts) {
+    const id = "speech-act:" + item.act_id;
+    addEdge(sourceId, id, "PERFORMS_SPEECH_ACT", item.evidence_refs);
+    for (const contentId of item.content_refs) {
+      addEdge(id, "content:" + contentId, "ACTS_ON_CONTENT", item.evidence_refs);
+    }
+  }
+  for (const item of record.effects) {
+    const id = "effect:" + item.effect_id;
+    addEdge(sourceId, id, "HAS_EFFECT_CLAIM", item.evidence_refs);
+    for (const measurementId of item.measurement_refs) {
+      addEdge(id, "evidence:" + measurementId, "MEASURED_BY", [measurementId]);
+    }
+  }
+  for (const item of record.powers) {
+    addEdge(sourceId, "power:" + item.power_id, "HAS_POWER_RELATION", item.evidence_refs);
+  }
+  for (const item of record.authorities) {
+    addEdge(sourceId, "authority:" + item.authority_id, "HAS_AUTHORITY_CLAIM", item.evidence_refs);
+  }
+  for (const node of [...nodes]) {
+    for (const evidenceId of node.evidence_ids) {
+      addEdge(node.id, "evidence:" + evidenceId, "SUPPORTED_BY", [evidenceId], node.confidence);
+    }
+  }
+
+  nodes.sort((left, right) => left.id.localeCompare(right.id));
+  edges.sort((left, right) => left.id.localeCompare(right.id));
+  const core = {
+    schema_version: "kratt-semantic-provenance-graph/v1",
+    source_record_id: record.record_id,
+    nodes,
+    edges
+  };
+  return Object.freeze({ ...core, graph_digest: digest(core) });
+}
 
 /**
  * Bridges source-bound Semantic Model v2 records into the append-only local MemoryLedger.
@@ -51,7 +200,7 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
       ...semantic.effects.map(effect => effect.evidence_refs),
       ...semantic.principles.map(principle => principle.source_refs),
       ...semantic.powers.map(power => power.evidence_refs),
-      ...semantic.authorities.filter(authority => authority.status === "VERIFIED").map(authority => authority.evidence_refs)
+      ...semantic.authorities.map(authority => authority.evidence_refs)
     ];
     if (requiredGroups.some(refs => !Array.isArray(refs) || refs.length === 0)) {
       return bad("SEMANTIC_LAYER_PROVENANCE_REQUIRED");
@@ -91,26 +240,6 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
     if (!semanticEvaluation.ok) return semanticEvaluation;
 
     const evidenceIds = [...verified.keys()].sort();
-    const recordDigest = sha256(JSON.stringify(semantic));
-    const existing = ledger.list({ kind: SEMANTIC_MEMORY_KIND })
-      .find(entry => entry.record?.payload?.record_id === semantic.record_id);
-    if (existing) {
-      if (existing.record.payload.record_digest !== recordDigest
-          || JSON.stringify(existing.record.payload.evidence_ids) !== JSON.stringify(evidenceIds)) {
-        return bad("SEMANTIC_RECORD_ID_COLLISION");
-      }
-      return Object.freeze({
-        ok: true,
-        duplicate: true,
-        memoryId: existing.record.id,
-        memoryHash: existing.hash,
-        semanticStatus: existing.record.payload.semantic_status,
-        authorizationGranted: false,
-        policyAuthority: false,
-        durable: false
-      });
-    }
-
     const evidenceManifest = evidenceIds.map(evidenceId => {
       const item = verified.get(evidenceId);
       return Object.freeze({
@@ -123,6 +252,28 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
         artifact_digest: item.artifact_digest
       });
     });
+    const evidenceManifestDigest = digest(evidenceManifest);
+    const recordDigest = digest(semantic);
+    const provenanceGraph = createProvenanceGraph(semantic, verified);
+    const existing = ledger.list({ kind: SEMANTIC_MEMORY_KIND })
+      .find(entry => entry.record?.payload?.record_id === semantic.record_id);
+    if (existing) {
+      if (existing.record.payload.record_digest !== recordDigest
+          || existing.record.payload.evidence_manifest_digest !== evidenceManifestDigest) {
+        return bad("SEMANTIC_RECORD_ID_COLLISION");
+      }
+      return Object.freeze({
+        ok: true,
+        duplicate: true,
+        memoryId: existing.record.id,
+        memoryHash: existing.hash,
+        graphDigest: existing.record.payload.provenance_graph.graph_digest,
+        semanticStatus: existing.record.payload.semantic_status,
+        authorizationGranted: false,
+        policyAuthority: false,
+        durable: false
+      });
+    }
 
     const memoryRecord = {
       id: "word-semantic:" + semantic.record_id,
@@ -132,11 +283,15 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
         schema_version: "kratt-semantic-memory/v1",
         record_id: semantic.record_id,
         record_digest: recordDigest,
+        evidence_manifest_digest: evidenceManifestDigest,
         semantic_status: semanticEvaluation.status,
         semantic_record: semantic,
         source_evidence_id: semantic.source.source_evidence_id,
         evidence_ids: evidenceIds,
-        evidence_manifest: evidenceManifest
+        evidence_manifest: evidenceManifest,
+        provenance_graph: provenanceGraph,
+        authorization_granted: false,
+        policy_authority: false
       }
     };
     const appended = ledger.append(memoryRecord);
@@ -151,6 +306,9 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
       memorySequence: appended.entry.sequence,
       memoryHash: appended.entry.hash,
       recordDigest,
+      graphDigest: provenanceGraph.graph_digest,
+      nodeCount: provenanceGraph.nodes.length,
+      edgeCount: provenanceGraph.edges.length,
       semanticStatus: semanticEvaluation.status,
       evidenceIds: Object.freeze(evidenceIds),
       authorizationGranted: false,

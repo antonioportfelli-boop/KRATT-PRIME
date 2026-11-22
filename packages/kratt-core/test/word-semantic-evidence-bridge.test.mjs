@@ -86,6 +86,17 @@ test("stores source-bound semantic record only after trusted evidence verificati
   assert.equal(result.durable, false);
   assert.equal(ledger.verify().ok, true);
   assert.equal(ledger.list({ kind: "WORD_SEMANTIC_RECORD" }).length, 1);
+  const stored = ledger.list({ kind: "WORD_SEMANTIC_RECORD" })[0].record.payload;
+  assert.equal(stored.provenance_graph.schema_version, "kratt-semantic-provenance-graph/v1");
+  for (const type of ["SOURCE_OCCURRENCE", "FORM", "CONTENT", "SENSE"]) {
+    const node = stored.provenance_graph.nodes.find(item => item.type === type);
+    assert.ok(node, "missing graph node type " + type);
+    assert.ok(node.evidence_ids.length > 0);
+  }
+  assert.ok(stored.provenance_graph.edges.some(edge => edge.relation === "INTERPRETED_AS"));
+  assert.equal(stored.policy_authority, false);
+  assert.equal(stored.authorization_granted, false);
+  assert.equal(result.graphDigest, stored.provenance_graph.graph_digest);
 });
 
 test("rejects evidence when the independent verifier does not accept it", async () => {
@@ -201,5 +212,108 @@ test("speech-act and effect claims carry evidence separately from effect measure
   const result = await bridge.ingest({ record, evidence: [evidence("evidence-source")] });
   assert.equal(result.ok, true);
   assert.equal(result.authorizationGranted, false);
+  assert.equal(ledger.verify().ok, true);
+});
+
+test("provenance graph preserves every semantic layer and its evidence edges", async () => {
+  const { ledger, bridge } = makeBridge();
+  const record = semanticRecord();
+  record.principles.push({
+    principle_id: "principle-01",
+    statement: "Principles require explicit source evidence.",
+    norm_type: "OPERATIONAL",
+    jurisdiction: "KRATT",
+    valid_from: null,
+    valid_until: null,
+    source_refs: ["evidence-source"]
+  });
+  record.intents.push({
+    intent_id: "intent-01",
+    actor_ref: "actor:user",
+    goal: "Separate intent from meaning.",
+    audience_refs: ["actor:agent"],
+    context_ref: "ctx:engineering",
+    attribution_kind: "INFERRED",
+    confidence: 0.9,
+    evidence_refs: ["evidence-source"]
+  });
+  record.speech_acts.push({
+    act_id: "act-01",
+    act_type: "DIRECTIVE",
+    speaker_ref: "actor:user",
+    addressee_refs: ["actor:agent"],
+    content_refs: ["content-01"],
+    evidence_refs: ["evidence-source"],
+    felicity_conditions: {}
+  });
+  record.effects.push({
+    effect_id: "effect-01",
+    effect_type: "TECHNICAL",
+    target_refs: ["system:kratt"],
+    direction: "POSITIVE",
+    magnitude: null,
+    evidence_refs: ["evidence-source"],
+    measurement_refs: [],
+    causal_status: "ASSERTED"
+  });
+  record.powers.push({
+    power_id: "power-01",
+    power_type: "INSTITUTIONAL",
+    holder_ref: "actor:owner",
+    target_refs: ["system:kratt"],
+    mechanism: "Policy control",
+    scope: "Feature branch",
+    evidence_refs: ["evidence-source"]
+  });
+  record.authorities.push({
+    authority_id: "authority-01",
+    authority_type: "DELEGATED",
+    issuer_ref: "actor:owner",
+    subject_ref: "actor:agent",
+    action_scope: "Prepare patch",
+    resource_scope: "feature/*",
+    jurisdiction: "KRATT",
+    valid_from: now,
+    valid_until: null,
+    evidence_refs: ["evidence-source"],
+    status: "CANDIDATE"
+  });
+
+  const result = await bridge.ingest({ record, evidence: [evidence("evidence-source")] });
+  assert.equal(result.ok, true);
+  const payload = ledger.list({ kind: "WORD_SEMANTIC_RECORD" })[0].record.payload;
+  const expectedTypes = ["SOURCE_OCCURRENCE", "FORM", "CONTENT", "SENSE", "PRINCIPLE", "INTENT", "SPEECH_ACT", "EFFECT", "POWER", "AUTHORITY_CLAIM", "EVIDENCE"];
+  for (const type of expectedTypes) {
+    const node = payload.provenance_graph.nodes.find(item => item.type === type);
+    assert.ok(node, "missing provenance node " + type);
+    assert.ok(node.evidence_ids.length > 0, "missing evidence reference on " + type);
+  }
+  assert.ok(payload.provenance_graph.edges.some(edge => edge.relation === "ATTRIBUTED_INTENT"));
+  assert.ok(payload.provenance_graph.edges.some(edge => edge.relation === "PERFORMS_SPEECH_ACT"));
+  assert.ok(payload.provenance_graph.edges.some(edge => edge.relation === "HAS_EFFECT_CLAIM"));
+  assert.ok(payload.provenance_graph.edges.some(edge => edge.relation === "HAS_AUTHORITY_CLAIM"));
+  assert.equal(result.authorizationGranted, false);
+});
+
+test("verified authority evidence is not treated as execution authorization", async () => {
+  const { ledger, bridge } = makeBridge();
+  const record = semanticRecord();
+  record.authorities.push({
+    authority_id: "authority-verified",
+    authority_type: "DELEGATED",
+    issuer_ref: "actor:owner",
+    subject_ref: "actor:agent",
+    action_scope: "Propose code",
+    resource_scope: "feature/*",
+    jurisdiction: "KRATT",
+    valid_from: now,
+    valid_until: null,
+    evidence_refs: ["evidence-source"],
+    status: "VERIFIED"
+  });
+  const result = await bridge.ingest({ record, evidence: [evidence("evidence-source")] });
+  assert.equal(result.ok, true);
+  assert.equal(result.authorizationGranted, false);
+  assert.equal(result.policyAuthority, false);
   assert.equal(ledger.verify().ok, true);
 });
