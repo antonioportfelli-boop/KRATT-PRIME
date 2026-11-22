@@ -1,13 +1,10 @@
 import { validateWordSemanticRecord } from "../../kratt-core/src/word-semantic-model.mjs";
+import { canonicalJson } from "../../kratt-core/src/canonical-json.mjs";
 
 const bad = (status, reason, details = {}) => Object.freeze({ ok: false, status, reason, ...details });
 const plain = value => value !== null && typeof value === "object" && !Array.isArray(value);
 
-function canonical(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
-  return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
-}
+function canonical(value) { return canonicalJson(value); }
 
 // Source occurrence, lexical form and source-grounded content are immutable once extracted.
 // Contextualization may add interpretations; classification may add typed layers. Neither
