@@ -20,6 +20,7 @@ export function createKrattSemanticPolicyAuthorizer({
   return async function authorize(request) {
     if (!request || request.action !== ACTION || !ID.test(request.requestId ?? "")
         || !ID.test(request.principalId ?? "") || !ID.test(request.recordId ?? "")
+        || request.resource !== "semantic-record:" + request.recordId
         || !/^sha256:[a-f0-9]{64}$/.test(request.recordDigest ?? "")) {
       throw new TypeError("SEMANTIC_POLICY_REQUEST_INVALID");
     }
