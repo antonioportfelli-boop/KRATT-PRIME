@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { canonicalDigest } from "./canonical-json.mjs";
 import { validateWordSemanticRecord } from "./word-semantic-model.mjs";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
@@ -6,7 +6,6 @@ const ACTION = "semantic.memory.append";
 const plain = value => value !== null && typeof value === "object" && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const bad = (status, reason) => Object.freeze({ ok: false, status, reason });
-const sha256 = value => createHash("sha256").update(value, "utf8").digest("hex");
 
 function collectEvidenceIds(record) {
   const ids = new Set([record.source.source_evidence_id]);
@@ -51,7 +50,7 @@ export function createSemanticIngestionRuntime({ authorize, loadEvidence, bridge
     // Work on an isolated snapshot: policy and evidence checks must refer to
     // exactly the record that will be sent to the evidence bridge.
     const snapshot = structuredClone(checked.value);
-    const recordDigest = "sha256:" + sha256(JSON.stringify(snapshot));
+    const recordDigest = canonicalDigest(snapshot);
     const resource = "semantic-record:" + snapshot.record_id;
     const evidenceIds = collectEvidenceIds(snapshot);
     const request = Object.freeze({
