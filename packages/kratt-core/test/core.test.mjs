@@ -17,7 +17,7 @@ import { AgentRegistry } from "../src/agent-registry.mjs";
 const at = "2026-11-04T07:00:00Z";
 const now = Date.parse(at);
 const task = (overrides={}) => ({schema_version:KRATT_SCHEMA_VERSION,task_id:"task-1",actor:"builder",action:"repo.read",target:{resource_type:"repository",resource_id:"KRATT-PRIME"},constraints:{branch:"integration"},required_evidence:[],created_at:at,requested_authority:["admin"],status:"PENDING",...overrides});
-const context = (overrides={}) => ({schema_version:KRATT_SCHEMA_VERSION,authorities:["repository.read"],allowed_targets:[{resource_type:"repository",resource_id:"KRATT-PRIME"}],policies:[{action:"repo.read",required_authority:"repository.read",target_types:["repository"],side_effect_class:"READ_ONLY"}],evaluated_at:at,expires_at:"2026-11-04T07:05:00Z",kill_switch:false,...overrides});
+const context = (overrides={}) => ({schema_version:KRATT_SCHEMA_VERSION,authorities:["repository.read"],allowed_targets:[{resource_type:"repository",resource_id:"KRATT-PRIME",branch:"integration"}],policies:[{action:"repo.read",required_authority:"repository.read",target_types:["repository"],side_effect_class:"READ_ONLY"}],evaluated_at:at,expires_at:"2026-11-04T07:05:00Z",kill_switch:false,...overrides});
 const evidence = () => ({schema_version:KRATT_SCHEMA_VERSION,evidence_id:"ev-1",subject:"KRATT-PRIME",claim_type:"TESTS_PASSED",source:{source_type:"github",source_id:"run-1",revision:"0123456789012345678901234567890123456789"},observed_at:at,verification_method:"signed-attestation",result:"VERIFIED",artifact_digest:null,metadata:{}});
 const verifyEvidence = record => record.source.source_type === "github" && record.verification_method === "signed-attestation";
 
@@ -31,7 +31,7 @@ test("invalid trusted context blocks",()=>{assert.equal(evaluatePolicy(task(),[]
 test("caller-provided VERIFIED flag is not trusted",()=>{
  const t=task({required_evidence:[{claim_type:"TESTS_PASSED",subject:"KRATT-PRIME",required:true,revision:null}]});
  assert.equal(evaluatePolicy(t,[evidence()],context(),{now}).decision,"INSUFFICIENT_EVIDENCE");
- const matchingEvidence = {...evidence(),subject:"repo-1"};
+ const matchingEvidence = {...evidence(),subject:"KRATT-PRIME"};
  assert.equal(evaluatePolicy(t,[matchingEvidence],context(),{now,verifyEvidence}).decision,"ALLOW");
 });
 test("external write with empty evidence is denied",()=>{
