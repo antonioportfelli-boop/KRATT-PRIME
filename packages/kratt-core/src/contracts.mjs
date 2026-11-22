@@ -7,7 +7,6 @@ export const EVIDENCE_CLAIMS = Object.freeze([
   "SECURITY_CONTROL_VERIFIED", "ARTIFACT_CREATED",
   "DEPLOYMENT_COMPLETED", "INTEGRATION_VERIFIED"
 ]);
-export const SIDE_EFFECT_CLASSES = Object.freeze(["READ_ONLY", "EXTERNAL_WRITE"]);
 export const SIDE_EFFECT_CLASSES = Object.freeze(["READ_ONLY", "LOCAL_WRITE", "EXTERNAL_WRITE", "IRREVERSIBLE"]);
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
