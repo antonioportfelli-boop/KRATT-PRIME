@@ -76,6 +76,12 @@ function createHarness(options = {}) {
       evaluatedAt: NOW
     })),
     approvalVerifier: options.approvalVerifier ?? (async approval => approval.verified === true),
+    testEvidenceVerifier: Object.hasOwn(options, "testEvidenceVerifier")
+      ? options.testEvidenceVerifier
+      : (async (evidence, context) =>
+        evidence.evidenceRef === "local:test-run" &&
+        evidence.passed === true &&
+        context.patchDigest.length === 64),
     resourceAdapters: {
       local: { runAgent: options.localAgent ?? makeAgent },
       cloud: { runAgent: options.cloudAgent ?? makeAgent }
@@ -143,12 +149,31 @@ test("local agent wave creates a proposal and never writes GitHub automatically"
   assert.equal(commits.length, 0);
 });
 
+test("unverified tester claims cannot advance a phase to approval", async () => {
+  const { engine } = createHarness({
+    testEvidenceVerifier: async () => false
+  });
+  const planned = await engine.propose(request());
+  const result = await engine.execute({ runId: planned.run.runId, requestId: "request-phase11" });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "TEST_EVIDENCE_UNVERIFIED");
+  assert.equal((await engine.getRun(planned.run.runId)).run.status, "QUALITY_BLOCKED");
+});
+
+test("missing test evidence verifier fails closed", async () => {
+  const { engine } = createHarness({ testEvidenceVerifier: null });
+  const planned = await engine.propose(request());
+  const result = await engine.execute({ runId: planned.run.runId, requestId: "request-phase11" });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "TEST_EVIDENCE_VERIFIER_NOT_CONFIGURED");
+});
+
 test("remote route is blocked until exact request-bound data-transfer approval", async () => {
   let agentCalls = 0;
   const cloudAgent = async ({ agent }) => {
     agentCalls++;
     if (agent === "CODER") return { summary: "cloud coder", patches: [{ path: "docs/cloud.md", content: "# cloud\n" }] };
-    if (agent === "TESTER") return { summary: "cloud tests", tests: [{ name: "cloud-test", passed: true }] };
+    if (agent === "TESTER") return { summary: "cloud tests", tests: [{ name: "cloud-test", passed: true, evidenceRef: "local:test-run" }] };
     if (agent === "CRITIC") return { summary: "clear", blockers: [] };
     return { summary: "cloud stage " + agent };
   };
