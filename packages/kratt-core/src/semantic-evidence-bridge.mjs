@@ -1,12 +1,38 @@
 import { validateEvidenceRecord } from "./contracts.mjs";
 import { MemoryLedger } from "./memory-ledger.mjs";
 import { evaluateWordSemantics, validateWordSemanticRecord } from "./word-semantic-model.mjs";
-import { canonicalJson, canonicalDigest, sha256Hex } from "./canonical-json.mjs";
+import { canonicalDigest, sha256Hex } from "./canonical-json.mjs";
 
 export const SEMANTIC_EVIDENCE_BRIDGE_VERSION = "1.0.0";
 export const SEMANTIC_MEMORY_KIND = "WORD_SEMANTIC_RECORD";
 
 const bad = reason => Object.freeze({ ok: false, reason });
+const nonBlank = value => typeof value === "string" && value.trim().length > 0 && value.length <= 256;
+
+function validMeasurementEvidence(item, recordId, effect) {
+  const metadata = item?.metadata;
+  return item?.result === "VERIFIED"
+    && item.claim_type === "MEASUREMENT_RECORDED"
+    && item.subject === recordId
+    && metadata?.effect_id === effect.effect_id
+    && effect.target_refs.includes(metadata.target_ref)
+    && nonBlank(metadata.metric_name)
+    && typeof metadata.metric_value === "number" && Number.isFinite(metadata.metric_value)
+    && nonBlank(metadata.metric_unit)
+    && nonBlank(metadata.measurement_method);
+}
+
+function validCausalAnalysisEvidence(item, recordId, effect, { replicated = false } = {}) {
+  const metadata = item?.metadata;
+  return item?.result === "VERIFIED"
+    && item.claim_type === "CAUSAL_ANALYSIS_RECORDED"
+    && item.subject === recordId
+    && metadata?.effect_id === effect.effect_id
+    && nonBlank(metadata.analysis_method)
+    && nonBlank(metadata.identification_strategy)
+    && metadata.alternative_hypotheses_considered === true
+    && (!replicated || metadata.replication_status === "REPLICATED");
+}
 function createProvenanceGraph(record, verifiedEvidence) {
   const nodes = [];
   const edges = [];
@@ -196,9 +222,32 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
     const referenced = new Set([semantic.source.source_evidence_id]);
     for (const refs of requiredGroups) for (const evidenceId of refs) referenced.add(evidenceId);
     for (const effect of semantic.effects) {
-      for (const evidenceId of effect.measurement_refs) referenced.add(evidenceId);
+      for (const evidenceId of effect.measurement_refs) {
+        referenced.add(evidenceId);
+        const measurement = evidenceById.get(evidenceId);
+        if (!validMeasurementEvidence(measurement, semantic.record_id, effect)) {
+          return bad("EFFECT_MEASUREMENT_EVIDENCE_INVALID:" + evidenceId);
+        }
+      }
       if (["OBSERVED", "CAUSALLY_SUPPORTED", "CAUSALLY_ESTABLISHED"].includes(effect.causal_status)
           && effect.measurement_refs.length === 0) return bad("EFFECT_MEASUREMENT_EVIDENCE_REQUIRED");
+
+      if (["CAUSALLY_SUPPORTED", "CAUSALLY_ESTABLISHED"].includes(effect.causal_status)) {
+        const analyses = effect.evidence_refs
+          .map(evidenceId => evidenceById.get(evidenceId))
+          .filter(item => validCausalAnalysisEvidence(
+            item, semantic.record_id, effect, { replicated: effect.causal_status === "CAUSALLY_ESTABLISHED" }
+          ));
+        const independentSources = new Set(analyses.map(item =>
+          item.source.source_type + ":" + item.source.source_id
+        ));
+        const minimum = effect.causal_status === "CAUSALLY_ESTABLISHED" ? 2 : 1;
+        if (independentSources.size < minimum) {
+          return bad(effect.causal_status === "CAUSALLY_ESTABLISHED"
+            ? "EFFECT_CAUSAL_ANALYSIS_INDEPENDENCE_REQUIRED"
+            : "EFFECT_CAUSAL_ANALYSIS_EVIDENCE_REQUIRED");
+        }
+      }
     }
 
     const verified = new Map();
