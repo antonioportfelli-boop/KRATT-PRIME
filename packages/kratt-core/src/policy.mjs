@@ -26,18 +26,6 @@ function safelyVerify(verifier, ...args) {
 }
 
 /**
- * Deterministic policy evaluator.
- *
- * The trusted context and verifier callbacks must be supplied by a server-owned
- * composition root. Never pass model-, task-, or connector-authored verifier
- * functions here. This module does not itself establish the authenticity of
- * that composition root.
- *
- * options: { now, maxContextAgeMs, approval, verifyApproval, verifyEvidence }
- */
-export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, options = {}) {
-  const trustedOptions = options && typeof options === "object" ? options : {};
-/**
  * Pure authorization evaluator.
  *
  * verifyEvidence MUST be supplied by the trusted composition root (for example,
