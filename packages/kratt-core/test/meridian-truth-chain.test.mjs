@@ -36,7 +36,7 @@ function evidence(id, sourceId) {
   return {
     schema_version: KRATT_SCHEMA_VERSION,
     evidence_id: id,
-    subject: "subject-meridian",
+    subject: record.record_id,
     claim_type: "TESTS_PASSED",
     source: { source_type: "github", source_id: sourceId, revision: null },
     observed_at: at,
@@ -47,14 +47,17 @@ function evidence(id, sourceId) {
   };
 }
 
-function reflection({ conflict = false } = {}) {
+function reflection(record, { conflict = false } = {}) {
   const items = [evidence("evidence-1", "independent-source-1"), evidence("evidence-2", "independent-source-2")];
   return {
     analysis_id: conflict ? "meridian-conflict-01" : "meridian-support-01",
+    record_id: record.record_id,
+    source_digest: record.source.source_digest,
+    claim_bindings: [{ claim_id: "claim-meridian", target_type: "CONTENT", target_id: record.contents[0].content_id }],
     evidence: items,
     claims: [{
       claim_id: "claim-meridian",
-      statement: "The source claim is supported.",
+      statement: record.contents[0].payload,
       depends_on: [],
       assessments: [
         { evidence_id: "evidence-1", stance: "SUPPORTS", rationale_code: "independent-attestation" },
@@ -107,7 +110,7 @@ test("MÕTLEMINE reflection clears two independent supports but not contradictio
   const engine = createMotlemineEngine({ verifyEvidence: e => e.source.source_type === "github", minIndependentSources: 2 });
   const chain = createMeridianTruthChain({ reflectionEngine: engine, requireReflection: true, clock: () => at });
   const source = makeRecord();
-  const clear = reflection();
+  const clear = reflection(source);
   const preflight = chain.talmudPreflight({ record: source, reflection: clear });
   assert.equal(preflight.ok, true);
   const postflight = chain.antiTalmudPostflight({ record: source, preflightToken: preflight.token, reflection: clear });
@@ -116,7 +119,7 @@ test("MÕTLEMINE reflection clears two independent supports but not contradictio
   assert.equal(postflight.report.reflection_status, "READY_FOR_REVIEW");
 
   const conflictChain = createMeridianTruthChain({ reflectionEngine: engine, requireReflection: true, clock: () => at });
-  const conflicted = conflictChain.talmudPreflight({ record: source, reflection: reflection({ conflict: true }) });
+  const conflicted = conflictChain.talmudPreflight({ record: source, reflection: reflection(source, { conflict: true }) });
   assert.equal(conflicted.ok, false);
   assert.equal(conflicted.status, "NEEDS_REVIEW");
   assert.ok(conflicted.correction_proposals.some(p => p.code === "INDEPENDENT_EVIDENCE_CONFLICT"));
