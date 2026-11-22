@@ -63,7 +63,9 @@ function make() {
       goal: "Eristada semantilisi kihte",
       audience_refs: ["actor:agent"],
       context_ref: "ctx:engineering",
-      confidence: 0.95
+      attribution_kind: "INFERRED",
+      confidence: 0.95,
+      evidence_refs: ["evidence-1"]
     }],
     speechActs: [{
       act_id: "act-1",
@@ -79,6 +81,7 @@ function make() {
       target_refs: ["system:kratt"],
       direction: "POSITIVE",
       magnitude: null,
+      evidence_refs: ["evidence-1"],
       measurement_refs: [],
       causal_status: "ASSERTED"
     }],

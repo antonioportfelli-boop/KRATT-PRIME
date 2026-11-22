@@ -158,3 +158,48 @@ test("unverified source evidence cannot enter semantic memory", async () => {
   });
   assert.match(result.reason, /^SEMANTIC_EVIDENCE_NOT_VERIFIED/);
 });
+
+test("inferred intent requires linked evidence before memory append", async () => {
+  const { bridge } = makeBridge();
+  const record = semanticRecord();
+  record.intents.push({
+    intent_id: "intent-unproven",
+    actor_ref: "actor:external",
+    goal: "Inferred goal",
+    audience_refs: [],
+    context_ref: "ctx:engineering",
+    attribution_kind: "INFERRED",
+    confidence: 0.7,
+    evidence_refs: []
+  });
+  const result = await bridge.ingest({ record, evidence: [evidence("evidence-source")] });
+  assert.equal(result.reason, "SEMANTIC_LAYER_PROVENANCE_REQUIRED");
+});
+
+test("speech-act and effect claims carry evidence separately from effect measurements", async () => {
+  const { ledger, bridge } = makeBridge();
+  const record = semanticRecord();
+  record.speech_acts.push({
+    act_id: "act-01",
+    act_type: "DIRECTIVE",
+    speaker_ref: "actor:user",
+    addressee_refs: ["actor:agent"],
+    content_refs: ["content-01"],
+    evidence_refs: ["evidence-source"],
+    felicity_conditions: {}
+  });
+  record.effects.push({
+    effect_id: "effect-01",
+    effect_type: "TECHNICAL",
+    target_refs: ["system:kratt"],
+    direction: "POSITIVE",
+    magnitude: null,
+    evidence_refs: ["evidence-source"],
+    measurement_refs: [],
+    causal_status: "ASSERTED"
+  });
+  const result = await bridge.ingest({ record, evidence: [evidence("evidence-source")] });
+  assert.equal(result.ok, true);
+  assert.equal(result.authorizationGranted, false);
+  assert.equal(ledger.verify().ok, true);
+});

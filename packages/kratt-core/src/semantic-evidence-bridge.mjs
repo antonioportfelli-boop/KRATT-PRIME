@@ -46,6 +46,9 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
     const requiredGroups = [
       ...semantic.contents.map(content => content.evidence_refs),
       ...semantic.senses.map(sense => sense.evidence_refs),
+      ...semantic.intents.map(intent => intent.evidence_refs),
+      ...semantic.speech_acts.map(act => act.evidence_refs),
+      ...semantic.effects.map(effect => effect.evidence_refs),
       ...semantic.principles.map(principle => principle.source_refs),
       ...semantic.powers.map(power => power.evidence_refs),
       ...semantic.authorities.filter(authority => authority.status === "VERIFIED").map(authority => authority.evidence_refs)

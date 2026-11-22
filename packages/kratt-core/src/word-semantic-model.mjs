@@ -1,4 +1,4 @@
-export const WORD_SEMANTIC_MODEL_VERSION = "2.0.0";
+export const WORD_SEMANTIC_MODEL_VERSION = "2.1.0";
 export const WORD_SEMANTIC_SCHEMA = "kratt-word-semantics/v2";
 export const AMBIGUITY_CONFIDENCE_THRESHOLD = 0.8;
 
@@ -42,9 +42,9 @@ const CONTENT_KEYS = [
 const LAYER_KEYS = {
   senses: ["sense_id", "content_refs", "definition", "language", "domain", "concept_ref", "confidence", "evidence_refs"],
   principles: ["principle_id", "statement", "norm_type", "jurisdiction", "valid_from", "valid_until", "source_refs"],
-  intents: ["intent_id", "actor_ref", "goal", "audience_refs", "context_ref", "confidence"],
-  speech_acts: ["act_id", "act_type", "speaker_ref", "addressee_refs", "content_refs", "felicity_conditions"],
-  effects: ["effect_id", "effect_type", "target_refs", "direction", "magnitude", "measurement_refs", "causal_status"],
+  intents: ["intent_id", "actor_ref", "goal", "audience_refs", "context_ref", "attribution_kind", "confidence", "evidence_refs"],
+  speech_acts: ["act_id", "act_type", "speaker_ref", "addressee_refs", "content_refs", "evidence_refs", "felicity_conditions"],
+  effects: ["effect_id", "effect_type", "target_refs", "direction", "magnitude", "evidence_refs", "measurement_refs", "causal_status"],
   powers: ["power_id", "power_type", "holder_ref", "target_refs", "mechanism", "scope", "evidence_refs"],
   authorities: ["authority_id", "authority_type", "issuer_ref", "subject_ref", "action_scope", "resource_scope", "jurisdiction", "valid_from", "valid_until", "evidence_refs", "status"]
 };
@@ -118,11 +118,12 @@ export function validateWordSemanticRecord(record) {
   for (const intent of record.intents) {
     if (!bounded(intent.actor_ref, 192) || !bounded(intent.goal, 1000)
         || !refs(intent.audience_refs) || !bounded(intent.context_ref, 192)
-        || !confidence(intent.confidence)) return fail("INTENT_FIELDS_INVALID");
+        || !["EXPLICIT", "INFERRED", "UNKNOWN"].includes(intent.attribution_kind)
+        || !confidence(intent.confidence) || !refs(intent.evidence_refs)) return fail("INTENT_FIELDS_INVALID");
   }
   for (const act of record.speech_acts) {
     if (!["ASSERT", "REQUEST", "DIRECTIVE", "PROMISE", "WARNING", "DECLARATION", "QUESTION", "EXPRESSIVE", "OTHER"].includes(act.act_type)
-        || !bounded(act.speaker_ref, 192) || !refs(act.addressee_refs) || !refs(act.content_refs)
+        || !bounded(act.speaker_ref, 192) || !refs(act.addressee_refs) || !refs(act.content_refs) || !refs(act.evidence_refs)
         || act.content_refs.some(id => !contentIds.has(id)) || !plain(act.felicity_conditions)) {
       return fail("SPEECH_ACT_FIELDS_INVALID");
     }
@@ -131,7 +132,7 @@ export function validateWordSemanticRecord(record) {
     if (!["BEHAVIORAL", "INFORMATIONAL", "ECONOMIC", "LEGAL", "SOCIAL", "TECHNICAL", "SAFETY", "OTHER"].includes(effect.effect_type)
         || !refs(effect.target_refs) || !["POSITIVE", "NEGATIVE", "MIXED", "UNKNOWN"].includes(effect.direction)
         || !(effect.magnitude === null || (Number.isFinite(effect.magnitude) && effect.magnitude >= 0))
-        || !refs(effect.measurement_refs)
+        || !refs(effect.evidence_refs) || !refs(effect.measurement_refs)
         || !["ASSERTED", "OBSERVED", "CAUSALLY_SUPPORTED", "CAUSALLY_ESTABLISHED", "UNKNOWN"].includes(effect.causal_status)) {
       return fail("EFFECT_FIELDS_INVALID");
     }
