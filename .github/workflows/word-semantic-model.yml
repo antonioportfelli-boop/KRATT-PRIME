@@ -17,6 +17,7 @@ on:
       - "packages/kratt-core/migrations/0005_semantic_memory.sql"
       - "scripts/wave8-apply-migration.mjs"
       - "packages/kratt-core/test/semantic-ingestion-runtime.test.mjs"
+      - "packages/kratt-core/test/async-trusted-runtime.test.mjs"
       - "packages/kratt-core/src/memory-ledger.mjs"
       - "packages/kratt-core/src/contracts.mjs"
       - "packages/kratt-core/test/word-semantic-evidence-bridge.test.mjs"
