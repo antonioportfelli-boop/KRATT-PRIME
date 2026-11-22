@@ -94,3 +94,14 @@ Schema v2 introduces the mandatory contents collection, requires every SENSE to 
 ## Research and implementation caveats
 
 This is an engineering model grounded in distinctions from lexical semantics, pragmatics, speech-act theory, argumentation, provenance and governance. Academic synthesis is still pending; do not label the model peer-reviewed. The deterministic prototype validates records and separation rules but is not yet wired into the production Base44 agent runtime. Durable Base44 persistence, evidence adapters, calibrated multilingual evaluation, relationship provenance and UI integration remain follow-up build work. No merge or production deployment is performed.
+
+
+## Durable semantic memory and agent orchestration
+
+The PostgreSQL adapter in `postgres-semantic-memory-store.mjs` implements the same append/list/verify contract as the local ledger, but stores records in an append-only hash chain. Migration `0005_semantic_memory.sql` creates the event log and singleton chain head. The adapter is only durable when deployed against a configured PostgreSQL database with that migration applied and an appropriately restricted database role. The migration itself is not executed by CI.
+
+The bridge now awaits the ledger contract, so both the in-memory test adapter and PostgreSQL adapter can be used. PostgreSQL append is transactional, duplicate-ID idempotent for byte-canonically equal records, and rejects same-ID content changes. The chain verifier checks every event and the stored head.
+
+`semantic-policy-authorizer.mjs` adapts the existing KRATT `evaluatePolicy` evaluator to semantic append requests. It binds the exact principal, request ID, action, target and record digest, and includes verified policy evidence in the response. The evidence bridge still independently validates and verifies evidence before storage. Production must supply authenticated trusted context, trusted evidence loading, real signature verification and atomic durable nonce consumption for approvals.
+
+`semantic-agent-pipeline.mjs` orders extraction, contextualization, semantic classification and critic review. Only an ACCEPT verdict reaches the policy-gated ingestion runtime. Stage audit failure and agent errors fail closed. This pipeline does not call providers or perform external writes.

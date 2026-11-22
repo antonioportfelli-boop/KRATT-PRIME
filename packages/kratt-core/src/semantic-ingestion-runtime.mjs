@@ -104,15 +104,21 @@ export function createSemanticIngestionRuntime({ authorize, loadEvidence, bridge
     }
 
     let evidence;
-    try {
-      evidence = await loadEvidence({
-        requestId,
-        principalId,
-        recordId: snapshot.record_id,
-        evidenceIds: Object.freeze(evidenceIds)
-      });
-    } catch {
-      return bad("BLOCKED", "SEMANTIC_EVIDENCE_UNAVAILABLE");
+    if (Array.isArray(decision.evidence)) {
+      // The policy adapter may supply the evidence it evaluated. The bridge below
+      // independently validates and verifies every item before persistence.
+      evidence = decision.evidence;
+    } else {
+      try {
+        evidence = await loadEvidence({
+          requestId,
+          principalId,
+          recordId: snapshot.record_id,
+          evidenceIds: Object.freeze(evidenceIds)
+        });
+      } catch {
+        return bad("BLOCKED", "SEMANTIC_EVIDENCE_UNAVAILABLE");
+      }
     }
     if (!Array.isArray(evidence)) {
       return bad("BLOCKED", "SEMANTIC_EVIDENCE_ENVELOPE_INVALID");

@@ -158,7 +158,7 @@ function createProvenanceGraph(record, verifiedEvidence) {
 }
 
 /**
- * Bridges source-bound Semantic Model v2 records into the append-only local MemoryLedger.
+ * Bridges source-bound Semantic Model v2 records into an append-only ledger adapter (local or durable).
  * It is not a durable adapter and never grants policy or execution authority.
  */
 export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
@@ -232,7 +232,7 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
       verified.set(evidenceId, item);
     }
 
-    const integrityBefore = ledger.verify();
+    const integrityBefore = await ledger.verify();
     if (!integrityBefore?.ok) return bad("MEMORY_LEDGER_INTEGRITY_FAILED");
 
     const semanticEvaluation = evaluateWordSemantics(semantic);
@@ -254,8 +254,10 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
     const evidenceManifestDigest = digest(evidenceManifest);
     const recordDigest = digest(semantic);
     const provenanceGraph = createProvenanceGraph(semantic, verified);
-    const existing = ledger.list({ kind: SEMANTIC_MEMORY_KIND })
-      .find(entry => entry.record?.payload?.record_id === semantic.record_id);
+    const existing = typeof ledger.getById === "function"
+      ? await ledger.getById("word-semantic:" + semantic.record_id)
+      : (await ledger.list({ kind: SEMANTIC_MEMORY_KIND }))
+        .find(entry => entry.record?.payload?.record_id === semantic.record_id);
     if (existing) {
       if (existing.record.payload.record_digest !== recordDigest
           || existing.record.payload.evidence_manifest_digest !== evidenceManifestDigest) {
@@ -270,7 +272,7 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
         semanticStatus: existing.record.payload.semantic_status,
         authorizationGranted: false,
         policyAuthority: false,
-        durable: false
+        durable: ledger.durable === true
       });
     }
 
@@ -293,9 +295,22 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
         policy_authority: false
       }
     };
-    const appended = ledger.append(memoryRecord);
+    const appended = await ledger.append(memoryRecord);
     if (!appended?.ok) return bad(appended?.reason ?? "SEMANTIC_MEMORY_APPEND_FAILED");
-    const integrityAfter = ledger.verify();
+    if (appended.duplicate) {
+      const prior = appended.entry;
+      if (prior?.record?.payload?.record_digest !== recordDigest
+          || prior?.record?.payload?.evidence_manifest_digest !== evidenceManifestDigest) {
+        return bad("SEMANTIC_RECORD_ID_COLLISION");
+      }
+      return Object.freeze({
+        ok: true, duplicate: true, memoryId: prior.record.id, memoryHash: prior.hash,
+        graphDigest: prior.record.payload.provenance_graph.graph_digest,
+        semanticStatus: prior.record.payload.semantic_status,
+        authorizationGranted: false, policyAuthority: false, durable: ledger.durable === true
+      });
+    }
+    const integrityAfter = await ledger.verify();
     if (!integrityAfter?.ok) return bad("MEMORY_LEDGER_INTEGRITY_FAILED_AFTER_APPEND");
 
     return Object.freeze({
@@ -312,7 +327,7 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
       evidenceIds: Object.freeze(evidenceIds),
       authorizationGranted: false,
       policyAuthority: false,
-      durable: false
+      durable: ledger.durable === true
     });
   }
 

@@ -8,6 +8,13 @@ on:
       - "packages/kratt-core/src/word-semantic-model.mjs"
       - "packages/kratt-core/src/semantic-evidence-bridge.mjs"
       - "packages/kratt-core/src/semantic-ingestion-runtime.mjs"
+      - "packages/kratt-core/src/postgres-semantic-memory-store.mjs"
+      - "packages/kratt-core/src/semantic-policy-authorizer.mjs"
+      - "packages/kratt-orchestrator/src/semantic-agent-pipeline.mjs"
+      - "packages/kratt-core/test/postgres-semantic-memory-store.test.mjs"
+      - "packages/kratt-core/test/semantic-policy-authorizer.test.mjs"
+      - "packages/kratt-orchestrator/test/semantic-agent-pipeline.test.mjs"
+      - "packages/kratt-core/migrations/0005_semantic_memory.sql"
       - "packages/kratt-core/test/semantic-ingestion-runtime.test.mjs"
       - "packages/kratt-core/src/memory-ledger.mjs"
       - "packages/kratt-core/src/contracts.mjs"
@@ -42,6 +49,10 @@ jobs:
         with:
           node-version: 22
       - name: Check syntax
-        run: node --check packages/kratt-core/src/word-semantic-model.mjs
+        run: |
+          node --check packages/kratt-core/src/word-semantic-model.mjs
+          node --check packages/kratt-core/src/postgres-semantic-memory-store.mjs
+          node --check packages/kratt-core/src/semantic-policy-authorizer.mjs
+          node --check packages/kratt-orchestrator/src/semantic-agent-pipeline.mjs
       - name: Run word semantics tests
-        run: node --test packages/kratt-core/test/word-semantic-*.test.mjs
+        run: node --test packages/kratt-core/test/word-semantic-*.test.mjs packages/kratt-core/test/postgres-semantic-memory-store.test.mjs packages/kratt-core/test/semantic-policy-authorizer.test.mjs packages/kratt-orchestrator/test/semantic-agent-pipeline.test.mjs
