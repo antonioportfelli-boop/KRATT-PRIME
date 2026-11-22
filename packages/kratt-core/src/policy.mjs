@@ -37,6 +37,7 @@ function safelyVerify(verifier, ...args) {
  * requires it for policies marked approval_required; no request-side boolean grants approval.
  */
 export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, options = {}) {
+  const trustedOptions = options && typeof options === "object" ? options : {};
   const task = validateTaskEnvelope(taskInput);
   const taskId = task.ok ? task.value.task_id : "invalid";
   const context = validateTrustedContext(trustedContextInput);
