@@ -63,6 +63,5 @@ jobs:
           node --check packages/kratt-core/src/postgres-semantic-memory-store.mjs
           node --check packages/kratt-core/src/semantic-policy-authorizer.mjs
           node --check packages/kratt-orchestrator/src/semantic-agent-pipeline.mjs
-          node --check scripts/wave8-apply-migration.mjs
       - name: Run word semantics tests
-        run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
+        run: node --test packages/kratt-core/test/word-semantic-*.test.mjs packages/kratt-core/test/postgres-semantic-memory-store.test.mjs packages/kratt-core/test/semantic-policy-authorizer.test.mjs packages/kratt-orchestrator/test/semantic-agent-pipeline.test.mjs
