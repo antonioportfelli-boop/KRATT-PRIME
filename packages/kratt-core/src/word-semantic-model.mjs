@@ -1,3 +1,5 @@
+import { canonicalJson } from "./canonical-json.mjs";
+
 export const WORD_SEMANTIC_MODEL_VERSION = "2.1.0";
 export const WORD_SEMANTIC_SCHEMA = "kratt-word-semantics/v2";
 export const AMBIGUITY_CONFIDENCE_THRESHOLD = 0.8;
@@ -64,6 +66,7 @@ function uniqueNodeIds(record) {
 }
 
 export function validateWordSemanticRecord(record) {
+  try { canonicalJson(record); } catch { return fail("SEMANTIC_RECORD_NOT_CANONICAL_JSON"); }
   if (!exact(record, TOP_LEVEL_KEYS) || record.schema_version !== WORD_SEMANTIC_SCHEMA
       || !ID.test(record.record_id ?? "") || !exact(record.source, SOURCE_KEYS)
       || !bounded(record.source.source_ref, 1000) || !DIGEST.test(record.source.source_digest ?? "") || !ID.test(record.source.source_evidence_id ?? "")
