@@ -1,4 +1,4 @@
-import { canonicalDigest } from "./canonical-json.mjs";
+import { canonicalJson, canonicalDigest } from "./canonical-json.mjs";
 import { evaluateWordSemantics, validateWordSemanticRecord } from "./word-semantic-model.mjs";
 
 const plain = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -36,29 +36,69 @@ function correction(recordId, code, action, severity, evidenceRefs = [], details
   return Object.freeze({ proposal_id: "correction:" + canonicalDigest(core).slice("sha256:".length), ...core });
 }
 
-function reflectionReview(engine, reflection, required) {
+function reflectionReview(engine, reflection, required, record) {
   if (reflection == null) {
     return required
       ? { ok: false, status: "BLOCKED", reason: "MOTLEMINe_REFLECTION_REQUIRED" }
-      : { ok: true, status: "NOT_RUN", report: null };
+      : { ok: true, status: "NOT_RUN", report: null, bindingDigest: null };
   }
   if (!engine || typeof engine.analyze !== "function") {
     return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_ENGINE_NOT_CONFIGURED" };
   }
   try {
-    const report = engine.analyze(reflection);
+    canonicalJson(reflection);
+  } catch {
+    return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_REFLECTION_NOT_CANONICAL" };
+  }
+  if (!plain(reflection) || reflection.record_id !== record.record_id
+      || reflection.source_digest !== record.source.source_digest
+      || !Array.isArray(reflection.claims) || !Array.isArray(reflection.claim_bindings)
+      || reflection.claims.length === 0 || reflection.claim_bindings.length !== reflection.claims.length
+      || !Array.isArray(reflection.evidence) || reflection.evidence.length === 0
+      || reflection.evidence.some(item => !plain(item) || item.subject !== record.record_id)) {
+    return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_REFLECTION_NOT_BOUND_TO_RECORD" };
+  }
+
+  const contentById = new Map(record.contents.map(item => [item.content_id, item.payload]));
+  const senseById = new Map(record.senses.map(item => [item.sense_id, item.definition]));
+  const claimsById = new Map(reflection.claims.map(item => [item?.claim_id, item]));
+  const mappedClaims = new Set();
+  for (const binding of reflection.claim_bindings) {
+    if (!plain(binding) || Reflect.ownKeys(binding).length !== 3
+        || !Object.hasOwn(binding, "claim_id") || !Object.hasOwn(binding, "target_type")
+        || !Object.hasOwn(binding, "target_id") || mappedClaims.has(binding.claim_id)) {
+      return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_CLAIM_BINDING_INVALID" };
+    }
+    const claim = claimsById.get(binding.claim_id);
+    const targetText = binding.target_type === "CONTENT" ? contentById.get(binding.target_id)
+      : binding.target_type === "SENSE" ? senseById.get(binding.target_id) : undefined;
+    if (!claim || typeof targetText !== "string" || claim.statement !== targetText) {
+      return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_CLAIM_BINDING_MISMATCH" };
+    }
+    mappedClaims.add(binding.claim_id);
+  }
+  if (mappedClaims.size !== claimsById.size) {
+    return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_CLAIM_BINDING_INCOMPLETE" };
+  }
+
+  try {
+    const report = engine.analyze({
+      analysis_id: reflection.analysis_id,
+      claims: reflection.claims,
+      evidence: reflection.evidence
+    });
     if (!plain(report) || typeof report.status !== "string") {
       return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_REPORT_INVALID" };
     }
+    const bindingDigest = canonicalDigest(reflection);
     if (report.status !== "READY_FOR_REVIEW") {
-      return { ok: false, status: report.status, reason: "MOTLEMINe_REVIEW_NOT_CLEAR", report };
+      return { ok: false, status: report.status, reason: "MOTLEMINe_REVIEW_NOT_CLEAR", report, bindingDigest };
     }
-    return { ok: true, status: report.status, report };
+    return { ok: true, status: report.status, report, bindingDigest };
   } catch {
     return { ok: false, status: "BLOCKED", reason: "MOTLEMINe_ANALYSIS_FAILED" };
   }
 }
-
 function reflectionCorrections(recordId, report) {
   if (!report || !Array.isArray(report.claims)) return [];
   const proposals = [];
@@ -127,7 +167,7 @@ export function createMeridianTruthChain({
       });
     }
 
-    const reflected = reflectionReview(reflectionEngine, reflection, requireReflection);
+    const reflected = reflectionReview(reflectionEngine, reflection, requireReflection, checked.value);
     if (!reflected.ok) {
       const proposals = reflectionCorrections(checked.value.record_id, reflected.report);
       if (!proposals.length) proposals.push(correction(
@@ -146,7 +186,7 @@ export function createMeridianTruthChain({
       schema_version: "meridian-preflight/v1",
       record_id: checked.value.record_id,
       origin_digest: originDigest,
-      reflection_digest: reflected.report?.report_digest ?? null
+      reflection_digest: reflected.bindingDigest ?? null
     };
     const token = deepFreeze({ ...tokenCore, token_digest: canonicalDigest(tokenCore) });
     return Object.freeze({
@@ -180,7 +220,10 @@ export function createMeridianTruthChain({
       origin_digest: token.origin_digest,
       reflection_digest: token.reflection_digest
     };
-    if (!plain(token) || token.schema_version !== "meridian-preflight/v1"
+    let tokenCanonical = false;
+    try { canonicalJson(token); tokenCanonical = true; } catch {}
+    if (!plain(token) || !tokenCanonical || Reflect.ownKeys(token).length !== 5
+        || token.schema_version !== "meridian-preflight/v1"
         || token.record_id !== checked.value.record_id
         || token.token_digest !== canonicalDigest(tokenCore)) {
       return Object.freeze({
@@ -265,7 +308,8 @@ export function createMeridianTruthChain({
       record_digest: canonicalDigest(checked.value),
       semantic_status: semantic.status,
       reflection_status: reflected.status,
-      reflection_digest: reflected.report?.report_digest ?? null,
+      reflection_digest: reflected.bindingDigest ?? null,
+      reflection_report_digest: reflected.report?.report_digest ?? null,
       correction_proposals: proposals,
       auto_corrections_applied: 0,
       policy_authority: false,
