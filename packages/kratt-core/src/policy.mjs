@@ -6,7 +6,6 @@ import {
   validateTrustedContext
 } from "./contracts.mjs";
 import { createHash } from "node:crypto";
-import { POLICY_DECISIONS, validateEvidenceRecord, validateTaskEnvelope, validateTrustedContext } from "./contracts.mjs";
 
 function decision(taskId, value, reasons, evidenceIds, evaluatedAt) {
   return Object.freeze({
@@ -27,18 +26,6 @@ function safelyVerify(verifier, ...args) {
 }
 
 /**
- * Deterministic policy evaluator.
- *
- * The trusted context and verifier callbacks must be supplied by a server-owned
- * composition root. Never pass model-, task-, or connector-authored verifier
- * functions here. This module does not itself establish the authenticity of
- * that composition root.
- *
- * options: { now, maxContextAgeMs, approval, verifyApproval, verifyEvidence }
- */
-export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, options = {}) {
-  const trustedOptions = options && typeof options === "object" ? options : {};
-/**
  * Pure authorization evaluator.
  *
  * verifyEvidence MUST be supplied by the trusted composition root (for example,
@@ -50,6 +37,7 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
  * requires it for policies marked approval_required; no request-side boolean grants approval.
  */
 export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, options = {}) {
+  const trustedOptions = options && typeof options === "object" ? options : {};
   const task = validateTaskEnvelope(taskInput);
   const taskId = task.ok ? task.value.task_id : "invalid";
   const context = validateTrustedContext(trustedContextInput);
@@ -76,16 +64,6 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   if (!c.policies.length)
     return decision(t.task_id, "BLOCKED", ["MISSING_POLICY"], [], evaluatedAt);
 
-  const matchingRules = c.policies.filter(p => p.action === t.action);
-  if (matchingRules.length > 1)
-    return decision(t.task_id, "BLOCKED", ["POLICY_CONFLICT"], [], evaluatedAt);
-  const rule = matchingRules[0];
-  if (!rule) return decision(t.task_id, "DENY", ["UNSUPPORTED_ACTION"], [], evaluatedAt);
-  if (t.status === "CANCELLED") return decision(t.task_id,"DENY",["TASK_CANCELLED"],[],evaluatedAt);
-  if (!Array.isArray(evidenceInput) || evidenceInput.length > 256)
-    return decision(t.task_id,"INSUFFICIENT_EVIDENCE",["INVALID_EVIDENCE_SET"],[],evaluatedAt);
-  if (!c.policies?.length) return decision(t.task_id,"BLOCKED",["MISSING_POLICY"],[],evaluatedAt);
-
   const actionRules = c.policies.filter(p => p.action === t.action);
   if (actionRules.length === 0) return decision(t.task_id,"DENY",["UNSUPPORTED_ACTION"],[],evaluatedAt);
   const applicable = actionRules.filter(p => p.target_types.includes(t.target.resource_type));
@@ -104,11 +82,6 @@ export function evaluatePolicy(taskInput, evidenceInput, trustedContextInput, op
   );
   if (!rule.target_types.includes(t.target.resource_type) || !target)
     return decision(t.task_id, "DENY", ["TARGET_OUT_OF_SCOPE"], [], evaluatedAt);
-
-  const now = options.now;
-  const contextTime = Date.parse(c.evaluated_at);
-  if (!Number.isFinite(now) || contextTime > now + 30_000 || now - contextTime > 5 * 60_000)
-    return decision(t.task_id,"BLOCKED",["TRUSTED_CONTEXT_STALE"],[],evaluatedAt);
 
   const sideEffect = rule.side_effect_class;
   const writing = ["LOCAL_WRITE","EXTERNAL_WRITE","IRREVERSIBLE"].includes(sideEffect);
