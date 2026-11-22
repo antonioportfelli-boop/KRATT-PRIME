@@ -1,24 +1,12 @@
-import { createHash } from "node:crypto";
 import { validateEvidenceRecord } from "./contracts.mjs";
 import { MemoryLedger } from "./memory-ledger.mjs";
 import { evaluateWordSemantics, validateWordSemanticRecord } from "./word-semantic-model.mjs";
+import { canonicalJson, canonicalDigest, sha256Hex } from "./canonical-json.mjs";
 
 export const SEMANTIC_EVIDENCE_BRIDGE_VERSION = "1.0.0";
 export const SEMANTIC_MEMORY_KIND = "WORD_SEMANTIC_RECORD";
 
 const bad = reason => Object.freeze({ ok: false, reason });
-const stable = value => {
-  if (Array.isArray(value)) return value.map(stable);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])]));
-  }
-  return value;
-};
-const canonical = value => JSON.stringify(stable(value));
-const sha256 = value => createHash("sha256").update(value, "utf8").digest("hex");
-const digest = value => "sha256:" + sha256(canonical(value));
-
-
 function createProvenanceGraph(record, verifiedEvidence) {
   const nodes = [];
   const edges = [];
@@ -42,7 +30,7 @@ function createProvenanceGraph(record, verifiedEvidence) {
       evidence_ids: [...new Set(evidenceIds)].sort(),
       confidence
     };
-    const id = "edge:" + sha256(canonical(core));
+    const id = "edge:" + sha256Hex(canonicalJson(core));
     if (!edges.some(edge => edge.id === id)) edges.push({ id, ...core });
   }
 
@@ -154,7 +142,7 @@ function createProvenanceGraph(record, verifiedEvidence) {
     nodes,
     edges
   };
-  return Object.freeze({ ...core, graph_digest: digest(core) });
+  return Object.freeze({ ...core, graph_digest: canonicalDigest(core) });
 }
 
 /**
@@ -251,8 +239,8 @@ export function createSemanticEvidenceBridge({ ledger, verifyEvidence } = {}) {
         artifact_digest: item.artifact_digest
       });
     });
-    const evidenceManifestDigest = digest(evidenceManifest);
-    const recordDigest = digest(semantic);
+    const evidenceManifestDigest = canonicalDigest(evidenceManifest);
+    const recordDigest = canonicalDigest(semantic);
     const provenanceGraph = createProvenanceGraph(semantic, verified);
     const existing = typeof ledger.getById === "function"
       ? await ledger.getById("word-semantic:" + semantic.record_id)
