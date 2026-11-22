@@ -3,6 +3,26 @@ import { validateWordSemanticRecord } from "../../kratt-core/src/word-semantic-m
 const bad = (status, reason, details = {}) => Object.freeze({ ok: false, status, reason, ...details });
 const plain = value => value !== null && typeof value === "object" && !Array.isArray(value);
 
+function canonical(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
+}
+
+// Source occurrence, lexical form and source-grounded content are immutable once extracted.
+// Contextualization may add interpretations; classification may add typed layers. Neither
+// stage may rewrite the origin or silently substitute content for its interpretation.
+function originFingerprint(record) {
+  return canonical({
+    record_id: record.record_id,
+    source: record.source,
+    context_id: record.context_id,
+    created_at: record.created_at,
+    form: record.form,
+    contents: record.contents
+  });
+}
+
 function requireAgent(agent, name) {
   if (typeof agent !== "function") throw new TypeError("SEMANTIC_AGENT_REQUIRED:" + name);
   return agent;
@@ -43,22 +63,35 @@ export function createSemanticAgentPipeline({
     let checked = validateWordSemanticRecord(record);
     if (!checked.ok) return bad("BLOCKED", "SEMANTIC_RECORD_INVALID_AFTER_EXTRACTION:" + checked.reason);
     record = checked.value;
+    const origin = originFingerprint(record);
 
-    const contextualized = await stage("CONTEXTUALIZE", contextualizeAgent, { requestId, principalId, source, context, record });
+    const contextualized = await stage("CONTEXTUALIZE", contextualizeAgent, {
+      requestId, principalId, source: structuredClone(source), context: structuredClone(context), record: structuredClone(record)
+    });
     if (!contextualized.ok) return contextualized;
     record = contextualized.value;
     checked = validateWordSemanticRecord(record);
     if (!checked.ok) return bad("BLOCKED", "SEMANTIC_RECORD_INVALID_AFTER_CONTEXTUALIZATION:" + checked.reason);
+    if (originFingerprint(checked.value) !== origin) {
+      return bad("BLOCKED", "SEMANTIC_ORIGIN_MUTATED_AFTER_EXTRACTION");
+    }
     record = checked.value;
 
-    const classified = await stage("CLASSIFY_SEMANTICS", classify, { requestId, principalId, source, context, record });
+    const classified = await stage("CLASSIFY_SEMANTICS", classify, {
+      requestId, principalId, source: structuredClone(source), context: structuredClone(context), record: structuredClone(record)
+    });
     if (!classified.ok) return classified;
     record = classified.value;
     checked = validateWordSemanticRecord(record);
     if (!checked.ok) return bad("BLOCKED", "SEMANTIC_RECORD_INVALID_AFTER_CLASSIFICATION:" + checked.reason);
+    if (originFingerprint(checked.value) !== origin) {
+      return bad("BLOCKED", "SEMANTIC_ORIGIN_MUTATED_AFTER_CLASSIFICATION");
+    }
     record = checked.value;
 
-    const reviewed = await stage("CRITIC_REVIEW", critic, { requestId, principalId, source, context, record });
+    const reviewed = await stage("CRITIC_REVIEW", critic, {
+      requestId, principalId, source: structuredClone(source), context: structuredClone(context), record: structuredClone(record)
+    });
     if (!reviewed.ok) return reviewed;
     const verdict = reviewed.value.verdict ?? reviewed.value.decision;
     if (verdict !== "ACCEPT") {
