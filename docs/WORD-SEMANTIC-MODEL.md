@@ -105,3 +105,28 @@ The bridge now awaits the ledger contract, so both the in-memory test adapter an
 `semantic-policy-authorizer.mjs` adapts the existing KRATT `evaluatePolicy` evaluator to semantic append requests. It binds the exact principal, request ID, action, target and record digest, and includes verified policy evidence in the response. The evidence bridge still independently validates and verifies evidence before storage. Production must supply authenticated trusted context, trusted evidence loading, real signature verification and atomic durable nonce consumption for approvals.
 
 `semantic-agent-pipeline.mjs` orders extraction, contextualization, semantic classification and critic review. Only an ACCEPT verdict reaches the policy-gated ingestion runtime. Stage audit failure and agent errors fail closed. This pipeline does not call providers or perform external writes.
+
+
+## Canonical identity and strict input boundaries
+
+`canonical-json.mjs` provides one strict canonical JSON encoding for policy-bound record digests, semantic-memory digests, provenance-graph digests and Postgres hash-chain payloads. Object keys are sorted recursively; array order is preserved; negative zero is normalized. Getters/setters, symbols, non-enumerable properties, sparse arrays, extra array properties, cycles, class instances, non-finite numbers and unsupported JavaScript values are rejected rather than silently omitted by `JSON.stringify`.
+
+`semantic-ingestion-runtime.mjs` now computes the request-bound digest with this shared encoder. `semantic-evidence-bridge.mjs` stores the digest produced by the same encoder. This preserves the invariant:
+
+- policy-bound record digest = persisted semantic record digest
+- provenance relation identifiers and graph digest use the same deterministic encoder
+- PostgreSQL event canonicalization uses the same JSON representation
+
+The digest is an integrity identifier, not an authorization token or proof that a claim is true.
+
+## Two-phase Meridian truth-chain review
+
+`meridian-truth-chain.mjs` adds two independent quality gates to semantic agent orchestration.
+
+1. **Talmud preflight** runs immediately after extraction and before contextualization. It validates the record and requires at least one source-attributed CONTENT node whose evidence references the exact source-occurrence evidence ID. It captures an immutable origin fingerprint over record identity, source occurrence, context, time, FORM and source-grounded CONTENT.
+2. **Anti-Talmud postflight** runs after contextualization, classification and critic acceptance, but before policy-gated ingestion. It verifies that the origin fingerprint is unchanged, checks required semantic layers, sense ambiguity and authority conflicts, and optionally runs the deterministic MÕTLEMINE reflection engine.
+3. **Correction proposals** identify the negative finding, affected claim/layer and remediation action. They are deterministic and inspectable, always have `auto_apply: false`, and require new evidence or human review. The engine never overwrites source CONTENT to make a contradiction disappear.
+
+MÕTLEMINE is an evidence-reflection assessment, not a fact generator. `READY_FOR_REVIEW` means the configured assessment rules found no blocking contradiction and the required independent-source threshold was met; it does not establish universal or absolute truth. `REFUTED`, `CONFLICTED`, `BLOCKED` and `INSUFFICIENT_EVIDENCE` produce review findings and correction proposals. If the application sets `requireReflection: true`, absence of a reflection input or engine blocks the pipeline. When reflection is not configured, the structural preflight/postflight still runs and labels reflection `NOT_RUN`.
+
+The default `semantic-agent-pipeline.mjs` now calls both gates and fails closed when either gate or its audit sink fails. The separate `evaluatePolicy` / WP-01 authorization check remains the only permission boundary. Passing the truth-chain gates never grants write authority, provider access, external execution or deployment permission.
