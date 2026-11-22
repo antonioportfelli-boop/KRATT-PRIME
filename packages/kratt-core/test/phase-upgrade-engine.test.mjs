@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPhaseUpgradeEngine } from "../src/phase-upgrade-engine.mjs";
+import { createPhaseUpgradeEngine, computePhasePatchDigest } from "../src/phase-upgrade-engine.mjs";
 
 const NOW = "2026-11-21T12:00:00.000Z";
 const future = "2026-11-21T13:00:00.000Z";
@@ -166,6 +166,29 @@ test("missing test evidence verifier fails closed", async () => {
   const result = await engine.execute({ runId: planned.run.runId, requestId: "request-phase11" });
   assert.equal(result.ok, false);
   assert.equal(result.reason, "TEST_EVIDENCE_VERIFIER_NOT_CONFIGURED");
+});
+
+test("test attestation verifier receives the exact patch digest and run scope", async () => {
+  let observed;
+  const { engine } = createHarness({
+    testEvidenceVerifier: async (evidence, context) => {
+      observed = { evidence, context };
+      return evidence.evidenceRef === "local:test-run" && context.patchDigest.length === 64;
+    }
+  });
+  const planned = await engine.propose(request());
+  const result = await engine.execute({ runId: planned.run.runId, requestId: "request-phase11" });
+  const expected = computePhasePatchDigest([{
+    path: "packages/kratt-core/src/phase-example.mjs",
+    content: "export const phaseExample = true;\n",
+    expectedBlobSha: null
+  }]);
+  assert.equal(result.ok, true);
+  assert.equal(observed.context.patchDigest, expected.digest);
+  assert.equal(observed.context.runId, planned.run.runId);
+  assert.equal(observed.context.requestId, "request-phase11");
+  assert.equal(observed.context.sourceRevision, sourceRevision);
+  assert.equal(observed.context.targetBranch, "feature/phase11-phase-upgrade-engine-v1");
 });
 
 test("remote route is blocked until exact request-bound data-transfer approval", async () => {
