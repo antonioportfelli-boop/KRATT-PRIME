@@ -172,3 +172,56 @@ test("Meridian audit appends a provenance-linked morphosis node", () => {
   assert.equal(result.ok, true);
   assert.equal(result.entry.node.kind, "SMF_POLYMORPHOSIS");
 });
+
+
+test("postflight catches semantic meaning, principle, and lexical-content drift", () => {
+  for (const dimension of ["wordContent", "meaning", "principle"]) {
+    const source = identity();
+    const observed = identity();
+    observed[dimension] = { ...observed[dimension], postflightMutation: true };
+    const result = runSemanticMorphosisPipeline({
+      source,
+      preflight: { source, proposed: source, provenanceVerified: true, evidenceVerified: true, authorityScoped: true, conflictFree: true },
+      counterInterpretations: [source], profile: profile(), toTarget: identityTransform, toCanonical: identityTransform,
+      observedCanonical: observed, independentEvidenceVerified: true,
+      proposalId: "fix-" + dimension, findingId: "finding-" + dimension,
+      affectedObjectIds: [source.id], restoredInvariants: [dimension], sourceVerified: true,
+      meridianRestored: false, approvalVerified: false, invariantsVerified: false,
+    });
+    assert.equal(result.decision, "FINDING", dimension);
+    assert.ok(result.postflight.findings.includes("SMF_POSTFLIGHT_DIMENSION_CHANGED:" + dimension));
+  }
+});
+
+test("context is protected from lossy polymorphosis", () => {
+  const p = profile();
+  p.invariants = p.invariants.filter(item => item.sourcePath !== "context");
+  p.losses = [{ sourcePath: "context", reason: "not needed" }];
+  const result = executePolymorphosis({
+    source: identity(), profile: p, toTarget: identityTransform, toCanonical: identityTransform,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /SMF_PROTECTED_LOSS_FORBIDDEN:context/);
+});
+
+test("loss declarations must refer to existing unique source paths", () => {
+  const missing = profile();
+  missing.losses = [{ sourcePath: "notPresent", reason: "legacy field" }];
+  assert.match(executePolymorphosis({
+    source: identity(), profile: missing, toTarget: identityTransform, toCanonical: identityTransform,
+  }).reason, /SMF_LOSS_SOURCE_PATH_MISSING/);
+
+  const duplicate = profile();
+  duplicate.losses = [
+    { sourcePath: "legacyNote", reason: "not mapped 1" },
+    { sourcePath: "legacyNote", reason: "not mapped 2" },
+  ];
+  const source = { ...identity(), legacyNote: "archive" };
+  assert.match(executePolymorphosis({
+    source, profile: duplicate, toTarget: value => {
+      const target = structuredClone(value); delete target.legacyNote; return target;
+    }, toCanonical: value => {
+      const canonical = structuredClone(value); canonical.legacyNote = "archive"; return canonical;
+    },
+  }).reason, /SMF_LOSS_DUPLICATE/);
+});
