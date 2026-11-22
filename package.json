@@ -21,9 +21,10 @@
     "wave9:verify": "npm test && npm run typecheck && npm run build",
     "wave10:migrate": "node scripts/wave8-apply-migration.mjs",
     "wave10:observatory:verify": "node scripts/wave10-verify-runtime-observatory.mjs",
-    "wave10:verify": "node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs && npm run typecheck && npm run build"
     "wave10:verify": "npm test && npm run typecheck && npm run build",
-    "wave10:hardening:verify": "npm run wave10:verify && node --check packages/kratt-core/src/runtime-observatory.mjs && node --check packages/kratt-core/src/postgres-runtime-observatory-store.mjs && node --check packages/kratt-core/src/observed-operation.mjs && node --check packages/kratt-orchestrator/src/runtime-observatory-api.mjs && node --check packages/kratt-orchestrator/src/wave8-server.mjs"
+    "wave10:hardening:verify": "npm run wave10:verify && node --check packages/kratt-core/src/runtime-observatory.mjs && node --check packages/kratt-core/src/postgres-runtime-observatory-store.mjs && node --check packages/kratt-core/src/observed-operation.mjs && node --check packages/kratt-orchestrator/src/runtime-observatory-api.mjs && node --check packages/kratt-orchestrator/src/wave8-server.mjs",
+    "phase11:migrate": "node scripts/wave8-apply-migration.mjs",
+    "phase11:verify": "npm test && npm run typecheck && npm run build && node --check packages/kratt-core/src/phase11-wave10-integration.mjs && node --check packages/kratt-core/src/phase11-migration-contract.mjs && node --check packages/kratt-orchestrator/src/phase11-runtime.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

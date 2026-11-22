@@ -67,7 +67,7 @@ class FakePool{
    const row=this.operations.get(values[0]);return{rowCount:row?1:0,rows:row?[row]:[]};
   }
   if(sql.startsWith("SELECT sequence,event_id,record_json,previous_hash,hash FROM kratt_runtime_operation_events")){
-   const rows=this.events.filter(x=>x.operation_id===values[0]).sort((a,b)=>b.sequence-a.sequence).slice(0,values[1]);
+   const rows=this.events.filter(x=>x.operation_id===values[0]&&(values[2]===undefined||x.sequence<values[2])).sort((a,b)=>b.sequence-a.sequence).slice(0,values[1]);
    return{rowCount:rows.length,rows};
   }
   throw new Error("UNEXPECTED_SQL:"+sql);

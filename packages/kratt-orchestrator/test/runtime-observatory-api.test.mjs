@@ -60,4 +60,41 @@ test("observatory API does not invoke storage when list filters are invalid",asy
  assert.equal(result.statusCode,400);
  assert.equal(calls,0);
 });
-test("operation event API passes a bounded sequence cursor",async()=>{const store=fakeStore();let captured;store.listEvents=async(_id,options)=>{captured=options;return[{sequence:8,status:"queued"}];};const api=createRuntimeObservatoryApi({store,authorizeRead:async()=>true});const result=await api.handle({path:"/observatory/operations/operation-01/events",query:{limit:"5",before_sequence:"12"}});assert.equal(captured.beforeSequence,12);assert.equal(captured.limit,5);assert.equal(result.body.next_before_sequence,8);});
+test("operation event API passes a bounded sequence cursor",async()=>{const store=fakeStore();let captured;store.listEvents=async(_id,options)=>{captured=options;return Array.from({length:5},(_,index)=>({sequence:8+index,status:"queued",event:{}}));};const api=createRuntimeObservatoryApi({store,authorizeRead:async()=>true});const result=await api.handle({path:"/observatory/operations/operation-01/events",query:{limit:"5",before_sequence:"12"}});assert.equal(captured.beforeSequence,12);assert.equal(captured.limit,5);assert.equal(result.body.next_before_sequence,8);});
+
+
+test("operation event API rejects malformed, excessive and unknown cursor parameters before storage",async()=>{
+ const store=fakeStore();
+ let calls=0;
+ store.listEvents=async()=>{calls++;return[];};
+ const api=createRuntimeObservatoryApi({store,authorizeRead:async()=>true});
+ for(const query of [
+  {limit:0},{limit:501},{limit:"1e3"},{before_sequence:0},
+  {before_sequence:"-1"},{before_sequence:"1.5"},{unknown:"value"}
+ ]){
+  const result=await api.handle({
+   path:"/observatory/operations/operation-01/events",query
+  });
+  assert.equal(result.statusCode,400);
+  assert.equal(result.body.reason,"QUERY_INVALID");
+ }
+ assert.equal(calls,0);
+});
+
+test("operation event API returns only public event fields and emits a cursor for a full page",async()=>{
+ const store=fakeStore();
+ store.listEvents=async()=>Array.from({length:2},(_,index)=>({
+  sequence:index+5,event_id:"event-"+index,event:{status:"queued"},
+  previous_hash:"secret-prev",hash:"secret-hash"
+ }));
+ const api=createRuntimeObservatoryApi({store,authorizeRead:async()=>true});
+ const result=await api.handle({
+  path:"/observatory/operations/operation-01/events",
+  query:{limit:"2",before_sequence:"10"}
+ });
+ assert.equal(result.statusCode,200);
+ assert.equal(result.body.data.length,2);
+ assert.equal(result.body.next_before_sequence,5);
+ assert.equal(Object.hasOwn(result.body.data[0],"hash"),false);
+ assert.equal(Object.hasOwn(result.body.data[0],"previous_hash"),false);
+});

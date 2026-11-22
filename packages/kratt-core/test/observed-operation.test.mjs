@@ -42,7 +42,7 @@ test("failed and cancelled operations are recorded without serializing raw error
 test("an identical idempotent append is accepted as durable evidence",async()=>{
  const events=[];
  const runner=createObservedOperationRunner({store:{append:async event=>{events.push(event);return{ok:true,duplicate:true};}}});
- const result=await runner.run({...base,execute:async()=>42});
+ const result=await runner.run({...base,execute:async()=>42,outputRef:()=> "output:sha256:aaaaaaaa"});
  assert.equal(result.status,"COMPLETED");
  assert.deepEqual(events.map(event=>event.status),["queued","running","succeeded"]);
 });

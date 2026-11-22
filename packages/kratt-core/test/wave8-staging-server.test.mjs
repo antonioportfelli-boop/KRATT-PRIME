@@ -39,7 +39,6 @@ class FakePool{
     runtime_head:"kratt_runtime_observatory_head"}],rowCount:1};
   if(sql.startsWith("SELECT sequence,hash FROM kratt_runtime_observatory_head"))
    return{rows:[{...this.observatoryHead}],rowCount:1};
-    rate_limits:"kratt_telegram_ingress_rate_limits"}],rowCount:1};
   if(sql.startsWith("INSERT INTO kratt_telegram_ingress_rate_limits")){
    this.rateLimitCalls.push(sql);
    return{rows:[{request_count:1}],rowCount:1};
@@ -53,6 +52,10 @@ class FakePool{
    if(sql.startsWith("BEGIN")||sql==="COMMIT"||sql==="ROLLBACK")return{rows:[],rowCount:0};
    if(sql.startsWith("SELECT sequence,hash FROM kratt_runtime_observatory_head"))
     return{rows:[{...this.observatoryHead}],rowCount:1};
+   if(sql.startsWith("SELECT sequence,event_id,operation_id,event_type,occurred_at,record_json,previous_hash,hash FROM kratt_runtime_operation_events ORDER BY sequence"))
+    return{rows:[...this.observatoryEvents],rowCount:this.observatoryEvents.length};
+   if(sql==="SELECT * FROM kratt_runtime_operations")
+    return{rows:[...this.observatoryOperations.values()],rowCount:this.observatoryOperations.size};
    if(sql.startsWith("SELECT sequence,hash,record_json FROM kratt_runtime_operation_events")){
     const row=this.observatoryEvents.find(item=>item.event_id===values[0]);
     return{rows:row?[row]:[],rowCount:row?1:0};

@@ -58,7 +58,9 @@ test("valid Ed25519 approval becomes one atomic nonce claim plus queued outbox i
  assert.equal(reservation.providerPayload.task.task_id,task.task_id);
 });
 test("signature tampering fails closed before nonce reservation",async()=>{
- const f=build();const bad={...f.approval,signature:f.approval.signature.slice(0,-2)+"AA"};
+ const f=build();
+ const last=f.approval.signature.at(-1);
+ const bad={...f.approval,signature:f.approval.signature.slice(0,-1)+(last==="A"?"B":"A")};
  const result=await f.runtime.execute({principal:"trusted-session",task:f.task,approval:bad});
  assert.equal(result.status,"DENIED");
  assert.equal(result.reason,"APPROVAL_INVALID_OR_MISSING");

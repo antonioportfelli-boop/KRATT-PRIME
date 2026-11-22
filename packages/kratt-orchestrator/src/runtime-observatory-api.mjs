@@ -22,6 +22,27 @@ function listOptions(query){
  return{ok:true,options};
 }
 
+function eventOptions(query){
+ if(!query||typeof query!=="object"||Array.isArray(query))return{ok:false};
+ const allowed=new Set(["limit","before_sequence"]);
+ if(Object.keys(query).some(key=>!allowed.has(key)))return{ok:false};
+ let limit=100;
+ if(query.limit!==undefined){
+  if(typeof query.limit==="number")limit=query.limit;
+  else if(typeof query.limit==="string"&&/^(?:[1-9][0-9]*)$/.test(query.limit))limit=Number(query.limit);
+  else return{ok:false};
+ }
+ if(!Number.isSafeInteger(limit)||limit<1||limit>500)return{ok:false};
+ let beforeSequence;
+ if(query.before_sequence!==undefined){
+  if(typeof query.before_sequence==="number")beforeSequence=query.before_sequence;
+  else if(typeof query.before_sequence==="string"&&/^(?:[1-9][0-9]*)$/.test(query.before_sequence))beforeSequence=Number(query.before_sequence);
+  else return{ok:false};
+  if(!Number.isSafeInteger(beforeSequence)||beforeSequence<1)return{ok:false};
+ }
+ return{ok:true,options:{limit,beforeSequence}};
+}
+
 export function createRuntimeObservatoryApi({store,authorizeRead}={}){
  if(!store||!["listOperations","getOperation","listEvents","summarizeModules","verifyChain"].every(name=>typeof store[name]==="function"))
   throw new TypeError("OBSERVATORY_READ_STORE_REQUIRED");
@@ -53,13 +74,15 @@ export function createRuntimeObservatoryApi({store,authorizeRead}={}){
      {statusCode:404,body:{status:"NOT_FOUND"}};
    }
    if(action==="events"){
-    const events=await store.listEvents(operationId);
-    const data=events.map(item=>({sequence:item.sequence,event_id:item.event_id,event:item.event}));
-    return{statusCode:200,body:{status:"OK",data}};
-    const limit=query?.limit===undefined?100:Number(query.limit);
-    const beforeSequence=query?.before_sequence===undefined?undefined:Number(query.before_sequence);
-    const data=await store.listEvents(operationId,{limit,beforeSequence});
-    return{statusCode:200,body:{status:"OK",data,next_before_sequence:data.length===limit?data[0].sequence:null}};
+    const checked=eventOptions(query);
+    if(!checked.ok)return{statusCode:400,body:{status:"INVALID",reason:"QUERY_INVALID"}};
+    const {limit,beforeSequence}=checked.options;
+    const events=await store.listEvents(operationId,{limit,beforeSequence});
+    const data=events.map(item=>({
+     sequence:item.sequence,event_id:item.event_id,event:item.event
+    }));
+    return{statusCode:200,body:{status:"OK",data,
+     next_before_sequence:data.length===limit?(data[0]?.sequence??null):null}};
    }
    if(action==="summary")return{statusCode:200,body:{status:"OK",data:await store.summarizeModules()}};
    const integrity=await store.verifyChain();
