@@ -1,27 +1,11 @@
 import { createHash } from "node:crypto";
+import { canonicalJson } from "./canonical-json.mjs";
 
 const ZERO = "0".repeat(64);
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const plain = value => value !== null && typeof value === "object" && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
-function stable(value) {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(Object.is(value, -0) ? 0 : value);
-  if (Array.isArray(value)) {
-    if (value.some((item, index) => !(index in value) || item === undefined)) {
-      throw new TypeError("SEMANTIC_MEMORY_ARRAY_VALUE_INVALID");
-    }
-    return "[" + value.map(stable).join(",") + "]";
-  }
-  if (!plain(value)) throw new TypeError("SEMANTIC_MEMORY_RECORD_NOT_JSON");
-  const keys = Reflect.ownKeys(value);
-  if (keys.some(key => typeof key !== "string")) throw new TypeError("SEMANTIC_MEMORY_SYMBOL_KEY");
-  return "{" + keys.sort().map(key => {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) throw new TypeError("SEMANTIC_MEMORY_ACCESSOR_REJECTED");
-    return JSON.stringify(key) + ":" + stable(descriptor.value);
-  }).join(",") + "}";
-}
+const stable = canonicalJson;
 const sha256 = value => createHash("sha256").update(value, "utf8").digest("hex");
 const recordHash = (sequence, previousHash, recordJson) => sha256(String(sequence) + "\n" + previousHash + "\n" + recordJson);
 function parseJson(value) {
