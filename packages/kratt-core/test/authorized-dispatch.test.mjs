@@ -211,6 +211,8 @@ test("composes real Ed25519 approval verification, durable nonce consumption and
       required_claims: ["TESTS_PASSED"],
     }],
     evaluated_at: at,
+    expires_at: "2026-11-18T15:05:00.000Z",
+    kill_switch: false,
   };
   const trustedEvidence = [{
     schema_version: KRATT_SCHEMA_VERSION,
