@@ -11,7 +11,7 @@ export const SMF01 = Object.freeze({
   id: "SMF-01",
   version: "1.0.0",
   dimensions: Object.freeze(["wordContent", "meaning", "principle", "effect", "authority"]),
-  protectedPaths: Object.freeze(["id", "version", "wordContent", "meaning", "principle", "effect", "authority", "modality", "subject", "scope", "conditions", "freshness", "provenance", "prohibitedEquivalences"]),
+  protectedPaths: Object.freeze(["id", "version", "context", "wordContent", "meaning", "principle", "effect", "authority", "modality", "subject", "scope", "conditions", "freshness", "provenance", "prohibitedEquivalences"]),
 });
 const isRecord = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const own = (value, key) => Object.hasOwn(value, key);
@@ -130,6 +130,8 @@ function validateProfile(profile, source) {
     if (!isRecord(loss) || !nonEmpty(loss.sourcePath) || !nonEmpty(loss.reason)) throw new TypeError("SMF_LOSS_INVALID");
     pathParts(loss.sourcePath);
     if (SMF01.protectedPaths.includes(loss.sourcePath)) throw new TypeError("SMF_PROTECTED_LOSS_FORBIDDEN:" + loss.sourcePath);
+    if (!getPath(source, loss.sourcePath).exists) throw new TypeError("SMF_LOSS_SOURCE_PATH_MISSING:" + loss.sourcePath);
+    if (lossPaths.has(loss.sourcePath)) throw new TypeError("SMF_LOSS_DUPLICATE:" + loss.sourcePath);
     lossPaths.add(loss.sourcePath);
   }
   for (const key of Object.keys(source)) if (!sourcePaths.has(key) && !lossPaths.has(key)) throw new TypeError("SMF_UNDECLARED_FIELD_LOSS:" + key);
@@ -173,6 +175,32 @@ export function executePolymorphosis(input) {
   }
 }
 
+/** Extend SIPA-11 postflight to cover all SMF-01 identity dimensions and context. */
+function evaluateSMFPostflight(expectedInput, observedInput) {
+  let expected;
+  let observed;
+  try {
+    expected = createSemanticIdentity(expectedInput);
+    observed = normalize(observedInput);
+  } catch {
+    return { decision: "FINDING", findings: ["SMF_POSTFLIGHT_IDENTITY_INVALID"] };
+  }
+  const integrity = evaluateAntiTalmudPostflight({
+    expected,
+    observed,
+    independentEvidenceVerified: true,
+  });
+  const findings = [...integrity.findings];
+  for (const key of ["context", ...SMF01.dimensions]) {
+    if (!own(observed, key) || !equal(expected[key], observed[key])) {
+      findings.push("SMF_POSTFLIGHT_DIMENSION_CHANGED:" + key);
+    }
+  }
+  return findings.length
+    ? { decision: "FINDING", findings: [...new Set(findings)] }
+    : integrity;
+}
+
 /** Compose trusted SIPA-11 gates with challenge, transform and independent postflight. */
 export function runSemanticMorphosisPipeline(input) {
   const preflight = evaluateTalmudPreflight(input.preflight);
@@ -184,7 +212,7 @@ export function runSemanticMorphosisPipeline(input) {
   if (!input.observedCanonical || input.independentEvidenceVerified !== true) {
     return { decision: "QUARANTINE", stage: "ANTI_TALMUD_POSTFLIGHT", transform, challenge, reason: "INDEPENDENT_POSTFLIGHT_EVIDENCE_REQUIRED" };
   }
-  const postflight = evaluateAntiTalmudPostflight({ expected: input.source, observed: input.observedCanonical, independentEvidenceVerified: true });
+  const postflight = evaluateSMFPostflight(input.source, input.observedCanonical);
   if (postflight.decision !== "PASS") {
     const correction = createCorrectionProposal({
       proposalId: input.proposalId, findingId: input.findingId, affectedObjectIds: input.affectedObjectIds,
