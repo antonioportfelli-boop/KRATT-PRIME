@@ -110,6 +110,7 @@ export function createPhaseUpgradeEngine({
   resourceAdapters = {},
   policyEvaluator,
   approvalVerifier,
+  testEvidenceVerifier,
   gitWriter,
   clock = () => new Date()
 } = {}) {
@@ -319,14 +320,42 @@ export function createPhaseUpgradeEngine({
         }
         if (agent === "TESTER") {
           if (!Array.isArray(result.tests) || result.tests.length < 1 || result.tests.length > 100 ||
-              result.tests.some(test => !plain(test) || !bounded(test.name, 200) || test.passed !== true)) {
+              result.tests.some(test => !plain(test) || !bounded(test.name, 200) ||
+                test.passed !== true || !bounded(test.evidenceRef, 240))) {
             throw new Error("TEST_EVIDENCE_FAILED_OR_MISSING");
           }
-          tests = result.tests.map(test => ({
-            name: test.name,
-            passed: true,
-            evidenceRef: bounded(test.evidenceRef, 240) ? test.evidenceRef : null
-          }));
+          if (typeof testEvidenceVerifier !== "function") {
+            throw new Error("TEST_EVIDENCE_VERIFIER_NOT_CONFIGURED");
+          }
+          const boundPatchDigest = patchDigest(patches);
+          tests = [];
+          for (const test of result.tests) {
+            let accepted = false;
+            try {
+              accepted = await testEvidenceVerifier(
+                Object.freeze({
+                  name: test.name,
+                  passed: true,
+                  evidenceRef: test.evidenceRef
+                }),
+                Object.freeze({
+                  runId,
+                  requestId,
+                  sourceRevision: run.sourceRevision,
+                  targetBranch: run.targetBranch,
+                  patchDigest: boundPatchDigest
+                })
+              ) === true;
+            } catch {
+              accepted = false;
+            }
+            if (!accepted) throw new Error("TEST_EVIDENCE_UNVERIFIED");
+            tests.push(Object.freeze({
+              name: test.name,
+              passed: true,
+              evidenceRef: test.evidenceRef
+            }));
+          }
         }
         if (agent === "CRITIC" && Array.isArray(result.blockers) && result.blockers.length > 0) {
           throw new Error("CRITIC_BLOCKERS_PRESENT");
