@@ -63,6 +63,11 @@ The `semantic-evidence-bridge.mjs` adapter validates the v2 semantic record and 
 
 Accepted records are appended as `WORD_SEMANTIC_RECORD` entries to the existing append-only `MemoryLedger`, with a digest, evidence manifest, typed provenance graph, stable edge identifiers and graph digest. Every node and semantic relation is linked to its supporting evidence; effects retain distinct claim and measurement evidence: a measurement edge never becomes generic proof of the effect claim. Replays are idempotent, while a changed record or evidence manifest under the same record ID is rejected. The current ledger is explicitly local/in-memory only (`durable: false`); this is not a claim of Base44 persistence. Semantic memory never grants policy authority or authorization.
 
+
+## Policy-gated semantic ingestion runtime
+
+`semantic-ingestion-runtime.mjs` is the agent-facing composition root for internal semantic-memory writes. It validates the record, hashes the exact isolated snapshot, and asks a trusted policy adapter for a decision bound to principal, request ID, `semantic.memory.append`, semantic-record resource and record digest. DENY, BLOCKED, REQUIRE_APPROVAL, stale bindings and digest mismatches stop before evidence is loaded or memory is appended. Only an exact ALLOW proceeds to the evidence loader and evidence-to-memory bridge. Evidence verification remains independent from policy authorization. This runtime never dispatches providers or performs external writes; its successful result authorizes only the single local memory-append action. Production composition must bind `authorize` to KRATT's trusted policy/WP-01 request-bound approval path and a durable audit/decision store; the included tests use a deterministic policy adapter only.
+
 ## Pipeline
 
 SOURCE_OCCURRENCE → PRESERVE → FORM → CONTENT_EXTRACTION → CONTEXTUALIZE → SENSE_CANDIDATES → PRAGMATIC_ACT → NORM_CLASSIFY → EFFECT/POWER/AUTHORITY_MODEL → EVIDENCE_VERIFY → CONFLICT_REVIEW → POLICY_SEPARATE → ACTION

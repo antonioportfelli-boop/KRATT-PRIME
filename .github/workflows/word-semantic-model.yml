@@ -7,6 +7,8 @@ on:
     paths:
       - "packages/kratt-core/src/word-semantic-model.mjs"
       - "packages/kratt-core/src/semantic-evidence-bridge.mjs"
+      - "packages/kratt-core/src/semantic-ingestion-runtime.mjs"
+      - "packages/kratt-core/test/semantic-ingestion-runtime.test.mjs"
       - "packages/kratt-core/src/memory-ledger.mjs"
       - "packages/kratt-core/src/contracts.mjs"
       - "packages/kratt-core/test/word-semantic-evidence-bridge.test.mjs"
@@ -19,6 +21,8 @@ on:
     paths:
       - "packages/kratt-core/src/word-semantic-model.mjs"
       - "packages/kratt-core/src/semantic-evidence-bridge.mjs"
+      - "packages/kratt-core/src/semantic-ingestion-runtime.mjs"
+      - "packages/kratt-core/test/semantic-ingestion-runtime.test.mjs"
       - "packages/kratt-core/src/memory-ledger.mjs"
       - "packages/kratt-core/src/contracts.mjs"
       - "packages/kratt-core/test/word-semantic-evidence-bridge.test.mjs"
