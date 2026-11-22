@@ -73,6 +73,7 @@ function make() {
       speaker_ref: "actor:user",
       addressee_refs: ["actor:agent"],
       content_refs: ["content-1"],
+      evidence_refs: ["evidence-1"],
       felicity_conditions: { understood: true }
     }],
     effects: [{
