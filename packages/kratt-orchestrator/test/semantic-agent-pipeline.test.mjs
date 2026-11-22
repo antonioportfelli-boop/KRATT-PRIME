@@ -72,3 +72,27 @@ test("audit sink failure fails closed before memory ingestion", async () => {
   assert.equal(result.reason, "SEMANTIC_STAGE_AUDIT_FAILED:EXTRACT_SOURCE");
   assert.equal(ingested, false);
 });
+test("contextualization cannot rewrite the source-grounded content", async () => {
+  const a = agents(); let ingested = false;
+  a.contextualize = async input => ({ record: {
+    ...input.record,
+    contents: input.record.contents.map(content => ({ ...content, payload: "silently substituted" }))
+  } });
+  const pipeline = createSemanticAgentPipeline({ ...a, ingestion: { ingest: async () => { ingested = true; } } });
+  const result = await pipeline.run({ requestId: "req-pipe-05", principalId: "agent-pipe-01", source: {}, context: {} });
+  assert.equal(result.status, "BLOCKED");
+  assert.equal(result.reason, "SEMANTIC_ORIGIN_MUTATED_AFTER_EXTRACTION");
+  assert.equal(ingested, false);
+});
+test("classification cannot replace the source occurrence or lexical form", async () => {
+  const a = agents(); let ingested = false;
+  a.classifySemantics = async input => ({ record: {
+    ...input.record,
+    form: { ...input.record.form, surface: "peegeldus" }
+  } });
+  const pipeline = createSemanticAgentPipeline({ ...a, ingestion: { ingest: async () => { ingested = true; } } });
+  const result = await pipeline.run({ requestId: "req-pipe-06", principalId: "agent-pipe-01", source: {}, context: {} });
+  assert.equal(result.status, "BLOCKED");
+  assert.equal(result.reason, "SEMANTIC_ORIGIN_MUTATED_AFTER_CLASSIFICATION");
+  assert.equal(ingested, false);
+});
