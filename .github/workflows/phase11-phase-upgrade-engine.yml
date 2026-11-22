@@ -11,6 +11,8 @@ on:
       - "packages/kratt-core/src/runtime-observatory.mjs"
       - "packages/kratt-core/src/phase11-wave10-integration.mjs"
       - "packages/kratt-core/src/phase11-migration-contract.mjs"
+      - "packages/kratt-orchestrator/src/phase11-runtime.mjs"
+      - "packages/kratt-orchestrator/test/phase11-runtime.test.mjs"
       - "packages/kratt-core/test/phase-upgrade-engine.test.mjs"
       - "packages/kratt-core/test/phase11-wave10-integration.test.mjs"
       - "packages/kratt-core/test/phase11-migration-contract.test.mjs"
@@ -51,9 +53,11 @@ jobs:
           node --check packages/kratt-core/src/phase-upgrade-engine.mjs
           node --check packages/kratt-core/src/phase11-wave10-integration.mjs
           node --check packages/kratt-core/src/phase11-migration-contract.mjs
+          node --check packages/kratt-orchestrator/src/phase11-runtime.mjs
           node --check scripts/wave8-apply-migration.mjs
       - name: Run Phase 11, Wave 10 integration and migration contracts
         run: |
           node --test packages/kratt-core/test/phase-upgrade-engine.test.mjs
           node --test packages/kratt-core/test/phase11-wave10-integration.test.mjs
           node --test packages/kratt-core/test/phase11-migration-contract.test.mjs
+          node --test packages/kratt-orchestrator/test/phase11-runtime.test.mjs
