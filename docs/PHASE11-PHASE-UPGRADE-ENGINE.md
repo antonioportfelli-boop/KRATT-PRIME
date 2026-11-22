@@ -16,6 +16,21 @@ Phase 11 adds a resource-aware, agent-driven phase upgrade pipeline to KRATT PRI
 8. A separate approval must bind the exact run, request, repository, feature branch, source revision, patch digest and expiry. A second policy evaluation is required before the injected GitHub writer can create a commit.
 9. The GitHub writer must enforce optimistic concurrency against the submitted source revision. Merge and deployment remain separate, human-controlled operations.
 
+## Wave 10 migration compatibility
+
+The current Wave 10 branch no longer carries `0004_runtime_observatory.sql` as an executable migration file. Phase 11 must not reintroduce or replay it.
+
+The pure contract in `phase11-migration-contract.mjs` defines the migration order:
+
+1. Re-run the idempotent Wave 8/9 migrations `0002` and `0003`.
+2. Verify that the Wave 10 runtime-observatory tables already exist.
+3. Apply only Phase 11's `0005_semantic_memory.sql`.
+4. Verify both the Wave 10 observability tables and the Phase 11 semantic-memory tables.
+
+The migration runner requires all three conditions: `APP_ENV=staging`, `WAVE11_APPLY_STAGING_MIGRATIONS=true`, and an exact `WAVE11_EXPECTED_DATABASE` match. Legacy Wave 8/9/10 opt-in flags do not authorize a Phase 11 migration. The runner fails before applying the semantic-memory migration when the Wave 10 schema prerequisite is absent.
+
+No migration has been executed against a database by this change.
+
 ## Wave 10 runtime observability integration
 
 `packages/kratt-core/src/phase11-wave10-integration.mjs` composes the governed Phase 11 engine with the existing Wave 10 `createObservedOperationRunner` contract.
