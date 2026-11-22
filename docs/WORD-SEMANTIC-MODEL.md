@@ -56,6 +56,13 @@ Core invariants:
 - Similarity ≠ identity.
 - Repetition ≠ corroboration.
 
+
+## Evidence-to-memory integration
+
+The `semantic-evidence-bridge.mjs` adapter validates the v2 semantic record and every linked KRATT evidence record. It requires the source occurrence's `source_evidence_id`, verifies that `source_ref` matches the evidence source type/id, and verifies that the evidence artifact digest exactly matches the source digest. CONTENT and SENSE nodes require explicit evidence references; principle, power and verified-authority assertions must also retain supporting evidence. Every referenced record must pass both `validateEvidenceRecord` and an independently injected trusted verifier before append.
+
+Accepted records are appended as `WORD_SEMANTIC_RECORD` entries to the existing append-only `MemoryLedger`, with a digest, evidence manifest, provenance links and semantic review status. Replays are idempotent; reusing a record ID with changed content is rejected. The current ledger is explicitly local/in-memory only (`durable: false`); this is not a claim of Base44 persistence. Semantic memory never grants policy authority or authorization.
+
 ## Pipeline
 
 SOURCE_OCCURRENCE → PRESERVE → FORM → CONTENT_EXTRACTION → CONTEXTUALIZE → SENSE_CANDIDATES → PRAGMATIC_ACT → NORM_CLASSIFY → EFFECT/POWER/AUTHORITY_MODEL → EVIDENCE_VERIFY → CONFLICT_REVIEW → POLICY_SEPARATE → ACTION

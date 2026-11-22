@@ -6,6 +6,10 @@ on:
       - feature/phase11-phase-upgrade-engine-v1
     paths:
       - "packages/kratt-core/src/word-semantic-model.mjs"
+      - "packages/kratt-core/src/semantic-evidence-bridge.mjs"
+      - "packages/kratt-core/src/memory-ledger.mjs"
+      - "packages/kratt-core/src/contracts.mjs"
+      - "packages/kratt-core/test/word-semantic-evidence-bridge.test.mjs"
       - "packages/kratt-core/test/word-semantic-model.test.mjs"
       - "docs/WORD-SEMANTIC-MODEL.md"
       - ".github/workflows/word-semantic-model.yml"
@@ -14,6 +18,10 @@ on:
       - feature/wave10-observatory-hardening-remediation-v1
     paths:
       - "packages/kratt-core/src/word-semantic-model.mjs"
+      - "packages/kratt-core/src/semantic-evidence-bridge.mjs"
+      - "packages/kratt-core/src/memory-ledger.mjs"
+      - "packages/kratt-core/src/contracts.mjs"
+      - "packages/kratt-core/test/word-semantic-evidence-bridge.test.mjs"
       - "packages/kratt-core/test/word-semantic-model.test.mjs"
       - "docs/WORD-SEMANTIC-MODEL.md"
       - ".github/workflows/word-semantic-model.yml"
@@ -32,4 +40,4 @@ jobs:
       - name: Check syntax
         run: node --check packages/kratt-core/src/word-semantic-model.mjs
       - name: Run word semantics tests
-        run: node --test packages/kratt-core/test/word-semantic-model.test.mjs
+        run: node --test packages/kratt-core/test/word-semantic-*.test.mjs
