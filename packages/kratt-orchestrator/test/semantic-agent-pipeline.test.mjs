@@ -156,7 +156,7 @@ test("pipeline can enforce independent MÕTLEMINE evidence review at both gates"
   const evidence = ["source-one", "source-two"].map((sourceId, index) => ({
     schema_version: "kratt-prime/v0.1",
     evidence_id: "reflection-evidence-" + index,
-    subject: "claim-subject",
+    subject: "pipeline-record-01",
     claim_type: "TESTS_PASSED",
     source: { source_type: "github", source_id: sourceId, revision: null },
     observed_at: at,
@@ -167,10 +167,13 @@ test("pipeline can enforce independent MÕTLEMINE evidence review at both gates"
   }));
   const reflection = {
     analysis_id: "pipeline-reflection-01",
+    record_id: "pipeline-record-01",
+    source_digest: "a".repeat(64),
+    claim_bindings: [{ claim_id: "claim-pipeline", target_type: "CONTENT", target_id: "content-01" }],
     evidence,
     claims: [{
       claim_id: "claim-pipeline",
-      statement: "Two independent sources corroborate this claim.",
+      statement: "Kontrollitav sisu.",
       depends_on: [],
       assessments: evidence.map(item => ({
         evidence_id: item.evidence_id, stance: "SUPPORTS", rationale_code: "independent-attestation"
