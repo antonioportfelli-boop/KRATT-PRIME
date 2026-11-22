@@ -214,14 +214,14 @@ export function createMeridianTruthChain({
       });
     }
     const token = preflightToken;
-    const tokenCore = token && {
+    let tokenCanonical = false;
+    try { if (plain(token)) { canonicalJson(token); tokenCanonical = true; } } catch {}
+    const tokenCore = tokenCanonical ? {
       schema_version: token.schema_version,
       record_id: token.record_id,
       origin_digest: token.origin_digest,
       reflection_digest: token.reflection_digest
-    };
-    let tokenCanonical = false;
-    try { canonicalJson(token); tokenCanonical = true; } catch {}
+    } : null;
     if (!plain(token) || !tokenCanonical || Reflect.ownKeys(token).length !== 5
         || token.schema_version !== "meridian-preflight/v1"
         || token.record_id !== checked.value.record_id
@@ -287,7 +287,7 @@ export function createMeridianTruthChain({
       ));
     }
 
-    const reflected = reflectionReview(reflectionEngine, reflection, requireReflection);
+    const reflected = reflectionReview(reflectionEngine, reflection, requireReflection, checked.value);
     if (!reflected.ok) {
       const generated = reflectionCorrections(checked.value.record_id, reflected.report);
       proposals.push(...generated);
