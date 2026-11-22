@@ -16,9 +16,23 @@ Phase 11 adds a resource-aware, agent-driven phase upgrade pipeline to KRATT PRI
 8. A separate approval must bind the exact run, request, repository, feature branch, source revision, patch digest and expiry. A second policy evaluation is required before the injected GitHub writer can create a commit.
 9. The GitHub writer must enforce optimistic concurrency against the submitted source revision. Merge and deployment remain separate, human-controlled operations.
 
+## Wave 10 runtime observability integration
+
+`packages/kratt-core/src/phase11-wave10-integration.mjs` composes the governed Phase 11 engine with the existing Wave 10 `createObservedOperationRunner` contract.
+
+- `propose()`, `execute()`, `commitApproved()` and optional semantic-pipeline execution each emit queued → running → terminal observability events.
+- Request IDs are converted to stable, non-secret correlation IDs; operation IDs remain unique per observed execution.
+- The adapter writes through the Wave 10 observability store's existing `append(event)` interface. The PostgreSQL store remains the durable event writer and hash-chain owner.
+- An observability queue/start write failure prevents the wrapped Phase 11 method from executing.
+- A Phase 11 result with `ok: false` is recorded as a failed observed operation; it is never reported as a successful runtime operation.
+- The adapter does not introduce a second policy, approval or GitHub write path. Only `phaseEngine.commitApproved()` can reach the configured Phase 11 writer.
+- If the final observability event cannot be recorded after a commit call, the adapter reports `OUTCOME_UNRECORDED` and `sideEffectMayHaveCompleted: true`. This is an explicit reconciliation condition, not a safe retry signal. Inspect the Phase 11 run and repository commit before retrying.
+
+The bridge defaults its capability state to `partial` and environment to `development`. Composition in staging or production requires explicit environment configuration and a real, healthy observability store. This integration code does not assert that production adapters, providers, database credentials or runtime workers exist.
+
 ## Runtime adapters
 
-The core engine does not provision infrastructure itself. A resourceAdapters.local.runAgent adapter can dispatch to a detected local CPU/GPU/NPU backend. A resourceAdapters.cloud.runAgent adapter can dispatch to a configured cloud worker. The engine does not assume that a cloud account, GPU instance, endpoint, token or network route exists.
+The core engine does not provision infrastructure itself. A `resourceAdapters.local.runAgent` adapter can dispatch to a detected local CPU/GPU/NPU backend. A `resourceAdapters.cloud.runAgent` adapter can dispatch to a configured cloud worker. The engine does not assume that a cloud account, GPU instance, endpoint, token or network route exists.
 
 Bigdata.com is an evidence/research source, not an execution provider. Its imported content must remain source-attributed and reviewable before it can influence accepted phase requirements.
 
@@ -26,19 +40,19 @@ Bigdata.com is an evidence/research source, not an execution provider. Its impor
 
 The injected store must implement:
 
-- findByIdempotencyKey(key)
-- createRun(run) with a uniqueness constraint on the idempotency key
-- getRun(runId)
-- updateRun(runId, patch) with atomic state-transition semantics
-- appendEvent(event) using an append-only, tamper-evident event history
-- claimLease(runId, owner) and releaseLease(runId, owner) for worker fencing
-- optionally watchEvents(runId) as an async event stream for real-time observability
+- `findByIdempotencyKey(key)`
+- `createRun(run)` with a uniqueness constraint on the idempotency key
+- `getRun(runId)`
+- `updateRun(runId, patch)` with atomic state-transition semantics
+- `appendEvent(event)` using an append-only, tamper-evident event history
+- `claimLease(runId, owner)` and `releaseLease(runId, owner)` for worker fencing
+- optionally `watchEvents(runId)` as an async event stream for real-time observability
 
 Do not deploy the test in-memory store as a production persistence implementation. The production adapter should use the existing KRATT PostgreSQL outbox/runtime and preserve correlation IDs, idempotency and fencing tokens.
 
 ## Agent adapter contract
 
-runAgent({ agent, run, computeRoute, priorResults, signal }) returns an object with a bounded summary. The CODER stage additionally returns patches; the TESTER stage returns a non-empty list of { name, passed: true, evidenceRef }. Each test evidence reference is checked by the trusted test-evidence verifier against the exact patch digest and run context. The CRITIC stage returns an empty blockers list. Agents can propose code but cannot directly write repositories or change permissions.
+`runAgent({ agent, run, computeRoute, priorResults, signal })` returns an object with a bounded summary. The CODER stage additionally returns patches; the TESTER stage returns a non-empty list of `{ name, passed: true, evidenceRef }`. Each test evidence reference is checked by the trusted test-evidence verifier against the exact patch digest and run context. The CRITIC stage returns an empty blockers list. Agents can propose code but cannot directly write repositories or change permissions.
 
 ## Statuses
 
@@ -50,11 +64,15 @@ A route proposal is not proof of a configured adapter, an active worker, a runni
 
 Run:
 
+```sh
 node --check packages/kratt-core/src/hardware-capabilities.mjs
-
+node --check packages/kratt-core/src/runtime-observatory.mjs
+node --check packages/kratt-core/src/observed-operation.mjs
 node --check packages/kratt-core/src/phase-upgrade-engine.mjs
-
+node --check packages/kratt-core/src/phase11-wave10-integration.mjs
 node --test packages/kratt-core/test/phase-upgrade-engine.test.mjs
+node --test packages/kratt-core/test/phase11-wave10-integration.test.mjs
+```
 
 The focused CI workflow runs on the Phase 11 branch and pull requests targeting the Wave 10 hardening branch.
 
