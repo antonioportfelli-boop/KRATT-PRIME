@@ -378,3 +378,84 @@ test("candidate authority evidence references cannot be omitted from verificatio
   assert.equal(result.reason, "SEMANTIC_EVIDENCE_REFERENCE_MISSING:evidence-authority-missing");
   assert.equal(ledger.size, 0);
 });
+
+test("generic artifact evidence cannot be relabeled as effect measurement", async () => {
+  const { bridge } = makeBridge();
+  const record = semanticRecord();
+  record.effects.push({
+    effect_id: "effect-observed", effect_type: "TECHNICAL", target_refs: ["system:kratt"],
+    direction: "POSITIVE", magnitude: 120, evidence_refs: ["evidence-source"],
+    measurement_refs: ["evidence-source"], causal_status: "OBSERVED"
+  });
+  const result = await bridge.ingest({ record, evidence: [evidence("evidence-source")] });
+  assert.equal(result.reason, "EFFECT_MEASUREMENT_EVIDENCE_INVALID:evidence-source");
+});
+
+test("observed effects require typed measurement evidence bound to the effect and target", async () => {
+  const { ledger, bridge } = makeBridge();
+  const record = semanticRecord();
+  record.effects.push({
+    effect_id: "effect-observed", effect_type: "TECHNICAL", target_refs: ["system:kratt"],
+    direction: "POSITIVE", magnitude: 120, evidence_refs: ["evidence-source"],
+    measurement_refs: ["evidence-measurement"], causal_status: "OBSERVED"
+  });
+  const measurement = evidence("evidence-measurement", "benchmark-run");
+  measurement.claim_type = "MEASUREMENT_RECORDED";
+  measurement.metadata = {
+    effect_id: "effect-observed",
+    target_ref: "system:kratt",
+    metric_name: "response-latency",
+    metric_value: 120,
+    metric_unit: "ms",
+    measurement_method: "repeatable-benchmark"
+  };
+  const result = await bridge.ingest({
+    record,
+    evidence: [evidence("evidence-source"), measurement]
+  });
+  assert.equal(result.ok, true);
+  const stored = ledger.list({ kind: "WORD_SEMANTIC_RECORD" })[0].record.payload;
+  assert.ok(stored.provenance_graph.edges.some(edge =>
+    edge.relation === "MEASURED_BY" && edge.to === "evidence:evidence-measurement"
+  ));
+});
+
+test("causal status requires a typed analysis and established causality requires independent replication", async () => {
+  const { bridge } = makeBridge();
+  const record = semanticRecord();
+  record.effects.push({
+    effect_id: "effect-causal", effect_type: "TECHNICAL", target_refs: ["system:kratt"],
+    direction: "POSITIVE", magnitude: 120, evidence_refs: ["evidence-source"],
+    measurement_refs: ["evidence-measurement"], causal_status: "CAUSALLY_ESTABLISHED"
+  });
+  const measurement = evidence("evidence-measurement", "benchmark-run");
+  measurement.claim_type = "MEASUREMENT_RECORDED";
+  measurement.metadata = {
+    effect_id: "effect-causal", target_ref: "system:kratt",
+    metric_name: "response-latency", metric_value: 120, metric_unit: "ms",
+    measurement_method: "repeatable-benchmark"
+  };
+  const missingCause = await bridge.ingest({
+    record, evidence: [evidence("evidence-source"), measurement]
+  });
+  assert.equal(missingCause.reason, "EFFECT_CAUSAL_ANALYSIS_INDEPENDENCE_REQUIRED");
+
+  const first = evidence("evidence-causal-1", "causal-study-one");
+  const second = evidence("evidence-causal-2", "causal-study-two");
+  for (const item of [first, second]) {
+    item.claim_type = "CAUSAL_ANALYSIS_RECORDED";
+    item.metadata = {
+      effect_id: "effect-causal",
+      analysis_method: "controlled-experiment",
+      identification_strategy: "difference-in-differences",
+      alternative_hypotheses_considered: true,
+      replication_status: "REPLICATED"
+    };
+  }
+  record.effects[0].evidence_refs.push(first.evidence_id, second.evidence_id);
+  const isolated = makeBridge();
+  const accepted = await isolated.bridge.ingest({
+    record, evidence: [evidence("evidence-source"), measurement, first, second]
+  });
+  assert.equal(accepted.ok, true);
+});
