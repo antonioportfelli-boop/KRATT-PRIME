@@ -243,3 +243,27 @@ test("v1 migration refuses to fabricate content from sense definitions", () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, "EXPLICIT_CONTENT_REAUTHORING_REQUIRED");
 });
+
+test("sparse semantic arrays and accessor-backed fields are rejected before evaluation", () => {
+  const sparse = make();
+  sparse.contents = new Array(1);
+  assert.equal(validateWordSemanticRecord(sparse).reason, "SEMANTIC_RECORD_NOT_CANONICAL_JSON");
+
+  const accessor = make();
+  Object.defineProperty(accessor.contents[0], "payload", {
+    configurable: true,
+    enumerable: true,
+    get() { throw new Error("semantic validators must not execute input getters"); }
+  });
+  assert.equal(validateWordSemanticRecord(accessor).reason, "SEMANTIC_RECORD_NOT_CANONICAL_JSON");
+});
+
+test("symbol and non-enumerable record properties cannot escape the schema digest", () => {
+  const symbolRecord = make();
+  symbolRecord[Symbol("hidden")] = "not in schema";
+  assert.equal(validateWordSemanticRecord(symbolRecord).reason, "SEMANTIC_RECORD_NOT_CANONICAL_JSON");
+
+  const hiddenRecord = make();
+  Object.defineProperty(hiddenRecord, "hidden", { value: "not in schema", enumerable: false });
+  assert.equal(validateWordSemanticRecord(hiddenRecord).reason, "SEMANTIC_RECORD_NOT_CANONICAL_JSON");
+});
