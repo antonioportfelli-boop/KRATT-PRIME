@@ -6,7 +6,6 @@ import {
   validateTrustedContext
 } from "./contracts.mjs";
 import { createHash } from "node:crypto";
-import { POLICY_DECISIONS, validateEvidenceRecord, validateTaskEnvelope, validateTrustedContext } from "./contracts.mjs";
 
 function decision(taskId, value, reasons, evidenceIds, evaluatedAt) {
   return Object.freeze({
