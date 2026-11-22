@@ -7,7 +7,12 @@ const plain = value => value !== null && typeof value === "object" && !Array.isA
 function stable(value) {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
   if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(Object.is(value, -0) ? 0 : value);
-  if (Array.isArray(value)) return "[" + value.map(stable).join(",") + "]";
+  if (Array.isArray(value)) {
+    if (value.some((item, index) => !(index in value) || item === undefined)) {
+      throw new TypeError("SEMANTIC_MEMORY_ARRAY_VALUE_INVALID");
+    }
+    return "[" + value.map(stable).join(",") + "]";
+  }
   if (!plain(value)) throw new TypeError("SEMANTIC_MEMORY_RECORD_NOT_JSON");
   const keys = Reflect.ownKeys(value);
   if (keys.some(key => typeof key !== "string")) throw new TypeError("SEMANTIC_MEMORY_SYMBOL_KEY");
@@ -65,18 +70,21 @@ export function createPostgresSemanticMemoryStore(pool) {
     if (Buffer.byteLength(recordJson, "utf8") > 2_000_000) return { ok: false, reason: "SEMANTIC_MEMORY_RECORD_TOO_LARGE" };
 
     return transaction(pool, async client => {
+      // Serialize all appends before checking the ID. A unique-ID race cannot
+      // turn a replay into a database exception or admit a changed payload.
+      const headResult = await client.query(
+        "SELECT sequence,hash FROM kratt_semantic_memory_head WHERE singleton=TRUE FOR UPDATE");
+      const head = headResult.rows?.[0];
+      if (!head) return { ok: false, reason: "SEMANTIC_MEMORY_HEAD_NOT_INITIALIZED" };
+
       const existing = await client.query(
-        "SELECT sequence,record_json,previous_hash,hash FROM kratt_semantic_memory_events WHERE memory_id=$1 FOR UPDATE",
+        "SELECT sequence,record_json,previous_hash,hash FROM kratt_semantic_memory_events WHERE memory_id=$1",
         [record.id]);
       if (existing.rowCount === 1) {
         const prior = entryFromRow(existing.rows[0]);
         if (stable(prior.record) !== recordJson) return { ok: false, reason: "SEMANTIC_MEMORY_ID_COLLISION" };
         return { ok: true, duplicate: true, entry: prior };
       }
-
-      const headResult = await client.query(
-        "SELECT sequence,hash FROM kratt_semantic_memory_head WHERE singleton=TRUE FOR UPDATE");
-      const head = headResult.rows?.[0];
       if (!head) return { ok: false, reason: "SEMANTIC_MEMORY_HEAD_NOT_INITIALIZED" };
       const sequence = Number(head.sequence) + 1;
       const previousHash = String(head.hash).trim();
