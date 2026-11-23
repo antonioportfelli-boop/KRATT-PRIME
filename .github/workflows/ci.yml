@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/wave10-observatory-hardening-remediation-v1]
+    branches: [main, feature/wave10-observatory-hardening-remediation-v1, feature/chiro-x-pattern-intelligence-v1]
   pull_request:
-    branches: [main, feature/phase10-runtime-observatory-v1]
+    branches: [main, feature/phase10-runtime-observatory-v1, feature/phase11-wave10-reconciled-2026-11-23]
 
 jobs:
   vite:
