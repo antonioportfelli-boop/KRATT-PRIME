@@ -187,7 +187,7 @@ async function withRuntime(run, options = {}) {
     }
 
     await run({
-      runtime, store, evidenceRepository, task, constructionTask,
+      runtime, store, evidenceRepository, authorizationRuntime, task, constructionTask,
       makeApproval, nowEpochMs, nowIso,
       setCurrentMs(value) { currentMs = value; },
       setContext(value) { context = value; }
