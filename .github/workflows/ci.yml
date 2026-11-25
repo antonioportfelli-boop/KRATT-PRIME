@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/kratt-governed-execution-bridge-v1]
   pull_request:
     branches: [main]
 
