@@ -27,7 +27,7 @@ function makeTask() {
     constraints: {
       provider: "github",
       branch: "feature-governed",
-      path: "packages/kratt-core/src"
+      path: "/packages/kratt-core/src"
     },
     required_evidence: [{
       claim_type: "TESTS_PASSED",
@@ -202,7 +202,7 @@ test("WP-01 approval + verified ECK provenance + fenced lease govern execution l
   const authorized = await runtime.authorizeAndClaim({
     principal, task, constructionTask, approval: makeApproval()
   });
-  assert.equal(authorized.ok, true);
+  assert.equal(authorized.ok, true, JSON.stringify(authorized));
   assert.equal(authorized.state, "CLAIMED");
   assert.equal(authorized.dispatch, false);
   assert.equal(authorized.executionStarted, false);
