@@ -10,7 +10,7 @@ export const OPERATION_CLASSES = Object.freeze({
   READ: "READ", EXTERNAL_WRITE: "EXTERNAL_WRITE", DESTRUCTIVE_WRITE: "DESTRUCTIVE_WRITE",
 });
 const SAFE_ID = /^[a-z][a-z0-9._:-]{1,127}$/;
-const SECRET_KEY = /(secret|token|password|private.?key|credential|authorization)/i;
+const SECRET_KEY = /(^|[_-])(secret|access.?token|refresh.?token|password|private.?key|authorization|client.?secret)$/i;
 const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const uniqueStrings = (v) => Array.isArray(v) &&
   v.every((x) => typeof x === "string" && x.length > 0) && new Set(v).size === v.length;
