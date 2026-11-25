@@ -4,7 +4,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { createTrustedAuthorizationRuntime } from "../src/trusted-runtime.mjs";
 import { canonicalApprovalPayload, canonicalTaskDigest } from "../src/policy.mjs";
 import { createAuthorizedDispatchRuntime } from "../src/authorized-dispatch.mjs";
-import { KRATT_SCHEMA_VERSION } from "../src/contracts.mjs";
+import { KRATT_SCHEMA_VERSION, validateTrustedContext } from "../src/contracts.mjs";
 
 const at = "2026-11-18T15:00:00.000Z";
 const task = (overrides = {}) => ({
@@ -211,6 +211,8 @@ test("composes real Ed25519 approval verification, durable nonce consumption and
       required_claims: ["TESTS_PASSED"],
     }],
     evaluated_at: at,
+    expires_at: "2026-11-18T15:05:00.000Z",
+    kill_switch: false,
   };
   const trustedEvidence = [{
     schema_version: KRATT_SCHEMA_VERSION,
@@ -303,4 +305,27 @@ test("composes real Ed25519 approval verification, durable nonce consumption and
   assert.equal(audit.filter(record => record.event_type === "dispatch.intent_committed").length, 1);
   assert.equal(audit.filter(record => record.event_type === "dispatch.completed").length, 1);
   assert.equal(audit.filter(record => record.event_type === "authorization.denied").length, 1);
+});
+
+
+test("trusted context fails closed when kill-switch state is omitted", () => {
+  const context = {
+    schema_version: KRATT_SCHEMA_VERSION,
+    authorities: ["repository.write"],
+    allowed_targets: [{ resource_type: "repository", resource_id: "KRATT-PRIME" }],
+    policies: [{
+      action: "repo.write",
+      required_authority: "repository.write",
+      target_types: ["repository"],
+      side_effect_class: "EXTERNAL_WRITE",
+      approval_required: true,
+      approval_authority: "repository.approve",
+      required_claims: ["TESTS_PASSED"],
+    }],
+    evaluated_at: at,
+    expires_at: "2026-11-18T15:05:00.000Z",
+  };
+  const checked = validateTrustedContext(context);
+  assert.equal(checked.ok, false);
+  assert.ok(checked.errors.includes("TRUSTED_CONTEXT_SHAPE_INVALID"));
 });
