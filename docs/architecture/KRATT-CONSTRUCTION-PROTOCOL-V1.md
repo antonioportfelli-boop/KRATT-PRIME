@@ -34,3 +34,17 @@ Tests were authored but have not been executed in this environment. Do not treat
 ## Existing source-of-truth blocker
 
 The current `main` versions of `packages/kratt-core/src/policy.mjs` and `packages/kratt-core/src/contracts.mjs` contain duplicate declarations visible in the fetched source. These must be reconciled against the existing WP-01 branches and their tests before replacing either file. This feature deliberately does not overwrite those files or merge parallel work.
+
+
+## Reflection engine v1
+
+`packages/kratt-core/src/reflection-engine.mjs` produces a deterministic report from observations supplied by the trusted host after provenance validation.
+
+- Distinguishes complete evidence, missing evidence, failed checks, and readiness for independent verification.
+- Emits a bounded rework proposal only; it does not create a task, execute tools, or change task state.
+- Does not authenticate evidence. Never pass request- or model-authored observations without trusted verification.
+- A complete report on an IMPLEMENTED task recommends independent verification; only a VERIFIED task with all required evidence is reported COMPLETE.
+
+Focused tests: `packages/kratt-core/test/reflection-engine.test.mjs`.
+
+Validation remains pending: tests have been authored but have not been executed in this environment.
