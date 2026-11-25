@@ -267,9 +267,12 @@ export async function appendExecutionRecord(record, store) {
     }
     const previous = ordered.at(-1);
     const current = versions.get(record.revision);
-    if (current) return current.record_digest === record.record_digest
-      ? { ok: true, duplicate: true, record: current }
-      : fail("EXECUTION_REVISION_CONFLICT");
+    if (current) {
+      if (previous && previous.revision > record.revision) return fail("EXECUTION_REVISION_STALE");
+      return current.record_digest === record.record_digest
+        ? { ok: true, duplicate: true, record: current }
+        : fail("EXECUTION_REVISION_CONFLICT");
+    }
     if (!previous && record.revision !== 0) return fail("EXECUTION_REVISION_GAP");
     if (previous && (record.revision !== previous.revision + 1 || !sameIdentity(previous, record) ||
         !samePrefix(previous, record))) return fail("EXECUTION_REVISION_CONFLICT");
