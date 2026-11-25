@@ -23,7 +23,7 @@ The caller supplies:
 - an immutable construction task with verifiable history and `APPROVED` state;
 - a request-bound signed approval when policy requires one.
 
-The bridge binds the KRATT task ID to the construction task ID, the builder to the authenticated principal, the requested path to the construction task's target scope, and the policy-task digest to the construction-task digest. Path traversal, malformed task history, and identity mismatch fail closed.
+The bridge binds the KRATT task ID to the construction task ID, the builder to the authenticated principal, the requested path to the construction task's target scope, and the policy-task digest to the construction-task digest. Repo-rooted paths are normalized against construction scope after one optional leading slash is removed; double-leading slashes, traversal segments, and malformed task history fail closed.
 
 ### 2. Verify durable evidence
 
