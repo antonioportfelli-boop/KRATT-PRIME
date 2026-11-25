@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { validateEvidenceRecord, validateTaskEnvelope, validateTrustedContext } from "../../kratt-core/src/contracts.mjs";
 import { canonicalTaskDigest, isPolicyDecision } from "../../kratt-core/src/policy.mjs";
 import { verifyConstructionTask } from "../../kratt-core/src/construction-protocol.mjs";
@@ -261,15 +261,21 @@ export function createGovernedExecutionRuntime({
     return { ok: true, records, cardsById, snapshot };
   }
 
-  async function validateBinding({ principal, task: taskInput, constructionTask }) {
+  async function identityAndBinding({ principal, task: taskInput, constructionTask }) {
     const identityResult = await identityFor(principal);
     if (!identityResult.ok) return identityResult;
     const identity = identityResult.identity;
     const bound = bindTasks(taskInput, constructionTask, identity);
     if (!bound.ok) return bound;
-    const trusted = await trustedContextFor(bound.task, identity);
+    return { ok: true, identity, ...bound };
+  }
+
+  async function validateBinding(input) {
+    const base = await identityAndBinding(input);
+    if (!base.ok) return base;
+    const trusted = await trustedContextFor(base.task, base.identity);
     if (!trusted.ok) return trusted;
-    return { ok: true, identity, ...bound, ...trusted };
+    return { ...base, ...trusted };
   }
 
   function verifyRecordBinding(record, bound) {
@@ -358,7 +364,7 @@ export function createGovernedExecutionRuntime({
     let acquired;
     try {
       acquired = await leases.acquire({
-        operationId: operationId("acquire", record, record.last_fencing_token),
+        operationId: `acquire-${createHash("sha256").update(`${record.execution_key}:${record.revision}:${bound.identity.id}:${approval?.approval_id ?? randomUUID()}`).digest("hex").slice(0, 48)}`,
         reservationKey,
         taskDigest: record.task_digest,
         ownerId: bound.identity.id,
@@ -489,7 +495,7 @@ export function createGovernedExecutionRuntime({
   }
 
   async function complete({ principal, task: taskInput, constructionTask, record, resultDigest } = {}) {
-    const bound = await validateBinding({ principal, task: taskInput, constructionTask });
+    const bound = await identityAndBinding({ principal, task: taskInput, constructionTask });
     if (!bound.ok) return bound;
     const recordBinding = verifyRecordBinding(record, bound);
     if (!recordBinding.ok) return recordBinding;
@@ -509,7 +515,7 @@ export function createGovernedExecutionRuntime({
   }
 
   async function fail({ principal, task: taskInput, constructionTask, record, reason, retryable = false } = {}) {
-    const bound = await validateBinding({ principal, task: taskInput, constructionTask });
+    const bound = await identityAndBinding({ principal, task: taskInput, constructionTask });
     if (!bound.ok) return bound;
     const recordBinding = verifyRecordBinding(record, bound);
     if (!recordBinding.ok) return recordBinding;
@@ -529,7 +535,7 @@ export function createGovernedExecutionRuntime({
   }
 
   async function cancel({ principal, task: taskInput, constructionTask, record, reason } = {}) {
-    const bound = await validateBinding({ principal, task: taskInput, constructionTask });
+    const bound = await identityAndBinding({ principal, task: taskInput, constructionTask });
     if (!bound.ok) return bound;
     const recordBinding = verifyRecordBinding(record, bound);
     if (!recordBinding.ok) return recordBinding;
