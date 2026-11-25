@@ -31,12 +31,18 @@ const digest = value => `sha256:${createHash("sha256").update(canonical(value), 
 const failure = (reason, extra = {}) => Object.freeze({ ok: false, state: "BLOCKED", reason, dispatch: false, executionStarted: false, ...extra });
 
 function safeRelativePath(value) {
-  return typeof value === "string" && value.length > 0 && value.length <= 512 &&
-    !value.startsWith("/") && !value.includes("\\") &&
-    value.split("/").every(part => part && part !== "." && part !== "..");
+  if (typeof value !== "string" || value.length < 2 || value.length > 512 || value.startsWith("//") || value.includes("\\"))
+    return false;
+  const normalized = value.startsWith("/") ? value.slice(1) : value;
+  return normalized.length > 0 && !normalized.startsWith("/") &&
+    normalized.split("/").every(part => part && part !== "." && part !== "..");
 }
 function pathInScope(path, scopes) {
-  return scopes.some(scope => path === scope || path.startsWith(`${scope}/`));
+  const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+  return scopes.some(scope => {
+    const normalizedScope = scope.startsWith("/") ? scope.slice(1) : scope;
+    return normalizedPath === normalizedScope || normalizedPath.startsWith(`${normalizedScope}/`);
+  });
 }
 
 function bindTasks(taskInput, constructionTask, identity) {
