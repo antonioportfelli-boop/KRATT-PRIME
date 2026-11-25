@@ -89,7 +89,7 @@ function trustedContext({ killSwitch = false } = {}) {
       resource_type: "repository",
       resource_id: "repo-main",
       branch: "feature-governed",
-      path: "packages/kratt-core/src"
+      path: "/packages/kratt-core/src"
     }],
     policies: [{
       action: "publish",
