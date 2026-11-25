@@ -26,7 +26,7 @@ function makeTask() {
     target: { resource_type: "repository", resource_id: "repo-main" },
     constraints: {
       provider: "github",
-      branch: "feature/governed",
+      branch: "feature-governed",
       path: "packages/kratt-core/src"
     },
     required_evidence: [{
@@ -63,7 +63,7 @@ function makeConstructionTask() {
 
 const evidenceCardInput = () => ({
   rootId: "repo-main",
-  branchId: "feature/governed",
+  branchId: "feature-governed",
   eventId: "evidence-tests-01",
   eventType: "ci.tests.passed",
   actorId: "ci-verifier",
@@ -88,7 +88,7 @@ function trustedContext({ killSwitch = false } = {}) {
     allowed_targets: [{
       resource_type: "repository",
       resource_id: "repo-main",
-      branch: "feature/governed",
+      branch: "feature-governed",
       path: "packages/kratt-core/src"
     }],
     policies: [{
