@@ -210,15 +210,21 @@ export function failExecution(record, claim, reason, {
   }) };
 }
 
-export function cancelExecution(record, actorId, reason, { now = () => new Date().toISOString() } = {}) {
+export function cancelExecution(record, actorId, reason, {
+  workerAcknowledged = false, now = () => new Date().toISOString()
+} = {}) {
   if (!validRecord(record)) return fail("EXECUTION_RECORD_INVALID");
   if (!validId(actorId)) return fail("CANCEL_ACTOR_INVALID");
-  if (!["QUEUED", "CLAIMED", "RETRY_WAIT"].includes(record.state)) return fail("RUNNING_CANCELLATION_REQUIRES_WORKER_ACK");
+  if (!["QUEUED", "CLAIMED", "RETRY_WAIT", "RUNNING"].includes(record.state)) return fail("EXECUTION_TERMINAL");
+  if (record.state === "RUNNING" && workerAcknowledged !== true) return fail("RUNNING_CANCELLATION_REQUIRES_WORKER_ACK");
   if (typeof reason !== "string" || !reason.trim() || reason.length > 500) return fail("CANCEL_REASON_INVALID");
   let at;
   try { at = now(); } catch { return fail("EXECUTION_CLOCK_UNAVAILABLE"); }
   if (!validTime(at)) return fail("EXECUTION_CLOCK_INVALID");
-  const event = eventFor(record, "CANCELLED", at, { actor_id: actorId, reason: reason.trim() });
+  const event = eventFor(record, "CANCELLED", at, {
+    actor_id: actorId, reason: reason.trim(),
+    ...(record.state === "RUNNING" ? { worker_acknowledged: true } : {})
+  });
   return { ok: true, record: withEvent(record, event, { updated_at: at, claim: null, failure: null }) };
 }
 
