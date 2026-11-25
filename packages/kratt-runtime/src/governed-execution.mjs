@@ -322,6 +322,15 @@ export function createGovernedExecutionRuntime({
     if (!["QUEUED", "RETRY_WAIT"].includes(record.state))
       return failure("EXECUTION_NOT_READY_FOR_CLAIM", { execution_state: record.state });
 
+    let recovered;
+    try { recovered = await recoverExecutionRecords(store); }
+    catch { return failure("EXECUTION_LEDGER_RECOVERY_FAILED"); }
+    if (recovered?.ok !== true) return failure("EXECUTION_LEDGER_RECOVERY_FAILED");
+    const latest = recovered.records.find(item => item.execution_key === record.execution_key);
+    if ((latest && latest.record_digest !== record.record_digest) ||
+        (!latest && record.revision !== 0))
+      return failure("EXECUTION_RECORD_STALE_OR_UNPERSISTED");
+
     const policyEvidence = await verifiedPolicyEvidence(bound.task, bound.identity);
     if (!policyEvidence.ok) return policyEvidence;
 
