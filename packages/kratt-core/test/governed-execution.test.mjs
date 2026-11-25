@@ -249,10 +249,7 @@ test("unverified evidence provenance blocks authorization and lease acquisition"
   const alternate = createGovernedExecutionRuntime({
     store: directoryStore,
     evidenceRepository: fixture.evidenceRepository,
-    authorizationRuntime: {
-      evaluate: (...args) => fixture.runtime.authorizationRuntime?.evaluate?.(...args) ??
-        { decision: "BLOCKED", reasons: ["not wired"], evidence_ids: [] }
-    },
+    authorizationRuntime: fixture.authorizationRuntime,
     authenticatePrincipal: async () => ({ id: "builder-1", active: true }),
     loadTrustedContext: async () => trustedContext(),
     verifyEvidenceProvenance: async () => false,
