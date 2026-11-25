@@ -115,7 +115,7 @@ async function withRuntime(run, options = {}) {
     const store = new PrimeStore({ path: join(directory, "prime.ndjson") });
     const evidenceRepository = new DurableEvidenceRepository({ store });
     const appended = await evidenceRepository.append(evidenceCardInput());
-    assert.equal(appended.ok, true);
+    assert.equal(appended.ok, true, JSON.stringify(appended));
 
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const consumedNonces = new Set();
