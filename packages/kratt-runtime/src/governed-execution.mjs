@@ -47,7 +47,7 @@ function bindTasks(taskInput, constructionTask, identity) {
   if (!integrity.ok) return failure("CONSTRUCTION_TASK_INTEGRITY_INVALID", { detail: integrity.reason });
   if (constructionTask.status !== "APPROVED") return failure("CONSTRUCTION_TASK_NOT_APPROVED");
   if (task.task_id !== constructionTask.task_id || task.actor !== identity.id ||
-      constructionTask.builder_id !== identity.id || task.action !== task.action)
+      constructionTask.builder_id !== identity.id)
     return failure("CONSTRUCTION_POLICY_BINDING_MISMATCH");
   const requestedPath = task.constraints.path;
   if (requestedPath !== undefined) {
