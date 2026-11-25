@@ -5,6 +5,7 @@
 const SAFE_REF = /^[a-z][a-z0-9._:-]{1,127}$/;
 const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const deny = (code, reason) => Object.freeze({ allowed: false, code, reason });
+const VERIFIED_APPROVALS = new WeakSet();
 const deepFreeze = (v) => {
   if (Array.isArray(v)) return Object.freeze(v.map(deepFreeze));
   if (isRecord(v)) return Object.freeze(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepFreeze(x)])));
@@ -48,12 +49,14 @@ export async function verifyApprovalForRequest({ envelope, verifier, request, pr
   let authentic = false;
   try { authentic = await verifier.verify(approval); } catch { return deny("VERIFIER_ERROR", "trusted verifier failed closed"); }
   if (authentic !== true) return deny("APPROVAL_UNTRUSTED", "approval authenticity was not established");
-  return Object.freeze({
+  const verified = Object.freeze({
     allowed: true, code: "APPROVAL_VERIFIED", approvalId: approval.approvalId,
     requestId: approval.requestId, provider: approval.provider, operationId: approval.operationId,
     target: approval.target, scopes: approval.scopes, expiresAt: approval.expiresAt,
     destructive: approval.destructive, evidenceRef: approval.evidenceRef, nonce: approval.nonce,
   });
+  VERIFIED_APPROVALS.add(verified);
+  return verified;
 }
 
 /** Single-process prototype only; replace with a durable transactional store before production. */
@@ -61,7 +64,7 @@ export class InMemoryApprovalLedger {
   #used = new Set();
   #revoked = new Set();
   consume(verifiedApproval, { now = Date.now() } = {}) {
-    if (!verifiedApproval || verifiedApproval.code !== "APPROVAL_VERIFIED") return deny("APPROVAL_NOT_VERIFIED", "only verifier-produced approvals may be consumed");
+    if (!verifiedApproval || !VERIFIED_APPROVALS.has(verifiedApproval) || verifiedApproval.code !== "APPROVAL_VERIFIED") return deny("APPROVAL_NOT_VERIFIED", "only verifier-produced approvals may be consumed");
     if (Date.parse(verifiedApproval.expiresAt) <= now) return deny("APPROVAL_EXPIRED", "approval has expired");
     if (this.#revoked.has(verifiedApproval.approvalId)) return deny("APPROVAL_REVOKED", "approval has been revoked");
     const key = verifiedApproval.approvalId + ":" + verifiedApproval.nonce;
