@@ -1,4 +1,5 @@
-import { canonicalTaskDigest, validateTaskEnvelope } from "./policy.mjs";
+import { canonicalTaskDigest } from "./policy.mjs";
+import { validateTaskEnvelope } from "./contracts.mjs";
 import {
   claimExecution, completeExecution, createExecutionRecord, failExecution, startExecution
 } from "./construction-execution-ledger.mjs";
