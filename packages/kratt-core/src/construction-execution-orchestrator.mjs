@@ -111,7 +111,13 @@ export async function executeAuthorizedConstructionTask({
     return fail("LEASE_COORDINATOR_UNAVAILABLE");
   }
 
-  const decision = authorizationRuntime.evaluate(validated.value, evidence, trustedContext, { approval });
+  let decision;
+  try {
+    decision = authorizationRuntime.evaluate(validated.value, evidence, trustedContext, { approval });
+  } catch {
+    const released = await releaseLease(leaseCoordinator, claim);
+    return { ok: false, reason: "AUTHORIZATION_RUNTIME_FAILED", lease_released: released };
+  }
   if (decision?.decision !== "ALLOW") {
     const released = await releaseLease(leaseCoordinator, claim);
     return { ok: false, reason: "AUTHORIZATION_DENIED", decision, lease_released: released };
@@ -152,15 +158,17 @@ export async function executeAuthorizedConstructionTask({
   } catch (error) {
     const reason = error instanceof Error ? error.message.slice(0, 500) : "EXECUTOR_FAILED";
     const failed = failExecution(record, claim, reason || "EXECUTOR_FAILED", { retryable: false, now });
-    if (failed.ok) await persist(ledgerStore, failed.record, record.revision);
+    const failureWrite = failed.ok ? await persist(ledgerStore, failed.record, record.revision) : failed;
     const released = await releaseLease(leaseCoordinator, claim);
+    if (!failureWrite.ok) return { ok: false, reason: "EXECUTOR_FAILED_AND_FAILURE_RECORD_WRITE_FAILED", failure: failed.ok ? failed.record.failure : failed.reason, ledger_error: failureWrite.reason, lease_released: released };
     return { ok: false, reason: "EXECUTOR_FAILED", failure: failed.ok ? failed.record.failure : failed.reason, lease_released: released };
   }
 
   if (!result || typeof result !== "object" || !SHA256.test(result.result_digest || "")) {
     const failed = failExecution(record, claim, "EXECUTOR_RESULT_INVALID", { retryable: false, now });
-    if (failed.ok) await persist(ledgerStore, failed.record, record.revision);
+    const failureWrite = failed.ok ? await persist(ledgerStore, failed.record, record.revision) : failed;
     const released = await releaseLease(leaseCoordinator, claim);
+    if (!failureWrite.ok) return { ok: false, reason: "INVALID_RESULT_AND_FAILURE_RECORD_WRITE_FAILED", ledger_error: failureWrite.reason, lease_released: released };
     return { ok: false, reason: "EXECUTOR_RESULT_INVALID", lease_released: released };
   }
 
