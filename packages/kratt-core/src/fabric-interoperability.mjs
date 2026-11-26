@@ -330,7 +330,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
 
   const ackKeys = ["protocol", "ack_id", "event_id", "source_node", "receiver_node", "source_sequence",
     "event_digest", "delivery_attempt", "result", "policy_revision", "issued_at", "key_id", "content_digest", "signature"];
-  const makeOrLoadAck = async (client, authorization, result) => {
+  const makeOrLoadAck = async (client, authorization, result, ackResult = "ACCEPTED") => {
     if (!ackEnabled) return null;
     const found = await client.query(
       "SELECT ack_json FROM kratt_fabric_inbound_acknowledgements WHERE event_id=$1 AND delivery_attempt=$2 FOR UPDATE",
@@ -341,7 +341,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     try {
       supplied = await deps.createAcknowledgement({
         event, authenticatedKey: authenticated.value, authorization, result,
-        outcome: "ACCEPTED", deliveryAttempt, receivedAt: new Date(now).toISOString()
+        outcome: "ACCEPTED", ackResult, deliveryAttempt, receivedAt: new Date(now).toISOString()
       });
     } catch { throw new Error("RECEIVER_ACK_CREATION_FAILED"); }
     if (supplied?.ok === false) throw new Error(supplied.code ?? "RECEIVER_ACK_CREATION_FAILED");
@@ -352,7 +352,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
         !validId(acknowledgement.ack_id) || acknowledgement.event_id !== event.event_id ||
         acknowledgement.source_node !== event.source_node || acknowledgement.receiver_node !== event.destination_node ||
         acknowledgement.source_sequence !== event.sequence || acknowledgement.event_digest !== event.content_digest ||
-        acknowledgement.delivery_attempt !== deliveryAttempt || acknowledgement.result !== "ACCEPTED" ||
+        acknowledgement.delivery_attempt !== deliveryAttempt || acknowledgement.result !== ackResult ||
         acknowledgement.policy_revision !== authorization.policy_revision || !validId(acknowledgement.key_id) ||
         strictUtcMillis(acknowledgement.issued_at) === null || !validHash(acknowledgement.content_digest) ||
         typeof acknowledgement.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(acknowledgement.signature))
@@ -382,7 +382,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     if (stored.policy_revision !== authorized.value.policy_revision) return { policyChanged: true };
     const storedAuthorization = { ...authorized.value, policy_revision: stored.policy_revision };
     if (ackEnabled) phase = "ACK";
-    const acknowledgement = await makeOrLoadAck(client, storedAuthorization, stored.result_json);
+    const acknowledgement = await makeOrLoadAck(client, storedAuthorization, stored.result_json, "DUPLICATE");
     phase = "PERSISTENCE";
     return { value: { duplicate: true, sequence_gap: false, outcome: stored.outcome,
       result: stored.result_json, acknowledgement } };
