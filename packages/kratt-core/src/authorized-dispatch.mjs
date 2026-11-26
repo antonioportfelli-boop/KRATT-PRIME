@@ -249,14 +249,14 @@ export function createAuthorizedDispatchRuntime({
     const outcome = immutable({
       schema_version: AUDIT_SCHEMA,
       event_id: `outcome:${digestId(idempotencyKey)}`,
-      event_type: adapterResult ? "dispatch.completed" : "dispatch.failed",
+      event_type: adapterResult ? "dispatch.completed" : "dispatch.reconcile_required",
       created_at: finishedAt,
       actor_id: identity.id,
       task_id: task.task_id,
       provider,
       operation: task.action,
       idempotency_key: idempotencyKey,
-      result: adapterResult ?? { status: "failed", reason: "PROVIDER_DISPATCH_FAILED_OR_INVALID_RESULT" },
+      result: adapterResult ?? { status: "unknown", reason: "PROVIDER_OUTCOME_UNVERIFIED_AFTER_DELIVERY_START" },
     });
     try {
       if (!succeeded(await commandStore.appendOutcome({ idempotencyKey, deliveryToken, record: outcome }))) {
@@ -266,7 +266,7 @@ export function createAuthorizedDispatchRuntime({
       return { status: "OUTCOME_UNRECORDED", reason: "OUTCOME_AUDIT_APPEND_FAILED", dispatched: adapterResult !== null, idempotency_key: idempotencyKey };
     }
 
-    if (!adapterResult) return { status: "FAILED", reason: "PROVIDER_DISPATCH_FAILED_OR_INVALID_RESULT", idempotency_key: idempotencyKey };
+    if (!adapterResult) return { status: "RECONCILE_REQUIRED", reason: "PROVIDER_OUTCOME_UNVERIFIED_AFTER_DELIVERY_START", dispatched: true, reconciliation_required: true, idempotency_key: idempotencyKey };
     return { status: "COMPLETED", idempotency_key: idempotencyKey, result: adapterResult };
   }
 
