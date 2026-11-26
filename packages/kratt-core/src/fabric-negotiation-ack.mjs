@@ -58,10 +58,16 @@ function strictUtc(value) {
   }
 }
 
+function validVersion(value) {
+  if (typeof value !== "string" || value.length > 98) return false;
+  const parts = VERSION.exec(value)?.slice(1);
+  return Boolean(parts && parts.every(part => part.length <= 32));
+}
+
 function compareVersions(a, b) {
-  const aa = VERSION.exec(a)?.slice(1).map(Number);
-  const bb = VERSION.exec(b)?.slice(1).map(Number);
-  if (!aa || !bb) return null;
+  if (!validVersion(a) || !validVersion(b)) return null;
+  const aa = VERSION.exec(a).slice(1).map(BigInt);
+  const bb = VERSION.exec(b).slice(1).map(BigInt);
   for (let i = 0; i < 3; i++) if (aa[i] !== bb[i]) return aa[i] > bb[i] ? 1 : -1;
   return 0;
 }
@@ -115,11 +121,11 @@ export function validateFabricSchemaNegotiationRequest(input) {
       return fail("NEGOTIATION_SCHEMA_INVALID");
     if (![snapshot.negotiation_id, snapshot.sender_node, snapshot.receiver_node, snapshot.schema_id,
       snapshot.key_id, snapshot.policy_revision].every(validId)) return fail("NEGOTIATION_IDENTITY_INVALID");
-    if (!VERSION.test(snapshot.minimum_version) || !Array.isArray(snapshot.offered_versions) ||
+    if (!validVersion(snapshot.minimum_version) || !Array.isArray(snapshot.offered_versions) ||
       snapshot.offered_versions.length < 1 || snapshot.offered_versions.length > 16) return fail("NEGOTIATION_VERSIONS_INVALID");
     const versions = new Set();
     for (const item of snapshot.offered_versions) {
-      if (!exactKeys(item, VERSION_KEYS) || !VERSION.test(item.version) ||
+      if (!exactKeys(item, VERSION_KEYS) || !validVersion(item.version) ||
         !validHash(item.schema_digest) || versions.has(item.version)) return fail("NEGOTIATION_VERSIONS_INVALID");
       versions.add(item.version);
     }
@@ -148,7 +154,7 @@ export function validateFabricSchemaNegotiationResponse(input) {
       !validHash(snapshot.request_digest) || !validHash(snapshot.content_digest) ||
       !["SUPPORTED", "UNSUPPORTED", "UNKNOWN"].includes(snapshot.status)) return fail("NEGOTIATION_RESPONSE_INVALID");
     if (snapshot.status === "SUPPORTED") {
-      if (!VERSION.test(snapshot.selected_version) || !validHash(snapshot.schema_digest) ||
+      if (!validVersion(snapshot.selected_version) || !validHash(snapshot.schema_digest) ||
         !validId(snapshot.policy_revision) || snapshot.reason !== null) return fail("NEGOTIATION_RESPONSE_INVALID");
     } else if (snapshot.selected_version !== null || snapshot.schema_digest !== null) {
       return fail("NEGOTIATION_RESPONSE_INVALID");
@@ -273,7 +279,7 @@ export async function negotiateFabricSchema(requestInput, {
       status = "UNSUPPORTED"; reason = "POLICY_REVISION_MISMATCH";
     } else {
       const floor = policy.minimum_version ?? request.minimum_version;
-      if (!VERSION.test(floor)) return fail("NEGOTIATION_POLICY_INVALID");
+      if (!validVersion(floor)) return fail("NEGOTIATION_POLICY_INVALID");
       const allowed = Array.isArray(policy.supported_versions) ? policy.supported_versions : [];
       const candidates = request.offered_versions.filter(offered => {
         const registered = allowed.find(item => item?.version === offered.version && item?.schema_digest === offered.schema_digest && item?.status !== "DISABLED");
