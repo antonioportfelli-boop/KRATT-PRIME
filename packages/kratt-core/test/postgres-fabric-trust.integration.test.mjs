@@ -254,7 +254,7 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     assert.equal(audit.ok, true, JSON.stringify(audit));
     assert.ok(audit.value.events >= 9);
     await pool.query("ALTER TABLE kratt_fabric_trust_audit DISABLE TRIGGER kratt_fabric_trust_audit_immutable");
-    await pool.query("UPDATE kratt_fabric_trust_audit SET action='FORGED' WHERE sequence=1");
+    await pool.query("UPDATE kratt_fabric_trust_audit SET record_json=record_json || 'tampered' WHERE sequence=1");
     await pool.query("ALTER TABLE kratt_fabric_trust_audit ENABLE TRIGGER kratt_fabric_trust_audit_immutable");
     const tamperedAudit = await registry.verifyAuditChain();
     assert.equal(tamperedAudit.ok, false);
