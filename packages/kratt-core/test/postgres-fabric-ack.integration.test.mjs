@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID, generateKeyPairSync, sign } from "node:crypto";
+import { randomUUID, generateKeyPairSync, sign, createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,7 +76,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
 
     async function seed(tag) {
       const taskId = "task-ack-" + tag;
-      const idempotencyKey = "kratt:" + taskId + ":" + tag.padEnd(64, "a").slice(0, 64);
+      const idempotencyKey = "kratt:" + taskId + ":" + createHash("sha256").update(tag, "utf8").digest("hex");
       const outboxId = "outbox:" + taskId;
       const event = {
         protocol: "3XT-FABRIC/1",
