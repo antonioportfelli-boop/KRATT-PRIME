@@ -73,7 +73,7 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
   }
 
   async function applyReceiverAcknowledgement({
-    outboxId, leaseToken, acknowledgement, authenticatedReceiver, receivedAt
+    outboxId, leaseToken, acknowledgement
   } = {}) {
     if (!validId(outboxId) || typeof leaseToken !== "string" || leaseToken.length < 16 || leaseToken.length > 128)
       return fail("ACK_STORE_INPUT_INVALID");
