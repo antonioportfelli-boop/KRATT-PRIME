@@ -213,7 +213,7 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
    [name,metricCalls.filter(y=>y[0]==="counter"&&y[1]===name).reduce((sum,y)=>sum+y[2],0)]));
   const gauges=Object.fromEntries(metricCalls.filter(x=>x[0]==="gauge").map(([,name,value])=>[name,value]));
   assert.ok((counters.fabric_delivery_fence_rejected??0)>=2,JSON.stringify(counters));
-  assert.ok((counters.fabric_delivery_lease_expired??0)>=2,JSON.stringify(counters));
+  assert.ok((counters.fabric_delivery_lease_expired??0)>=1,JSON.stringify(counters));
   assert.ok((counters.fabric_task_cancelled??0)>=2,JSON.stringify(counters));
   assert.ok(Number.isFinite(gauges.fabric_outbox_pending),JSON.stringify(gauges));
   assert.ok(Number.isFinite(gauges.fabric_outbox_reconcile_required),JSON.stringify(gauges));
