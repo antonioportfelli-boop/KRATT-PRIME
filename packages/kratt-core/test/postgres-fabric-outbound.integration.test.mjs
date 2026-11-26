@@ -144,6 +144,10 @@ test("PostgreSQL outbound Fabric reservations are idempotent and commit signed e
       poolA.query("UPDATE kratt_fabric_outbound_heads SET last_sequence=0 WHERE source_node='kratt-node'"),
       /KRATT_FABRIC_OUTBOUND_HEAD_TRANSITION_INVALID/
     );
+    await assert.rejects(
+      poolA.query("DELETE FROM kratt_fabric_outbound_heads WHERE source_node='kratt-node'"),
+      /KRATT_FABRIC_OUTBOUND_HEAD_TRANSITION_INVALID/
+    );
   } finally {
     await poolA?.end();
     await poolB?.end();
