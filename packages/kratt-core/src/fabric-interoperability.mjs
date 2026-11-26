@@ -484,7 +484,8 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     const handled = await deps.handler(canonical.value, { client, authorization: authorized.value, sequence_gap: sequenceGap });
     let resultJson;
     try {
-      resultJson = JSON.stringify(handled === undefined ? null : handled);
+      const resultSnapshot = handled === undefined ? null : snapshotJson(handled);
+      resultJson = JSON.stringify(resultSnapshot);
       if (typeof resultJson !== "string" || Buffer.byteLength(resultJson, "utf8") > 1024 * 1024) throw new Error("RESULT_SIZE_INVALID");
       JSON.parse(resultJson);
     } catch { throw new Error("EVENT_RESULT_NOT_SERIALIZABLE"); }
