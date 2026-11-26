@@ -45,7 +45,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       destinations: ["kratt-node"], allowed_event_types: ["factory.task.accepted"],
       allowed_scope: ["repository.read", "evidence.read"], revision: "wave3-test-policy"
     };
-    const makeEvent = ({ id, sequence, parent = null, scope = ["repository.read"], issuedAt = new Date(Date.now() - 1_000).toISOString() }) => {
+    const makeEvent = ({ id, sequence, parent = null, scope = ["repository.read"], issuedAt = new Date(NOW - 1_000).toISOString() }) => {
       const event = {
         protocol: "3XT-FABRIC/1", event_id: id, event_type: "factory.task.accepted",
         source_node: trustedKey.source_node, destination_node: "kratt-node", source_revision: "a".repeat(40),
@@ -71,7 +71,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       }),
       resolveTrustedKey: async (sourceNode, keyId) => sourceNode === trustedKey.source_node && keyId === trustedKey.key_id ? trustedKey : null,
       resolveNodePolicy: async () => policy,
-      now: () => Date.now(),
+      now: () => NOW,
       handler: handler ?? (async (canonical, tx) => {
         await tx.client.query("INSERT INTO handler_receipts(event_id,event_type) VALUES($1,$2)", [canonical.identity.event_id, canonical.identity.event_type]);
         return "stored";
