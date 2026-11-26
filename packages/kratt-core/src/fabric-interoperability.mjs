@@ -381,7 +381,9 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     const stored = receipt.rows[0];
     if (stored.policy_revision !== authorized.value.policy_revision) return { policyChanged: true };
     const storedAuthorization = { ...authorized.value, policy_revision: stored.policy_revision };
+    if (ackEnabled) phase = "ACK";
     const acknowledgement = await makeOrLoadAck(client, storedAuthorization, stored.result_json);
+    phase = "PERSISTENCE";
     return { value: { duplicate: true, sequence_gap: false, outcome: stored.outcome,
       result: stored.result_json, acknowledgement } };
   };
@@ -496,8 +498,9 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
        event.event_type,event.source_revision,event.key_id,authorized.value.policy_revision,resultJson,processedAt]
     );
     const storedResult = JSON.parse(resultJson);
-    phase = "ACK";
+    phase = ackEnabled ? "ACK" : "COMMIT";
     const acknowledgement = await makeOrLoadAck(client, authorized.value, storedResult);
+    phase = "COMMIT";
     await client.query("COMMIT");
     transactionOpen = false;
     return ok({ duplicate: false, sequence_gap: sequenceGap, outcome: "ACCEPTED",
@@ -508,7 +511,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       ? "RECEIVER_ACK_INVALID" : "RECEIVER_ACK_CREATION_FAILED");
     if (phase === "HANDLER") return fail(error instanceof Error && error.message === "EVENT_RESULT_NOT_SERIALIZABLE"
       ? "EVENT_RESULT_NOT_SERIALIZABLE" : "EVENT_HANDLER_FAILED");
-    if (phase === "RECEIPT") return fail("EVENT_RECEIPT_STORE_FAILED");
+    if (phase === "RECEIPT" || phase === "COMMIT") return fail("EVENT_RECEIPT_STORE_FAILED");
     return fail("PERSISTENCE_UNAVAILABLE", error instanceof Error ? error.message : "database operation failed");
   } finally {
     client.release();
