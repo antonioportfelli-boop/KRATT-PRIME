@@ -72,7 +72,13 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       clock: () => new Date(clock),
       authorizeReconciliation: async request => request.actorId === "operator-01" && request.evidenceDigest === "d".repeat(64)
     });
-    const acknowledgements = createPostgresFabricAcknowledgementStore(pool, { clock: () => new Date(clock) });
+    const acknowledgements = createPostgresFabricAcknowledgementStore(pool, {
+      clock: () => new Date(clock),
+      expectedReceiverNode: "steel-node",
+      expectedPolicyRevision: "steel-policy-7",
+      resolveTrustedKey: async (nodeId, keyId) =>
+        nodeId === receiverIdentity.node_id && keyId === receiverIdentity.key_id ? receiverIdentity : null
+    });
 
     async function seed(tag) {
       const taskId = "task-ack-" + tag;
