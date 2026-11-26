@@ -26,6 +26,7 @@ on:
       - "packages/kratt-core/test/fabric-steel-contract.test.mjs"
       - "packages/kratt-core/test/fixtures/steel/fabric-v1.ts"
       - "packages/kratt-core/test/postgres-fabric.integration.test.mjs"
+      - "packages/kratt-core/test/postgres-fabric-trust.integration.test.mjs"
       - "packages/kratt-core/test/postgres-fabric-outbound.integration.test.mjs"
       - ".github/workflows/postgres-runtime-integration.yml"
   push:
