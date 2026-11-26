@@ -40,6 +40,6 @@ test("synchronous authorized dispatch requires a durable delivery-start token be
 
 test("worker requires an explicit adapter and forwards the stable idempotency key",()=>{
  assert.match(worker,/Object\.hasOwn\(adapters,\s*item\.provider\)/);
- assert.match(worker,/idempotencyKey:item\.idempotency_key/);
+ assert.match(worker,/idempotencyKey:\s*item\.idempotency_key/);
  assert.match(worker,/PROVIDER_ADAPTER_UNAVAILABLE/);
 });
