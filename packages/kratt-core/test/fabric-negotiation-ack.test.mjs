@@ -233,14 +233,14 @@ test("receiver ACK rejects digest tampering, wrong receiver, stale policy and un
     expectedReceiverNode: "steel-node", expectedPolicyRevision: "receiver-policy-7",
     resolveTrustedKey: async () => ({ ...receiverIdentity, status: "REVOKED" }), now: () => NOW
   });
-  assert.equal(revoked.code, "ACK_ACK_KEY_UNTRUSTED");
+  assert.equal(revoked.code, "ACK_KEY_UNTRUSTED");
 
   const signatureTamper = { ...ack, signature: Buffer.alloc(64).toString("base64") };
   const invalid = await authenticateFabricReceiverAcknowledgement(signatureTamper, {
     expectedReceiverNode: "steel-node", expectedPolicyRevision: "receiver-policy-7",
     resolveTrustedKey: async () => receiverIdentity, now: () => NOW
   });
-  assert.equal(invalid.code, "ACK_ACK_SIGNATURE_INVALID");
+  assert.equal(invalid.code, "ACK_SIGNATURE_INVALID");
 });
 
 test("UNKNOWN/REJECTED outcomes are passed to reconciliation and never treated as successful delivery", async () => {
