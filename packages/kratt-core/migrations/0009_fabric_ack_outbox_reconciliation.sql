@@ -77,7 +77,7 @@ BEGIN
      OR NEW.ack_json->>'policy_revision' IS DISTINCT FROM NEW.policy_revision
      OR NEW.ack_json->>'key_id' IS DISTINCT FROM NEW.key_id
      OR NEW.ack_json->>'content_digest' IS DISTINCT FROM NEW.content_digest
-     OR NEW.ack_json->>'issued_at' IS DISTINCT FROM to_char(NEW.issued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') THEN
+     OR (NEW.ack_json->>'issued_at')::TIMESTAMPTZ IS DISTINCT FROM NEW.issued_at THEN
     RAISE EXCEPTION 'KRATT_FABRIC_ACK_DOCUMENT_BINDING_MISMATCH';
   END IF;
 
