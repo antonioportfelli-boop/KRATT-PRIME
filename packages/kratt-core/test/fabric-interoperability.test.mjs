@@ -42,6 +42,7 @@ function mockPool({ lastSequence = 0, parentExists = true, existingRows = [] } =
       const normalized = sql.replace(/\s+/g, " ").trim();
       queries.push({ sql: normalized, params });
       if (normalized.startsWith("SELECT event_id,source_node,destination_node,source_sequence,content_digest")) return { rowCount: existingRows.length, rows: existingRows };
+      if (normalized.startsWith("SELECT task_id FROM kratt_cancelled_tasks")) return { rowCount: 0, rows: [] };
       if (normalized.startsWith("SELECT last_sequence, last_event_id")) return { rowCount: 1, rows: [{ last_sequence: lastSequence, last_event_id: null }] };
       if (normalized.startsWith("SELECT event_id FROM kratt_fabric_event_inbox WHERE event_id")) return { rowCount: parentExists ? 1 : 0, rows: parentExists ? [{ event_id: params[0] }] : [] };
       if (normalized.includes("INSERT INTO kratt_fabric_event_inbox")) return { rowCount: 1, rows: [] };
