@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS kratt_fabric_receiver_acknowledgements (
   receiver_node TEXT NOT NULL CHECK (receiver_node ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   source_sequence BIGINT NOT NULL CHECK (source_sequence > 0),
   event_digest CHAR(64) NOT NULL CHECK (event_digest ~ '^[a-f0-9]{64}$'),
-  delivery_attempt INTEGER NOT NULL CHECK (delivery_attempt > 0),
+  delivery_attempt BIGINT NOT NULL CHECK (delivery_attempt > 0),
   result TEXT NOT NULL CHECK (result IN ('ACCEPTED','REJECTED','DUPLICATE','UNKNOWN')),
   policy_revision TEXT NOT NULL CHECK (policy_revision ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   key_id TEXT NOT NULL CHECK (key_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
