@@ -380,11 +380,22 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     const expectedDigest = createHash("sha256").update(canonicalizeFabricJcs(unsigned), "utf8").digest("hex");
     if (expectedDigest !== acknowledgement.content_digest) throw new Error("RECEIVER_ACK_INVALID");
     let signer;
-    try { signer = await deps.resolveReceiverSigningIdentity(event.destination_node); }
+    try { signer = await deps.resolveReceiverSigningIdentity(event.destination_node, acknowledgement.key_id); }
     catch { throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE"); }
+    const ackIssuedAt = strictUtcMillis(acknowledgement.issued_at);
+    const trustedNow = Number((deps.now ?? Date.now)());
+    const keyValidFrom = signer?.valid_from ? strictUtcMillis(signer.valid_from) : null;
+    const signerUsableForAck = signer?.status === "ACTIVE"
+      ? keyValidFrom !== null && ackIssuedAt >= keyValidFrom &&
+        (!signer.sign_until || (strictUtcMillis(signer.sign_until) !== null && ackIssuedAt <= strictUtcMillis(signer.sign_until)))
+      : signer?.status === "VERIFY_ONLY"
+        ? keyValidFrom !== null && ackIssuedAt >= keyValidFrom &&
+          signer.retired_at && strictUtcMillis(signer.retired_at) !== null && ackIssuedAt <= strictUtcMillis(signer.retired_at) &&
+          signer.verify_until && strictUtcMillis(signer.verify_until) !== null && trustedNow <= strictUtcMillis(signer.verify_until)
+        : false;
     if (!signer || (signer.node_id ?? signer.source_node) !== event.destination_node ||
-        signer.status !== "ACTIVE" || (signer.node_status !== undefined && signer.node_status !== "ACTIVE") ||
-        signer.key_id !== acknowledgement.key_id || !signer.public_key)
+        (signer.node_status !== undefined && signer.node_status !== "ACTIVE") ||
+        signer.key_id !== acknowledgement.key_id || !signer.public_key || !signerUsableForAck)
       throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE");
     let publicKey, signatureBytes;
     try {
