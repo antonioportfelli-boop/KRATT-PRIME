@@ -30,7 +30,7 @@ function makeAck(event, attempt, result = "ACCEPTED", suffix = "one", overrides 
     event_id: event.event_id,
     source_node: event.source_node,
     receiver_node: event.destination_node,
-    source_sequence: event.source_sequence,
+    source_sequence: event.sequence,
     event_digest: event.content_digest,
     delivery_attempt: attempt,
     result,
@@ -215,13 +215,36 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
 
     const mismatch = await seed("mismatch");
     const mismatchLease = await begin(mismatch);
-    const wrongDigest = makeAck(mismatch.event, mismatchLease.delivery_attempt_sequence, "ACCEPTED", "mismatch", { event_digest: "f".repeat(64) });
-    // Recompute/sign after the event digest is changed, so this is an authenticated but wrongly bound ACK.
-    wrongDigest.content_digest = fabricReceiverAcknowledgementDigest(wrongDigest);
-    wrongDigest.signature = sign(null, Buffer.from(fabricReceiverAcknowledgementSigningInput(wrongDigest)), receiverKeys.privateKey).toString("base64");
+    const wrongEventId = makeAck(mismatch.event, mismatchLease.delivery_attempt_sequence, "ACCEPTED", "wrong-event-id", {
+      event_id: "event:forged"
+    });
+    const wrongEventIdResult = await process(mismatch, mismatchLease, wrongEventId);
+    assert.equal(wrongEventIdResult.code, "ACK_EVENT_BINDING_MISMATCH");
+
+    const wrongDigest = makeAck(mismatch.event, mismatchLease.delivery_attempt_sequence, "ACCEPTED", "wrong-digest", {
+      event_digest: "f".repeat(64)
+    });
     const mismatchResult = await process(mismatch, mismatchLease, wrongDigest);
     assert.equal(mismatchResult.code, "ACK_EVENT_BINDING_MISMATCH");
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [mismatch.outboxId])).rows[0].n, 0);
+
+    // A receiver may acknowledge after the worker lease expires, but only the original
+    // durable delivery-start token and monotonic attempt may resolve RECONCILE.
+    const late = await seed("late-after-lease-expiry");
+    const lateLease = await begin(late);
+    clock += 61_000;
+    assert.deepEqual(await outbox.claimOutbox({ workerId: "worker-recovery", limit: 10, leaseSeconds: 60 }), []);
+    assert.equal((await pool.query("SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1", [late.outboxId])).rows[0].status, "RECONCILE");
+
+    const lateAck = makeAck(late.event, lateLease.delivery_attempt_sequence, "ACCEPTED", "late-accepted");
+    const [lateAckResult, lateCancelResult] = await Promise.all([
+      process(late, lateLease, lateAck),
+      outbox.cancelTaskWithReason({ taskId: late.taskId, actorId: "operator-01" })
+    ]);
+    assert.equal(lateAckResult.ok, true, JSON.stringify(lateAckResult));
+    assert.equal(lateAckResult.value.outbox_status, "DONE");
+    assert.equal(lateCancelResult.ok, false, "cancellation must not overtake or undo a delivery that already started");
+    assert.equal((await pool.query("SELECT status FROM kratt_dispatch_intents WHERE task_id=$1", [late.taskId])).rows[0].status, "COMPLETED");
 
     const cancelled = await seed("cancelled-before-start");
     const cancelClaim = (await outbox.claimOutbox({ workerId: "worker-ack", limit: 10, leaseSeconds: 60 })).find(row => row.outbox_id === cancelled.outboxId);
