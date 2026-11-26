@@ -88,7 +88,7 @@ CREATE TRIGGER kratt_fabric_receiver_receipt_identity_guard
   FOR EACH ROW EXECUTE FUNCTION kratt_guard_fabric_receiver_receipt_identity();
 
 CREATE OR REPLACE FUNCTION kratt_guard_fabric_inbound_ack_binding()
-RETURNS trigger LANGUAGE plpgsql AS $
+RETURNS trigger LANGUAGE plpgsql AS $wp03_8$
 DECLARE receipt_row kratt_fabric_receiver_receipts%ROWTYPE;
 BEGIN
   SELECT * INTO receipt_row FROM kratt_fabric_receiver_receipts WHERE event_id = NEW.event_id;
@@ -102,7 +102,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$;
+$wp03_8$;
 
 DROP TRIGGER IF EXISTS kratt_fabric_inbound_ack_binding_guard ON kratt_fabric_inbound_acknowledgements;
 CREATE TRIGGER kratt_fabric_inbound_ack_binding_guard
