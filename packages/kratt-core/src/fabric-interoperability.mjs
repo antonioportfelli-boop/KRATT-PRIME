@@ -296,9 +296,10 @@ export function authorizeSteelFabricEventV1(input, authenticatedKey, policy) {
 }
 
 /**
- * Durable inbound boundary. The sequence watermark and inbox insert are serialized per source.
- * Gaps are accepted but explicitly surfaced; stale or duplicate sequence numbers are rejected.
- * The handler must use the supplied transaction client for any durable local effects.
+ * Durable inbound boundary with a transactionally persisted processing receipt.
+ * Duplicate event delivery never re-runs the business handler. When an ACK signer is
+ * configured, a signed ACK is persisted per delivery attempt and replayed byte-for-byte.
+ * The handler and all local business writes must use the supplied transaction client.
  */
 export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   if (!pool || typeof pool.connect !== "function") return fail("PERSISTENCE_UNAVAILABLE");
@@ -306,6 +307,9 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     return fail("INGRESS_DEPENDENCIES_REQUIRED");
   }
   if (!validId(deps.localNodeId)) return fail("LOCAL_NODE_ID_REQUIRED");
+  const ackEnabled = typeof deps.createAcknowledgement === "function";
+  const deliveryAttempt = deps.deliveryAttempt;
+  if (ackEnabled && (!Number.isSafeInteger(deliveryAttempt) || deliveryAttempt < 1)) return fail("DELIVERY_ATTEMPT_REQUIRED");
   const parsed = parseSteelFabricEventV1(raw);
   if (!parsed.ok) return parsed;
   const event = parsed.value;
@@ -324,107 +328,184 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   const authorized = authorizeSteelFabricEventV1(event, authenticated.value, policy);
   if (!authorized.ok) return authorized;
 
+  const ackKeys = ["protocol", "ack_id", "event_id", "source_node", "receiver_node", "source_sequence",
+    "event_digest", "delivery_attempt", "result", "policy_revision", "issued_at", "key_id", "content_digest", "signature"];
+  const makeOrLoadAck = async (client, authorization, result) => {
+    if (!ackEnabled) return null;
+    const found = await client.query(
+      "SELECT ack_json FROM kratt_fabric_inbound_acknowledgements WHERE event_id=$1 AND delivery_attempt=$2 FOR UPDATE",
+      [event.event_id, deliveryAttempt]
+    );
+    if (found.rowCount === 1) return found.rows[0].ack_json;
+    let supplied;
+    try {
+      supplied = await deps.createAcknowledgement({
+        event, authenticatedKey: authenticated.value, authorization, result,
+        outcome: "ACCEPTED", deliveryAttempt, receivedAt: new Date(now).toISOString()
+      });
+    } catch { throw new Error("RECEIVER_ACK_CREATION_FAILED"); }
+    if (supplied?.ok === false) throw new Error(supplied.code ?? "RECEIVER_ACK_CREATION_FAILED");
+    const acknowledgement = supplied?.ok === true ? supplied.value : supplied;
+    if (!acknowledgement || typeof acknowledgement !== "object" || Array.isArray(acknowledgement) ||
+        Object.keys(acknowledgement).length !== ackKeys.length || ackKeys.some(key => !Object.hasOwn(acknowledgement, key)) ||
+        acknowledgement.protocol !== "3XT-FABRIC-ACK/1" ||
+        !validId(acknowledgement.ack_id) || acknowledgement.event_id !== event.event_id ||
+        acknowledgement.source_node !== event.source_node || acknowledgement.receiver_node !== event.destination_node ||
+        acknowledgement.source_sequence !== event.sequence || acknowledgement.event_digest !== event.content_digest ||
+        acknowledgement.delivery_attempt !== deliveryAttempt || acknowledgement.result !== "ACCEPTED" ||
+        acknowledgement.policy_revision !== authorization.policy_revision || !validId(acknowledgement.key_id) ||
+        strictUtcMillis(acknowledgement.issued_at) === null || !validHash(acknowledgement.content_digest) ||
+        typeof acknowledgement.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(acknowledgement.signature))
+      throw new Error("RECEIVER_ACK_INVALID");
+    const unsigned = { ...acknowledgement };
+    delete unsigned.content_digest;
+    delete unsigned.signature;
+    const expectedDigest = createHash("sha256").update(canonicalizeFabricJcs(unsigned), "utf8").digest("hex");
+    if (expectedDigest !== acknowledgement.content_digest) throw new Error("RECEIVER_ACK_INVALID");
+    await client.query(
+      "INSERT INTO kratt_fabric_inbound_acknowledgements(event_id,delivery_attempt,ack_id,content_digest,ack_json,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+      [event.event_id, deliveryAttempt, acknowledgement.ack_id, acknowledgement.content_digest, JSON.stringify(acknowledgement), new Date(now).toISOString()]
+    );
+    return acknowledgement;
+  };
+  const duplicateResult = async (client, row) => {
+    const same = row.event_id === event.event_id && row.source_node === event.source_node &&
+      Number(row.source_sequence) === event.sequence && row.content_digest === event.content_digest &&
+      row.destination_node === event.destination_node;
+    if (!same) return { conflict: true };
+    const receipt = await client.query(
+      "SELECT outcome,result_json,policy_revision FROM kratt_fabric_receiver_receipts WHERE event_id=$1 FOR UPDATE",
+      [event.event_id]
+    );
+    if (receipt.rowCount !== 1) return { missing: true };
+    const stored = receipt.rows[0];
+    if (stored.policy_revision !== authorized.value.policy_revision) return { policyChanged: true };
+    const storedAuthorization = { ...authorized.value, policy_revision: stored.policy_revision };
+    const acknowledgement = await makeOrLoadAck(client, storedAuthorization, stored.result_json);
+    return { value: { duplicate: true, sequence_gap: false, outcome: stored.outcome,
+      result: stored.result_json, acknowledgement } };
+  };
+
   let client;
   try { client = await pool.connect(); } catch { return fail("PERSISTENCE_UNAVAILABLE"); }
   let handlerStarted = false;
   let transactionOpen = false;
+  let phase = "PERSISTENCE";
   try {
     await client.query("BEGIN");
     transactionOpen = true;
     const existing = await client.query(
-      `SELECT event_id, source_node, source_sequence, content_digest
+      `SELECT event_id,source_node,destination_node,source_sequence,content_digest
          FROM kratt_fabric_event_inbox
-        WHERE event_id = $1 OR (source_node = $2 AND source_sequence = $3)
+        WHERE event_id=$1 OR (source_node=$2 AND source_sequence=$3)
         FOR UPDATE`,
       [event.event_id, event.source_node, event.sequence]
     );
     if (existing.rowCount > 0) {
-      const row = existing.rows[0];
-      await client.query("ROLLBACK");
-      transactionOpen = false;
-      if (row.event_id === event.event_id && row.source_node === event.source_node &&
-          Number(row.source_sequence) === event.sequence && row.content_digest === event.content_digest) {
-        return ok({ duplicate: true, sequence_gap: false });
+      const duplicate = await duplicateResult(client, existing.rows[0]);
+      if (duplicate.conflict || duplicate.missing || duplicate.policyChanged) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail(duplicate.conflict ? "EVENT_REPLAY_OR_CONFLICT" :
+          duplicate.missing ? "EVENT_RECEIPT_MISSING" : "EVENT_RECEIPT_POLICY_REVISION_CHANGED");
       }
-      return fail("EVENT_REPLAY_OR_CONFLICT");
+      await client.query("COMMIT"); transactionOpen = false;
+      return ok(duplicate.value);
     }
 
     await client.query(
-      `INSERT INTO kratt_fabric_source_heads (source_node, last_sequence, last_event_id)
-       VALUES ($1, 0, NULL) ON CONFLICT (source_node) DO NOTHING`,
+      `INSERT INTO kratt_fabric_source_heads (source_node,last_sequence,last_event_id)
+       VALUES ($1,0,NULL) ON CONFLICT (source_node) DO NOTHING`,
       [event.source_node]
     );
     const headResult = await client.query(
-      `SELECT last_sequence, last_event_id FROM kratt_fabric_source_heads
-        WHERE source_node = $1 FOR UPDATE`,
+      `SELECT last_sequence,last_event_id FROM kratt_fabric_source_heads
+        WHERE source_node=$1 FOR UPDATE`,
       [event.source_node]
     );
     if (headResult.rowCount !== 1) throw new Error("FABRIC_SOURCE_HEAD_UNAVAILABLE");
 
-    // Re-check after taking the source watermark lock: a concurrent identical delivery
-    // may have committed after the optimistic inbox lookup above.
+    // Re-check after the source watermark lock: concurrent delivery may have committed.
     const racedDuplicate = await client.query(
-      `SELECT event_id, source_node, source_sequence, content_digest
+      `SELECT event_id,source_node,destination_node,source_sequence,content_digest
          FROM kratt_fabric_event_inbox
-        WHERE event_id = $1 OR (source_node = $2 AND source_sequence = $3)
+        WHERE event_id=$1 OR (source_node=$2 AND source_sequence=$3)
         FOR UPDATE`,
       [event.event_id, event.source_node, event.sequence]
     );
     if (racedDuplicate.rowCount > 0) {
-      const row = racedDuplicate.rows[0];
-      await client.query("ROLLBACK");
-      transactionOpen = false;
-      if (row.event_id === event.event_id && row.source_node === event.source_node &&
-          Number(row.source_sequence) === event.sequence && row.content_digest === event.content_digest) {
-        return ok({ duplicate: true, sequence_gap: false });
+      const duplicate = await duplicateResult(client, racedDuplicate.rows[0]);
+      if (duplicate.conflict || duplicate.missing || duplicate.policyChanged) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail(duplicate.conflict ? "EVENT_REPLAY_OR_CONFLICT" :
+          duplicate.missing ? "EVENT_RECEIPT_MISSING" : "EVENT_RECEIPT_POLICY_REVISION_CHANGED");
       }
-      return fail("EVENT_REPLAY_OR_CONFLICT");
+      await client.query("COMMIT"); transactionOpen = false;
+      return ok(duplicate.value);
     }
     const lastSequence = Number(headResult.rows[0].last_sequence);
     if (event.sequence <= lastSequence) {
-      await client.query("ROLLBACK");
-      transactionOpen = false;
+      await client.query("ROLLBACK"); transactionOpen = false;
       return fail("SEQUENCE_STALE");
     }
     const sequenceGap = event.sequence > lastSequence + 1;
     if (event.parent_event_id !== null) {
-      const parent = await client.query("SELECT event_id FROM kratt_fabric_event_inbox WHERE event_id = $1", [event.parent_event_id]);
+      const parent = await client.query("SELECT event_id FROM kratt_fabric_event_inbox WHERE event_id=$1", [event.parent_event_id]);
       if (parent.rowCount !== 1) {
-        await client.query("ROLLBACK");
-        transactionOpen = false;
+        await client.query("ROLLBACK"); transactionOpen = false;
         return fail("CAUSAL_PARENT_MISSING");
       }
     }
 
     await client.query(
       `INSERT INTO kratt_fabric_event_inbox
-        (event_id, source_node, destination_node, source_sequence, parent_event_id,
-         content_digest, issued_at, expires_at, event_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
-      [event.event_id, event.source_node, event.destination_node, event.sequence, event.parent_event_id,
-       event.content_digest, event.issued_at, event.expires_at, JSON.stringify(event)]
+        (event_id,source_node,destination_node,source_sequence,parent_event_id,content_digest,issued_at,expires_at,event_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+      [event.event_id,event.source_node,event.destination_node,event.sequence,event.parent_event_id,
+       event.content_digest,event.issued_at,event.expires_at,JSON.stringify(event)]
     );
     await client.query(
       `UPDATE kratt_fabric_source_heads
-          SET last_sequence = $2, last_event_id = $3, updated_at = clock_timestamp()
-        WHERE source_node = $1`,
-      [event.source_node, event.sequence, event.event_id]
+          SET last_sequence=$2,last_event_id=$3,updated_at=clock_timestamp()
+        WHERE source_node=$1`,
+      [event.source_node,event.sequence,event.event_id]
     );
     const canonical = toCanonicalFabricEventV2(event, authenticated.value);
     if (!canonical.ok) throw new Error(canonical.code);
+    phase = "HANDLER";
     handlerStarted = true;
     const handled = await deps.handler(canonical.value, { client, authorization: authorized.value, sequence_gap: sequenceGap });
+    let resultJson;
+    try {
+      resultJson = JSON.stringify(handled === undefined ? null : handled);
+      if (typeof resultJson !== "string" || Buffer.byteLength(resultJson, "utf8") > 1024 * 1024) throw new Error("RESULT_SIZE_INVALID");
+      JSON.parse(resultJson);
+    } catch { throw new Error("EVENT_RESULT_NOT_SERIALIZABLE"); }
+    const processedAt = new Date(now).toISOString();
+    await client.query(
+      `INSERT INTO kratt_fabric_receiver_receipts
+        (event_id,source_node,destination_node,source_sequence,content_digest,event_type,source_revision,key_id,policy_revision,outcome,result_json,processed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'ACCEPTED',$10::jsonb,$11)`,
+      [event.event_id,event.source_node,event.destination_node,event.sequence,event.content_digest,
+       event.event_type,event.source_revision,event.key_id,authorized.value.policy_revision,resultJson,processedAt]
+    );
+    const storedResult = JSON.parse(resultJson);
+    phase = "ACK";
+    const acknowledgement = await makeOrLoadAck(client, authorized.value, storedResult);
     await client.query("COMMIT");
     transactionOpen = false;
-    return ok({ duplicate: false, sequence_gap: sequenceGap, result: handled });
+    return ok({ duplicate: false, sequence_gap: sequenceGap, outcome: "ACCEPTED",
+      result: storedResult, acknowledgement });
   } catch (error) {
     if (transactionOpen) await client.query("ROLLBACK").catch(() => undefined);
-    return handlerStarted ? fail("EVENT_HANDLER_FAILED") : fail("PERSISTENCE_UNAVAILABLE", error instanceof Error ? error.message : "database operation failed");
+    if (phase === "ACK") return fail(error instanceof Error && error.message === "RECEIVER_ACK_INVALID"
+      ? "RECEIVER_ACK_INVALID" : "RECEIVER_ACK_CREATION_FAILED");
+    if (phase === "HANDLER") return fail(error instanceof Error && error.message === "EVENT_RESULT_NOT_SERIALIZABLE"
+      ? "EVENT_RESULT_NOT_SERIALIZABLE" : "EVENT_HANDLER_FAILED");
+    return fail("PERSISTENCE_UNAVAILABLE", error instanceof Error ? error.message : "database operation failed");
   } finally {
     client.release();
   }
 }
-
 export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "EVENT_SHAPE_INVALID", "EVENT_SNAPSHOT_INVALID", "SCHEMA_UNSUPPORTED", "EVENT_ID_INVALID", "EVENT_TYPE_INVALID",
   "SOURCE_PROVENANCE_INVALID", "CAUSAL_ID_INVALID", "SEQUENCE_INVALID", "TIMESTAMP_INVALID", "EVENT_TTL_INVALID",
