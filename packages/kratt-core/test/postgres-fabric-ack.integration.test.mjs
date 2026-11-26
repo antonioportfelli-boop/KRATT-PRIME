@@ -54,9 +54,11 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
   const schema = "kratt_wave3_ack_" + randomUUID().replaceAll("-", "");
   const admin = new Pool({ connectionString, max: 2 });
   let pool;
+  let poolB;
   try {
     await admin.query("CREATE SCHEMA " + schema);
     pool = new Pool({ connectionString, max: 10, options: "-c search_path=" + schema });
+    poolB = new Pool({ connectionString, max: 10, options: "-c search_path=" + schema });
     for (const path of [
       "../migrations/0001_postgres_outbox.sql",
       "../migrations/0004_fabric_outbound.sql",
@@ -94,6 +96,14 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       clock: () => new Date(clock),
       lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
         trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
+    });
+    const trustB = createPostgresFabricTrustRegistry(poolB, {
+      clock: () => new Date(clock), authorizeAdmin: async () => true
+    });
+    const acknowledgementsB = createPostgresFabricAcknowledgementStore(poolB, {
+      clock: () => new Date(clock),
+      lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
+        trustB.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
     });
 
     async function seed(tag, ackPolicyRevision = "steel-policy-7") {
@@ -157,13 +167,13 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       return row;
     }
 
-    async function process(item, lease, ack) {
+    async function process(item, lease, ack, store = acknowledgements) {
       return processFabricReceiverAcknowledgement({
         acknowledgement: ack,
         expectedReceiverNode: "steel-node",
         expectedPolicyRevision: item.ackPolicyRevision,
         resolveTrustedKey: (nodeId, keyId) => trust.resolveTrustedKey(nodeId, keyId),
-        acknowledgementStore: acknowledgements,
+        acknowledgementStore: store,
         outboxId: item.outboxId,
         leaseToken: lease.lease_token,
         now: () => clock
@@ -179,7 +189,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.equal((await pool.query("SELECT status FROM kratt_dispatch_intents WHERE task_id=$1", [accepted.taskId])).rows[0].status, "COMPLETED");
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [accepted.outboxId])).rows[0].n, 1);
 
-    const exactDuplicate = await process(accepted, acceptedLease, acceptedAck);
+    const exactDuplicate = await process(accepted, acceptedLease, acceptedAck, acknowledgementsB);
     assert.equal(exactDuplicate.ok, true);
     assert.equal(exactDuplicate.value.duplicate, true);
     const conflictingDuplicate = await process(accepted, acceptedLease,
@@ -219,6 +229,13 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       "SELECT delivery_attempt,result FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1 ORDER BY delivery_attempt",
       [rejected.outboxId]
     )).rows.map(row => [Number(row.delivery_attempt), row.result]), [[1, "REJECTED"], [2, "ACCEPTED"]]);
+
+    const policyBound = await seed("per-intent-policy-revision", "steel-policy-8");
+    const policyBoundLease = await begin(policyBound);
+    const policyBoundResult = await process(policyBound, policyBoundLease,
+      makeAck(policyBound.event, policyBoundLease.delivery_attempt_sequence, "ACCEPTED", "policy-bound"));
+    assert.equal(policyBoundResult.ok, true, JSON.stringify(policyBoundResult));
+    assert.equal(policyBoundResult.value.outbox_status, "DONE");
 
     const unknown = await seed("unknown");
     const unknownLease = await begin(unknown);
@@ -321,6 +338,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     )).rows[0].n, 0);
   } finally {
     await pool?.end();
+    await poolB?.end();
     await admin.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => undefined);
     await admin.end();
   }
