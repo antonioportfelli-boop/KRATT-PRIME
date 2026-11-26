@@ -115,6 +115,19 @@ function validRecord(record) {
         worker_id: event.worker_id, lease_id: event.lease_id,
         fence: event.fence, expires_at: event.lease_expires_at ?? null
       };
+    } else if (event.lease_expired === true) {
+      if (!activeClaim || !["RETRY_WAIT", "FAILED"].includes(event.to) ||
+          event.worker_id !== activeClaim.worker_id || event.lease_id !== activeClaim.lease_id ||
+          event.fence !== activeClaim.fence || !validTime(activeClaim.expires_at) ||
+          event.lease_expires_at !== activeClaim.expires_at ||
+          Date.parse(event.lease_expires_at) > Date.parse(event.at) ||
+          !validTime(event.lease_observed_at) ||
+          Date.parse(event.lease_observed_at) < Date.parse(event.lease_expires_at) ||
+          Date.parse(event.lease_observed_at) > Date.parse(event.at) ||
+          !validId(event.recovery_operation_id) ||
+          event.reason !== "WORKER_LEASE_EXPIRED" ||
+          event.retryable !== (event.to === "RETRY_WAIT")) return false;
+      activeClaim = null;
     } else if (event.lease_renewed === true) {
       if (!activeClaim || event.from !== event.to ||
           !["CLAIMED", "RUNNING"].includes(event.to) ||
@@ -244,6 +257,59 @@ export function renewExecutionClaim(record, claim, expiresAt, {
     record: withEvent(record, event, {
       claim: renewedClaim,
       updated_at: at
+    })
+  };
+}
+
+/**
+ * Reconcile an expired CLAIMED/RUNNING execution only after the authoritative
+ * lease coordinator has atomically expired that exact owner/fence reservation.
+ * This records recovery; it does not restart or dispatch the worker.
+ */
+export function recoverExpiredExecution(record, leaseProof, {
+  now = () => new Date().toISOString()
+} = {}) {
+  if (!validRecord(record)) return fail("EXECUTION_RECORD_INVALID");
+  if (!["CLAIMED", "RUNNING"].includes(record.state) || !record.claim) {
+    return fail("EXECUTION_NOT_ACTIVE");
+  }
+  let at;
+  try { at = now(); } catch { return fail("EXECUTION_CLOCK_UNAVAILABLE"); }
+  if (!validTime(at)) return fail("EXECUTION_CLOCK_INVALID");
+
+  const expectedReservation = "reserve-" + record.execution_key;
+  if (!plain(leaseProof) || leaseProof.ok !== true || leaseProof.state !== "EXPIRED" ||
+      leaseProof.leaseExpired !== true || leaseProof.dispatch !== false ||
+      leaseProof.reservationKey !== expectedReservation ||
+      leaseProof.taskDigest !== record.task_digest ||
+      leaseProof.ownerId !== record.claim.worker_id ||
+      leaseProof.fencingToken !== record.claim.fence ||
+      leaseProof.expiredAt !== record.claim.expires_at ||
+      !validId(leaseProof.operationId) || !validTime(leaseProof.observedAt) ||
+      Date.parse(leaseProof.observedAt) < Date.parse(leaseProof.expiredAt) ||
+      Date.parse(leaseProof.observedAt) > Date.parse(at)) {
+    return fail("EXPIRED_LEASE_PROOF_INVALID");
+  }
+
+  const canRetry = record.attempts < record.max_attempts;
+  const nextState = canRetry ? "RETRY_WAIT" : "FAILED";
+  const event = eventFor(record, nextState, at, {
+    worker_id: record.claim.worker_id,
+    lease_id: record.claim.lease_id,
+    fence: record.claim.fence,
+    lease_expires_at: record.claim.expires_at,
+    lease_expired: true,
+    lease_observed_at: leaseProof.observedAt,
+    recovery_operation_id: leaseProof.operationId,
+    reason: "WORKER_LEASE_EXPIRED",
+    retryable: canRetry
+  });
+  return {
+    ok: true,
+    record: withEvent(record, event, {
+      updated_at: at,
+      claim: null,
+      failure: { reason: "WORKER_LEASE_EXPIRED", retryable: canRetry }
     })
   };
 }
