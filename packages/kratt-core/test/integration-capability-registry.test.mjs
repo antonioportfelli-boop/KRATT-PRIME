@@ -25,7 +25,7 @@ const scopes = { read: ["repo:read"], write: ["repo:contents:write"] };
 const approval = (overrides = {}) => ({
   verified: true, provider: "github", operationId: "repo.file.create",
   target: "antonioportfelli-boop/KRATT-PRIME", requestId: "req:wave11:01",
-  expiresAt: "2026-11-26T00:00:00.000Z", approvalRef: "approval:wave11:01", ...overrides,
+  expiresAt: "2027-11-26T00:00:00.000Z", approvalRef: "approval:wave11:01", ...overrides,
 });
 
 test("normalizes and freezes descriptor", () => {
@@ -101,7 +101,7 @@ test("blocks missing, unverified and mismatched approvals", () => {
 test("blocks expired approval", () => {
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor(), operation: operation(), request: request(), effectiveScopes: scopes,
-    approval: approval(), now: Date.parse("2026-11-27T00:00:00.000Z"),
+    approval: approval({ expiresAt: "2026-11-26T00:00:00.000Z" }), now: Date.parse("2026-11-27T00:00:00.000Z"),
   }).code, "APPROVAL_EXPIRED");
 });
 test("requires explicit destructive approval", () => {
