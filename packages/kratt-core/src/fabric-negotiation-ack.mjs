@@ -164,7 +164,7 @@ export async function authenticateFabricSchemaNegotiationResponse(input, {
   try { identity = await resolveTrustedKey(response.sender_node, response.key_id); }
   catch { return fail("NEGOTIATION_RESPONSE_KEY_UNAVAILABLE"); }
   const authenticated = verifyTrustedSignature({
-    identity, keyId: response.key_id, issuedAt: response.issued_at,
+    identity, nodeId: response.sender_node, keyId: response.key_id, issuedAt: response.issued_at,
     content: response.content_digest, signature: response.signature,
     domainInput: fabricSchemaNegotiationResponseSigningInput(response), nowMs
   });
@@ -182,8 +182,8 @@ function publicKeyOf(value) {
   return null;
 }
 
-function verifyTrustedSignature({ identity, keyId, issuedAt, content, signature, domainInput, nowMs }) {
-  if (!identity || identity.key_id !== keyId || !["ACTIVE", "VERIFY_ONLY"].includes(identity.status) ||
+function verifyTrustedSignature({ identity, nodeId, keyId, issuedAt, content, signature, domainInput, nowMs }) {
+  if (!identity || (identity.node_id ?? identity.source_node) !== nodeId || identity.key_id !== keyId || !["ACTIVE", "VERIFY_ONLY"].includes(identity.status) ||
     (identity.node_status !== undefined && identity.node_status !== "ACTIVE")) return fail("ACK_KEY_UNTRUSTED");
   const issued = strictUtc(issuedAt);
   const validFrom = identity.valid_from ? Date.parse(identity.valid_from) : -Infinity;
@@ -241,7 +241,7 @@ export async function negotiateFabricSchema(requestInput, {
       const allowed = Array.isArray(policy.supported_versions) ? policy.supported_versions : [];
       const candidates = request.offered_versions.filter(offered => {
         const registered = allowed.find(item => item?.version === offered.version && item?.schema_digest === offered.schema_digest && item?.status !== "DISABLED");
-        return registered && compareVersions(offered.version, request.minimum_version) >= 0 &&
+        return registered && (registered.status === undefined || registered.status === "ACTIVE") && compareVersions(offered.version, request.minimum_version) >= 0 &&
           compareVersions(offered.version, floor) >= 0;
       }).sort((a, b) => compareVersions(b.version, a.version));
       if (candidates.length) {
@@ -265,7 +265,7 @@ export async function negotiateFabricSchema(requestInput, {
     status,
     selected_version: selected?.version ?? null,
     schema_digest: selected?.schema_digest ?? null,
-    policy_revision: status === "SUPPORTED" ? policyRevision : policyRevision,
+    policy_revision: policyRevision,
     request_digest: request.content_digest,
     reason,
     issued_at: new Date(nowMs).toISOString(),
@@ -319,7 +319,7 @@ export async function authenticateFabricReceiverAcknowledgement(input, {
   try { identity = await resolveTrustedKey(ack.receiver_node, ack.key_id); }
   catch { return fail("ACK_KEY_UNAVAILABLE"); }
   const auth = verifyTrustedSignature({
-    identity, keyId: ack.key_id, issuedAt: ack.issued_at, content: ack.content_digest,
+    identity, nodeId: ack.receiver_node, keyId: ack.key_id, issuedAt: ack.issued_at, content: ack.content_digest,
     signature: ack.signature, domainInput: fabricReceiverAcknowledgementSigningInput(ack), nowMs
   });
   if (!auth.ok) return auth;
