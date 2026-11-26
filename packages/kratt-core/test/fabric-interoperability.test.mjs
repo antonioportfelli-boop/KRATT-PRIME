@@ -199,7 +199,11 @@ test("ingress rejects policy scope escalation and expired messages before persis
   assert.equal((await receiveSteelFabricEventV1(noDb, JSON.stringify(makeEvent()), deps)).code, "SCOPE_NOT_AUTHORIZED");
   const expired = makeEvent({ expires_at: "2026-11-26T11:59:30.000Z" });
   const expiredDeps = { ...deps, resolveNodePolicy: async () => policy };
-  assert.equal((await receiveSteelFabricEventV1(noDb, JSON.stringify(expired), expiredDeps)).code, "EVENT_EXPIRED");
+  const expiredDb = mockPool();
+  const expiredResult = await receiveSteelFabricEventV1(expiredDb.pool, JSON.stringify(expired), expiredDeps);
+  assert.equal(expiredResult.code, "EVENT_EXPIRED");
+  assert.ok(expiredDb.queries.some(query => query.sql === "ROLLBACK"));
+  assert.equal(expiredDb.queries.some(query => query.sql.includes("INSERT INTO kratt_fabric_event_inbox")), false);
 });
 
 test("ingress rolls back if handler fails and never acknowledges the event", async () => {
