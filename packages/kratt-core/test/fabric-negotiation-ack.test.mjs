@@ -329,3 +329,28 @@ test("ACK without a negotiated policy revision fails closed", async () => {
   });
   assert.equal(result.code, "ACK_POLICY_REVISION_MISMATCH");
 });
+
+test("nested negotiation and acknowledgement data snapshots reject getters and proxies without invoking them", () => {
+  let getterCalls = 0;
+  const request = makeNegotiationRequest();
+  Object.defineProperty(request.offered_versions[0], "schema_digest", {
+    enumerable: true,
+    get() { getterCalls++; throw new Error("nested getter must not execute"); }
+  });
+  assert.equal(validateFabricSchemaNegotiationRequest(request).ok, false);
+  assert.equal(getterCalls, 0);
+
+  const proxiedVersions = makeNegotiationRequest();
+  proxiedVersions.offered_versions = new Proxy(proxiedVersions.offered_versions, {
+    get() { throw new Error("nested proxy trap must not execute"); }
+  });
+  assert.equal(validateFabricSchemaNegotiationRequest(proxiedVersions).ok, false);
+
+  const acknowledgement = makeAcknowledgement();
+  Object.defineProperty(acknowledgement, "event_digest", {
+    enumerable: true,
+    get() { getterCalls++; throw new Error("ACK getter must not execute"); }
+  });
+  assert.equal(validateFabricReceiverAcknowledgement(acknowledgement).ok, false);
+  assert.equal(getterCalls, 0);
+});
