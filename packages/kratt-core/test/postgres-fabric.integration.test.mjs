@@ -64,6 +64,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       createAcknowledgement: context => createFabricReceiverAcknowledgement({
         event: context.event, receiverNode: "kratt-node",
         policyRevision: context.authorization.policy_revision, deliveryAttempt: context.deliveryAttempt,
+        result: context.ackResult,
         resolveSigningIdentity: async nodeId => nodeId === "kratt-node" ? receiverSigningIdentity : null,
         sign: async ({ message }) => sign(null, Buffer.from(message, "utf8"), receiverKeys.privateKey),
         now: () => NOW
@@ -94,6 +95,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(secondAttempt.ok, true, JSON.stringify(secondAttempt));
     assert.equal(secondAttempt.value.duplicate, true);
     assert.equal(secondAttempt.value.acknowledgement.delivery_attempt, 2);
+    assert.equal(secondAttempt.value.acknowledgement.result, "DUPLICATE");
     assert.notEqual(secondAttempt.value.acknowledgement.ack_id, accepted.value.acknowledgement.ack_id);
     const replayedSecondAttempt = await receiveSteelFabricEventV1(poolA, JSON.stringify(first), deps(undefined, 2));
     assert.deepEqual(replayedSecondAttempt.value.acknowledgement, secondAttempt.value.acknowledgement);
