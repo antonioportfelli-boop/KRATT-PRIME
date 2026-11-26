@@ -30,6 +30,7 @@ export function createOutboxWorker({ store, adapters, workerId, actorId, maxAtte
           retry = await store.retryOutbox({
             outboxId: item.outbox_id,
             leaseToken: item.lease_token,
+            workerId,
             errorCode: "PROVIDER_ADAPTER_UNAVAILABLE",
             maxAttempts,
             retrySafety: "UNKNOWN"
@@ -52,7 +53,8 @@ export function createOutboxWorker({ store, adapters, workerId, actorId, maxAtte
       try {
         started = await store.beginOutboxDelivery({
           outboxId: item.outbox_id,
-          leaseToken: item.lease_token
+          leaseToken: item.lease_token,
+          workerId
         });
       } catch {
         results.push({
@@ -98,6 +100,7 @@ export function createOutboxWorker({ store, adapters, workerId, actorId, maxAtte
           retry = await store.retryOutbox({
             outboxId: item.outbox_id,
             leaseToken: item.lease_token,
+            workerId,
             errorCode: "PROVIDER_DISPATCH_FAILED",
             maxAttempts,
             retrySafety: "UNKNOWN"
@@ -123,6 +126,7 @@ export function createOutboxWorker({ store, adapters, workerId, actorId, maxAtte
           retry = await store.retryOutbox({
             outboxId: item.outbox_id,
             leaseToken: item.lease_token,
+            workerId,
             errorCode: "PROVIDER_RESULT_INVALID",
             maxAttempts,
             retrySafety: "UNKNOWN"
@@ -144,6 +148,7 @@ export function createOutboxWorker({ store, adapters, workerId, actorId, maxAtte
         finished = await store.finishOutbox({
           outboxId: item.outbox_id,
           leaseToken: item.lease_token,
+          workerId,
           actorId,
           taskId: item.task_id ?? item.payload?.task?.task_id ?? item.payload?.task_id,
           outcome: { status: "COMPLETED", audit_result: { status: result.status } }
