@@ -1,10 +1,10 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { validateEvidenceRecord, validateTaskEnvelope, validateTrustedContext } from "../../kratt-core/src/contracts.mjs";
 import { canonicalTaskDigest, isPolicyDecision } from "../../kratt-core/src/policy.mjs";
 import { verifyConstructionTask } from "../../kratt-core/src/construction-protocol.mjs";
 import {
   appendExecutionRecord, cancelExecution, claimExecution, completeExecution,
-  createExecutionRecord, failExecution, recoverExecutionRecords, startExecution,
+  createExecutionRecord, failExecution, recoverExecutionRecords, renewExecutionClaim, startExecution,
   validateExecutionRecord
 } from "../../kratt-core/src/construction-execution-ledger.mjs";
 import { DurableEvidenceRepository } from "./durable-evidence.mjs";
@@ -370,7 +370,7 @@ export function createGovernedExecutionRuntime({
     let acquired;
     try {
       acquired = await leases.acquire({
-        operationId: `acquire-${createHash("sha256").update(`${record.execution_key}:${record.revision}:${bound.identity.id}:${approval?.approval_id ?? randomUUID()}`).digest("hex").slice(0, 48)}`,
+        operationId: `acquire-${createHash("sha256").update(`${record.execution_key}:${record.revision}:${bound.identity.id}:${decision.decision_id}:${approval?.approval_id ?? "no-approval"}:${at}`).digest("hex").slice(0, 48)}`,
         reservationKey,
         taskDigest: record.task_digest,
         ownerId: bound.identity.id,
@@ -443,11 +443,19 @@ export function createGovernedExecutionRuntime({
       entry.value?.schema_version === RECEIPT_SCHEMA &&
       entry.value.execution_key === record.execution_key &&
       entry.value.lease_fence === record.claim?.fence &&
-      entry.value.record_revision === record.revision);
+      Number.isSafeInteger(entry.value.record_revision) &&
+      entry.value.record_revision > 0 &&
+      entry.value.record_revision <= record.revision);
     if (matches.length !== 1) return null;
     const value = matches[0].value;
     const { receipt_digest, ...unsigned } = value;
     if (matches[0].id !== value.receipt_id || receipt_digest !== digest(unsigned)) return null;
+    const claimEvent = record.history[value.record_revision - 1];
+    if (!claimEvent || claimEvent.to !== "CLAIMED" ||
+        claimEvent.fence !== value.lease_fence ||
+        claimEvent.worker_id !== value.principal_id ||
+        claimEvent.lease_id !== leaseId(value.reservation_key, value.principal_id, value.lease_fence) ||
+        value.reservation_key !== leaseReservationKey(record)) return null;
     return value;
   }
 
@@ -500,6 +508,77 @@ export function createGovernedExecutionRuntime({
     });
   }
 
+  /**
+   * Extend the authoritative lease, then append the new expiry to the execution
+   * ledger. The caller must retain the returned record before the next transition.
+   */
+  async function renew({ principal, task: taskInput, constructionTask, record } = {}) {
+    const bound = await validateBinding({ principal, task: taskInput, constructionTask });
+    if (!bound.ok) return bound;
+    const recordBinding = verifyRecordBinding(record, bound);
+    if (!recordBinding.ok) return recordBinding;
+    if (!["CLAIMED", "RUNNING"].includes(record.state)) return failure("EXECUTION_NOT_ACTIVE");
+    const currentLease = await leaseIsCurrent(record);
+    if (!currentLease.ok) return failure(currentLease.reason);
+
+    let receipt;
+    try { receipt = await receiptFor(record); } catch { receipt = null; }
+    if (!receipt || receipt.decision !== "ALLOW" || receipt.principal_id !== bound.identity.id) {
+      return failure("GOVERNANCE_RECEIPT_MISSING_OR_INVALID");
+    }
+    if (Date.parse(receipt.trusted_context_expires_at) <= bound.now ||
+        receipt.trusted_context_digest !== bound.contextDigest) {
+      return failure("TRUSTED_CONTEXT_CHANGED_OR_EXPIRED");
+    }
+    const policyEvidence = await verifiedPolicyEvidence(bound.task, bound.identity);
+    if (!policyEvidence.ok) return policyEvidence;
+    for (const used of receipt.evidence_cards) {
+      const current = policyEvidence.cardsById.get(used.card_id);
+      if (!current || current.content_digest !== used.content_digest) {
+        return failure("AUTHORIZED_EVIDENCE_CARD_CHANGED_OR_MISSING", { evidence_id: used.card_id });
+      }
+    }
+
+    let renewed;
+    try {
+      renewed = await leases.renew({
+        operationId: operationId("renew", record, record.claim.fence),
+        reservationKey: leaseReservationKey(record),
+        taskDigest: record.task_digest,
+        ownerId: bound.identity.id,
+        fencingToken: record.claim.fence,
+        ttlMs: leaseTtlMs
+      });
+    } catch { renewed = null; }
+    if (renewed?.ok !== true || renewed.dispatch !== false ||
+        typeof renewed.expiresAt !== "string") {
+      return failure(renewed?.reason ?? "WORKER_LEASE_RENEWAL_FAILED");
+    }
+
+    const updated = renewExecutionClaim(record, record.claim, renewed.expiresAt, { now: nowIso });
+    if (!updated.ok) {
+      const compensation = await releaseLease(record, record.claim, bound.identity.id);
+      return failure(updated.reason, { lease_compensated: compensation.ok });
+    }
+    const persisted = await appendExecutionRecord(updated.record, store);
+    if (!persisted.ok) {
+      const compensation = await releaseLease(record, record.claim, bound.identity.id);
+      return failure("EXECUTION_LEASE_RENEWAL_PERSIST_FAILED", { lease_compensated: compensation.ok });
+    }
+    return Object.freeze({
+      ok: true,
+      state: updated.record.state,
+      record: updated.record,
+      lease: Object.freeze({
+        reservation_key: leaseReservationKey(updated.record),
+        fencing_token: updated.record.claim.fence,
+        expires_at: updated.record.claim.expires_at
+      }),
+      dispatch: false,
+      externalEffects: false
+    });
+  }
+
   async function complete({ principal, task: taskInput, constructionTask, record, resultDigest } = {}) {
     const bound = await identityAndBinding({ principal, task: taskInput, constructionTask });
     if (!bound.ok) return bound;
@@ -545,6 +624,10 @@ export function createGovernedExecutionRuntime({
     if (!bound.ok) return bound;
     const recordBinding = verifyRecordBinding(record, bound);
     if (!recordBinding.ok) return recordBinding;
+    if (record.claim) {
+      const lease = await leaseIsCurrent(record);
+      if (!lease.ok) return failure(lease.reason);
+    }
     if (record.state === "RUNNING") {
       if (typeof cancelWorker !== "function") return failure("RUNNING_CANCELLATION_REQUIRES_WORKER_ACK");
       let acknowledged = false;
@@ -553,10 +636,8 @@ export function createGovernedExecutionRuntime({
         fencing_token: record.claim?.fence
       }); } catch { acknowledged = false; }
       if (acknowledged !== true) return failure("WORKER_CANCELLATION_NOT_ACKNOWLEDGED");
-    }
-    if (record.claim) {
-      const lease = await leaseIsCurrent(record);
-      if (!lease.ok) return failure(lease.reason);
+      const leaseAfterAck = await leaseIsCurrent(record);
+      if (!leaseAfterAck.ok) return failure("WORKER_LEASE_LOST_DURING_CANCELLATION");
     }
     const cancelled = cancelExecution(record, bound.identity.id, reason, {
       workerAcknowledged: record.state === "RUNNING", now: nowIso
@@ -575,6 +656,7 @@ export function createGovernedExecutionRuntime({
   return Object.freeze({
     authorizeAndClaim,
     start,
+    renew,
     complete,
     fail,
     cancel,
