@@ -276,6 +276,14 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.equal(policyBoundResult.ok, true, JSON.stringify(policyBoundResult));
     assert.equal(policyBoundResult.value.outbox_status, "DONE");
 
+    const duplicateOutcome = await seed("duplicate-outcome");
+    const duplicateOutcomeLease = await begin(duplicateOutcome);
+    const duplicateOutcomeResult = await process(duplicateOutcome, duplicateOutcomeLease,
+      makeAck(duplicateOutcome.event, duplicateOutcomeLease.delivery_attempt_sequence, "DUPLICATE", "duplicate-outcome"));
+    assert.equal(duplicateOutcomeResult.ok, true, JSON.stringify(duplicateOutcomeResult));
+    assert.equal(duplicateOutcomeResult.value.status, "DUPLICATE");
+    assert.equal(duplicateOutcomeResult.value.outbox_status, "DONE");
+
     const unknown = await seed("unknown");
     const unknownLease = await begin(unknown);
     const unknownResult = await process(unknown, unknownLease,
