@@ -39,7 +39,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
   await c.query("UPDATE kratt_audit_head SET sequence=$1,hash=$2 WHERE singleton=TRUE",[sequence,hash]);
   return{sequence,hash};
  }
- async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload,provider,fabricEvent}={}){
+ async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload,provider,fabricEvent,ackPolicyRevision}={}){
   const at=nowIso();
   if(!task||!validId(task.task_id)||!principal||!validId(principal.id)||task.actor!==principal.id||
    !validId(approval?.key_id)||!validId(approval?.nonce)||!validId(approval?.approval_id)||!validTime(approval?.expires_at)||
@@ -47,7 +47,8 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    return{ok:false,reason:"RESERVATION_INPUT_INVALID"};
   const selectedProvider=provider??task.constraints?.provider??"unknown";
   if(!validId(selectedProvider))return{ok:false,reason:"RESERVATION_PROVIDER_INVALID"};
-  if(fabricEvent&&(selectedProvider!=="fabric"||!validId(fabricEvent.event_id)||!validId(fabricEvent.source_node)||
+  if(selectedProvider==="fabric"&&(!fabricEvent||!validId(ackPolicyRevision)))return{ok:false,reason:"FABRIC_ACK_POLICY_REVISION_REQUIRED"};
+  if(fabricEvent&&(selectedProvider!=="fabric"||!validId(ackPolicyRevision)||!validId(fabricEvent.event_id)||!validId(fabricEvent.source_node)||
    !validId(fabricEvent.destination_node)||!validId(fabricEvent.key_id)||!HEX.test(fabricEvent.content_digest??"")||
    !Number.isSafeInteger(fabricEvent.sequence)||fabricEvent.sequence<1))return{ok:false,reason:"FABRIC_EVENT_INVALID"};
   const intentId="intent:"+digest(idempotencyKey),outboxId="outbox:"+digest(idempotencyKey);
@@ -55,7 +56,8 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    created_at:at,actor_id:principal.id,task_id:task.task_id,provider:selectedProvider,operation:task.action,
    idempotency_key:idempotencyKey,approval_key_id:approval.key_id,approval_id:approval.approval_id,request_digest:approval.request_digest,
    ...(fabricEvent?{fabric_event_id:fabricEvent.event_id,fabric_source_node:fabricEvent.source_node,fabric_destination_node:fabricEvent.destination_node,
-    fabric_sequence:fabricEvent.sequence,fabric_content_digest:fabricEvent.content_digest,fabric_key_id:fabricEvent.key_id}:{})};
+    fabric_sequence:fabricEvent.sequence,fabric_content_digest:fabricEvent.content_digest,fabric_key_id:fabricEvent.key_id,
+    fabric_ack_policy_revision:ackPolicyRevision}:{})};
   try{
    return await tx(pool,async c=>{
     await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[task.task_id]);
@@ -70,8 +72,8 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     await c.query("INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) VALUES($1,$2,$3,$4::jsonb,'PENDING',$5)",
      [outboxId,idempotencyKey,event.provider,JSON.stringify(providerPayload??(fabricEvent?{fabric_envelope:fabricEvent}:{task})),at]);
     if(fabricEvent){
-     await c.query("INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)",
-      [fabricEvent.event_id,idempotencyKey,fabricEvent.source_node,fabricEvent.destination_node,fabricEvent.sequence,fabricEvent.key_id,fabricEvent.content_digest,fabricEvent.issued_at,fabricEvent.expires_at,JSON.stringify(fabricEvent)]);
+     await c.query("INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json,ack_policy_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)",
+      [fabricEvent.event_id,idempotencyKey,fabricEvent.source_node,fabricEvent.destination_node,fabricEvent.sequence,fabricEvent.key_id,fabricEvent.content_digest,fabricEvent.issued_at,fabricEvent.expires_at,JSON.stringify(fabricEvent),ackPolicyRevision]);
     }
     const audit=await appendAudit(c,event);return{ok:true,intent_id:intentId,outbox_id:outboxId,audit_sequence:audit.sequence};
    });
@@ -98,13 +100,15 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
  }
  async function findOutboxByIdempotencyKey(idempotencyKey){
   if(!validIdempotencyKey(idempotencyKey))return{ok:false,reason:"IDEMPOTENCY_KEY_INVALID"};
-  const q=await pool.query("SELECT o.provider,o.status,o.payload,o.attempts,o.available_at,o.last_error_code,o.delivery_started_at,o.manual_reconciliation_count,e.event_json,e.content_digest "+
-   "FROM kratt_dispatch_outbox o LEFT JOIN kratt_fabric_outbound_events e ON e.idempotency_key=o.idempotency_key WHERE o.idempotency_key=$1",[idempotencyKey]);
+  const q=await pool.query("SELECT o.provider,o.status,o.payload,o.attempts,o.available_at,o.last_error_code,o.delivery_started_at,o.manual_reconciliation_count,e.event_json,e.content_digest,e.ack_policy_revision,s.request_digest "+
+   "FROM kratt_dispatch_outbox o LEFT JOIN kratt_fabric_outbound_events e ON e.idempotency_key=o.idempotency_key "+
+   "LEFT JOIN kratt_fabric_outbound_sequences s ON s.source_node=e.source_node AND s.idempotency_key=o.idempotency_key WHERE o.idempotency_key=$1",[idempotencyKey]);
   if(q.rowCount!==1)return{ok:true,found:false};
   const r=q.rows[0];
   if(r.provider!=="fabric"||!r.event_json)return{ok:false,reason:"IDEMPOTENCY_KEY_USED_BY_OTHER_PROVIDER"};
   return{ok:true,found:true,status:r.status,attempts:Number(r.attempts),available_at:r.available_at,event:r.event_json,
    content_digest:r.content_digest,last_error_code:r.last_error_code,delivery_started_at:r.delivery_started_at,
+   ack_policy_revision:r.ack_policy_revision,request_digest:r.request_digest,
    reconciliation_count:Number(r.manual_reconciliation_count)};
  }
  async function claimOutbox({workerId,limit=10,leaseSeconds=60}={}){
