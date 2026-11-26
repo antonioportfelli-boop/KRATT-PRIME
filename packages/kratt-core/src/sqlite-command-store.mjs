@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 const AUDIT_SCHEMA = "kratt-audit/v1";
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
@@ -107,6 +107,20 @@ export function createSqliteCommandStore(database) {
       task_id TEXT PRIMARY KEY,
       cancelled_at TEXT NOT NULL
     ) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS kratt_dispatch_delivery_starts (
+      idempotency_key TEXT PRIMARY KEY REFERENCES kratt_dispatch_intents(idempotency_key),
+      task_id TEXT NOT NULL,
+      delivery_token TEXT NOT NULL UNIQUE,
+      started_at TEXT NOT NULL
+    ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS kratt_dispatch_delivery_starts_task_idx
+      ON kratt_dispatch_delivery_starts(task_id);
+    CREATE TRIGGER IF NOT EXISTS kratt_delivery_starts_no_update
+      BEFORE UPDATE ON kratt_dispatch_delivery_starts
+      BEGIN SELECT RAISE(ABORT, 'KRATT_DELIVERY_START_APPEND_ONLY'); END;
+    CREATE TRIGGER IF NOT EXISTS kratt_delivery_starts_no_delete
+      BEFORE DELETE ON kratt_dispatch_delivery_starts
+      BEGIN SELECT RAISE(ABORT, 'KRATT_DELIVERY_START_APPEND_ONLY'); END;
     CREATE TABLE IF NOT EXISTS kratt_audit_events (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
       event_id TEXT NOT NULL UNIQUE,
@@ -141,6 +155,15 @@ export function createSqliteCommandStore(database) {
   );
   const updateIntentStatus = database.prepare(
     "UPDATE kratt_dispatch_intents SET status = ?, updated_at = ? WHERE idempotency_key = ? AND status = 'INTENT_COMMITTED'"
+  );
+  const insertDeliveryStart = database.prepare(
+    "INSERT OR IGNORE INTO kratt_dispatch_delivery_starts (idempotency_key,task_id,delivery_token,started_at) VALUES (?,?,?,?)"
+  );
+  const findDeliveryStart = database.prepare(
+    "SELECT idempotency_key,task_id,delivery_token,started_at FROM kratt_dispatch_delivery_starts WHERE idempotency_key = ?" 
+  );
+  const deliveryStartedForTask = database.prepare(
+    "SELECT idempotency_key FROM kratt_dispatch_delivery_starts WHERE task_id = ? LIMIT 1"
   );
   const insertCancelled = database.prepare(
     "INSERT OR IGNORE INTO kratt_cancelled_tasks (task_id,cancelled_at) VALUES (?,?)"
@@ -185,15 +208,48 @@ export function createSqliteCommandStore(database) {
     });
   }
 
-  function appendOutcome({ idempotencyKey, record } = {}) {
+  function beginAuthorizedDelivery({ idempotencyKey, taskId, actorId, at } = {}) {
+    if (typeof idempotencyKey !== "string" || !/^kratt:[A-Za-z0-9][A-Za-z0-9._:-]{0,191}:[a-f0-9]{64}$/.test(idempotencyKey) ||
+        typeof taskId !== "string" || !ID.test(taskId) || typeof actorId !== "string" || !ID.test(actorId) ||
+        typeof at !== "string" || !ISO_UTC.test(at) || !Number.isFinite(Date.parse(at))) {
+      return { ok: false, reason: "DELIVERY_START_INPUT_INVALID" };
+    }
+    const deliveryToken = randomBytes(32).toString("hex");
+    const tokenDigest = createHash("sha256").update(deliveryToken, "utf8").digest("hex");
+    const eventId = "delivery-start:" + createHash("sha256").update(idempotencyKey, "utf8").digest("hex");
+    const record = {
+      schema_version: AUDIT_SCHEMA,
+      event_id: eventId,
+      event_type: "dispatch.delivery_started",
+      created_at: at,
+      actor_id: actorId,
+      task_id: taskId,
+      idempotency_key: idempotencyKey,
+      delivery_token_digest: tokenDigest
+    };
+    const committed = runTransaction(database, () => {
+      if (cancelledTask.get(taskId)) return false;
+      const intent = findIntent.get(idempotencyKey);
+      if (!intent || intent.task_id !== taskId || intent.status !== "INTENT_COMMITTED") return false;
+      const inserted = insertDeliveryStart.run(idempotencyKey, taskId, deliveryToken, at);
+      if (Number(inserted.changes) !== 1) return false;
+      return appendAuditRecord(record);
+    });
+    return committed ? { ok: true, deliveryToken } : { ok: false, reason: "DELIVERY_START_DENIED_OR_DUPLICATE" };
+  }
+
+  function appendOutcome({ idempotencyKey, deliveryToken, record } = {}) {
     if (typeof idempotencyKey !== "string" ||
+        typeof deliveryToken !== "string" || !/^[a-f0-9]{64}$/.test(deliveryToken) ||
         !validateAuditRecord(record) ||
         !["dispatch.completed", "dispatch.failed"].includes(record.event_type) ||
         record.idempotency_key !== idempotencyKey) return false;
 
     return runTransaction(database, () => {
       const intent = findIntent.get(idempotencyKey);
-      if (!intent || intent.task_id !== record.task_id || intent.status !== "INTENT_COMMITTED") return false;
+      const delivery = findDeliveryStart.get(idempotencyKey);
+      if (!intent || intent.task_id !== record.task_id || intent.status !== "INTENT_COMMITTED" ||
+          !delivery || delivery.task_id !== record.task_id || delivery.delivery_token !== deliveryToken) return false;
       if (!appendAuditRecord(record)) return false;
       const status = record.event_type === "dispatch.completed" ? "COMPLETED" : "FAILED";
       const updated = updateIntentStatus.run(status, record.created_at, idempotencyKey);
@@ -214,6 +270,7 @@ export function createSqliteCommandStore(database) {
       task_id: taskId,
     };
     return runTransaction(database, () => {
+      if (deliveryStartedForTask.get(taskId)) return false;
       const inserted = insertCancelled.run(taskId, at);
       if (Number(inserted.changes) !== 1) return false;
       return appendAuditRecord(record);
@@ -260,6 +317,7 @@ export function createSqliteCommandStore(database) {
   return Object.freeze({
     appendDecision,
     commitAuthorizedIntent,
+    beginAuthorizedDelivery,
     appendOutcome,
     cancelTask,
     listAuditEvents,
