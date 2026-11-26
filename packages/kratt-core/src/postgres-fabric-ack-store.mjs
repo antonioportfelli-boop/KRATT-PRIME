@@ -128,8 +128,9 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
         );
         if (row.rowCount !== 1) return fail("ACK_FABRIC_EVENT_NOT_FOUND");
         const item = row.rows[0];
-        if (item.task_id !== taskId || item.provider !== "fabric" || item.intent_status !== "INTENT_COMMITTED")
+        if (item.task_id !== taskId || item.provider !== "fabric")
           return fail("ACK_TASK_OR_PROVIDER_BINDING_INVALID");
+        if (item.intent_status !== "INTENT_COMMITTED") return fail("ACK_INTENT_TERMINAL");
         if (!["LEASED", "RECONCILE"].includes(item.status) || !item.delivery_started_at ||
           item.delivery_lease_token !== leaseToken || (item.status === "LEASED" && item.lease_token !== leaseToken))
           return fail("ACK_DELIVERY_FENCE_MISMATCH");
