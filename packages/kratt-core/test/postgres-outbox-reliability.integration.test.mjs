@@ -107,6 +107,16 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   assert.equal(duplicateBegin.ok,true);assert.equal(duplicateBegin.duplicate,true);
   const refusedCancel=await store.cancelTaskWithReason({taskId:started.taskId,actorId:"operator-01"});
   assert.equal(refusedCancel.reason,"DELIVERY_ALREADY_STARTED");
+  const wrongOwnerFinish=await store.finishOutbox({
+   outboxId:started.outboxId,leaseToken:claimed[0].lease_token,workerId:"worker-impostor",
+   outcome:{status:"COMPLETED"},actorId:"worker-impostor",taskId:started.taskId
+  });
+  assert.equal(wrongOwnerFinish.reason,"LEASE_LOST");
+  const wrongOwnerRetry=await store.retryOutbox({
+   outboxId:started.outboxId,leaseToken:claimed[0].lease_token,workerId:"worker-impostor",
+   errorCode:"TEMPORARY",retrySafety:"SAFE_TO_RETRY"
+  });
+  assert.equal(wrongOwnerRetry.reason,"LEASE_LOST");
   const finished=await store.finishOutbox({workerId:"worker-01",
    outboxId:started.outboxId,leaseToken:claimed[0].lease_token,outcome:{status:"COMPLETED"},
    actorId:"worker-01",taskId:started.taskId
