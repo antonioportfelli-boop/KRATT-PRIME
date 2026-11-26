@@ -91,8 +91,9 @@ test("STEEL and KRATT reject digest tampering, unknown fields and invalid signat
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const event = signedBySteel(makeBody("steel-node", STEEL_SOURCE.commit, "tamper-check-001"), privateKey);
   const changed = { ...event, payload: { ...event.payload, action: "forged" } };
-  assert.equal(steelValidateFabricEvent(changed).ok, false);
-  assert.equal(validateSteelFabricEventV1(changed).ok, false);
+  assert.equal(steelValidateFabricEvent(changed).ok, true, "STEEL separates schema validation from digest verification");
+  assert.equal(steelVerifyContentDigest(changed).ok, false, "STEEL digest verification rejects tampering");
+  assert.equal(validateSteelFabricEventV1(changed).ok, false, "KRATT validates schema and digest together");
   const extra = { ...event, uncontracted: true };
   assert.equal(steelValidateFabricEvent(extra).ok, false);
   assert.equal(validateSteelFabricEventV1(extra).ok, false);
