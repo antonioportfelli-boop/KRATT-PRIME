@@ -35,6 +35,11 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    setFabricGauge(metrics,"fabric_outbox_reconcile_required",Number(q.rows[0]?.reconcile??0));
   }catch{}
  }
+ async function stateTx(work){
+  const result=await tx(pool,work);
+  await refreshOutboxGauges();
+  return result;
+ }
  function nowIso(){
   const v=clock(),d=v instanceof Date?new Date(v.getTime()):new Date(v);
   if(!Number.isFinite(d.getTime()))throw new TypeError("TRUSTED_CLOCK_INVALID");
@@ -87,11 +92,11 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     }
     const audit=await appendAudit(c,event);return{ok:true,intent_id:intentId,outbox_id:outboxId,audit_sequence:audit.sequence};
    });
-  }catch(e){if(e?.code==="23505")return{ok:false,reason:"DUPLICATE_OR_REPLAYED"};throw e;}
+  }catch(e){if(e?.code==="23505"){incrementFabricMetric(metrics,"fabric_idempotency_conflicts");return{ok:false,reason:"DUPLICATE_OR_REPLAYED"};}throw e;}
  }
  async function reserveFabricSequence({sourceNode,idempotencyKey,requestDigest}={}){
   if(!validId(sourceNode)||!validIdempotencyKey(idempotencyKey)||!HEX.test(requestDigest??""))return{ok:false,reason:"FABRIC_SEQUENCE_INPUT_INVALID"};
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",["fabric-outbound:"+sourceNode]);
    const existing=await c.query("SELECT source_sequence,request_digest FROM kratt_fabric_outbound_sequences WHERE source_node=$1 AND idempotency_key=$2 FOR UPDATE",[sourceNode,idempotencyKey]);
    if(existing.rowCount===1){
@@ -125,10 +130,11 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
   if(!validId(workerId)||!Number.isInteger(limit)||limit<1||limit>100||!Number.isInteger(leaseSeconds)||leaseSeconds<5||leaseSeconds>900)
    throw new TypeError("OUTBOX_CLAIM_OPTIONS_INVALID");
   const token=randomUUID(),at=nowIso(),until=new Date(Date.parse(at)+leaseSeconds*1000).toISOString();
-  return tx(pool,async c=>{
-   await c.query("UPDATE kratt_dispatch_outbox SET status='RECONCILE',lease_owner=NULL,lease_token=NULL,lease_until=NULL,"+
+  return stateTx(async c=>{
+   const expired=await c.query("UPDATE kratt_dispatch_outbox SET status='RECONCILE',lease_owner=NULL,lease_token=NULL,lease_until=NULL,"+
     "last_error_code='DELIVERY_LEASE_EXPIRED_AFTER_START',updated_at=$1 "+
-    "WHERE status='LEASED' AND lease_until<=$1 AND delivery_started_at IS NOT NULL",[at]);
+    "WHERE status='LEASED' AND lease_until<=$1 AND delivery_started_at IS NOT NULL RETURNING outbox_id",[at]);
+   if(expired.rowCount>0)incrementFabricMetric(metrics,"fabric_delivery_lease_expired",expired.rowCount);
    const attemptColumn = await c.query(
     "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() " +
     "AND table_name='kratt_dispatch_outbox' AND column_name='delivery_attempt_sequence') AS available"
@@ -161,7 +167,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
   if(!validId(outboxId)||typeof leaseToken!=="string"||leaseToken.length<16||leaseToken.length>128)
    return{ok:false,reason:"OUTBOX_DELIVERY_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    const identity=await c.query("SELECT i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key WHERE o.outbox_id=$1",[outboxId]);
    if(identity.rowCount!==1)return{ok:false,reason:"OUTBOX_NOT_FOUND"};
    const taskId=identity.rows[0].task_id;
@@ -191,7 +197,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
   if(!validId(outboxId)||typeof leaseToken!=="string"||!validId(actorId)||!validId(taskId)||
    !["COMPLETED","FAILED"].includes(outcome?.status))return{ok:false,reason:"OUTBOX_FINISH_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    const q=await c.query("SELECT o.idempotency_key,o.provider,o.attempts,o.delivery_started_at,o.delivery_lease_token,"+
     "i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
     "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 FOR UPDATE OF o,i",[outboxId,leaseToken]);
@@ -218,7 +224,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    !Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>32||!["SAFE_TO_RETRY","UNKNOWN"].includes(retrySafety))
    return{ok:false,reason:"OUTBOX_RETRY_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    const q=await c.query("SELECT o.attempts,o.delivery_started_at,o.delivery_lease_token,o.idempotency_key,o.provider,"+
     "i.task_id,o.lease_owner FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
     "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 FOR UPDATE OF o,i",[outboxId,leaseToken]);
@@ -249,7 +255,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
  async function cancelTaskWithReason({taskId,actorId}={}){
   if(!validId(taskId)||!validId(actorId))return{ok:false,reason:"CANCEL_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[taskId]);
    const existing=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE",[taskId]);
    if(existing.rowCount)return{ok:true,duplicate:true,task_id:taskId,cancelled_outbox_count:0};
@@ -288,7 +294,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
   const identity=await pool.query("SELECT i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key WHERE o.outbox_id=$1",[outboxId]);
   if(identity.rowCount!==1)return{ok:false,reason:"OUTBOX_NOT_FOUND"};
   const taskId=identity.rows[0].task_id;
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[taskId]);
    const q=await c.query("SELECT o.status,o.idempotency_key,o.attempts,o.manual_reconciliation_count,i.task_id,i.status AS intent_status "+
     "FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
