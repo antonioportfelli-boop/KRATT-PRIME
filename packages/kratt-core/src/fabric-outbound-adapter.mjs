@@ -249,7 +249,7 @@ export function createSteelFabricOutboundAdapter({
     if (prior.found) {
       const duplicate = existingReservation(prior, eventId, sourceNode, policy.revision, reservationDigest);
       if (!duplicate) incrementFabricMetric(metrics, "fabric_idempotency_conflicts");
-      return duplicate ? ok(duplicate) : ok(duplicate);
+      return duplicate ? ok(duplicate) : fail("IDEMPOTENCY_RESERVATION_CONFLICT");
     }
 
     let sequenceReservation;
