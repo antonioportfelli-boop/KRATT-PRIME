@@ -1,31 +1,41 @@
 /**
- * Wave 2 runtime reconciliation baseline.
+ * Wave 2 runtime inventory and dependency validator.
  *
- * This is an inventory and dependency guard, not a runtime orchestrator.
- * Statuses describe repository evidence as of 2026-11-26 and must be refreshed
- * when candidate PRs change. It deliberately does not import or activate draft
- * runtime components.
+ * Maturity labels are intentionally precise: the mainline bridge is real,
+ * but its PrimeStore/lease path is local and single-process. PostgreSQL
+ * runtime adapters in this Wave 2 branch remain subject to CI and a live
+ * PostgreSQL integration run before any deployment claim.
  */
 export const RUNTIME_RECONCILIATION_VERSION = "kratt-runtime-reconciliation/v1";
+
+const EVIDENCE_STATES = Object.freeze([
+  "MAIN",
+  "MAIN_LOCAL_ONLY",
+  "MAIN_NO_EXTERNAL_EFFECTS",
+  "MAIN_NO_REPLAY",
+  "MAIN_POSTGRES_LIBRARY",
+  "NOT_PRESENT_ON_MAIN",
+  "WAVE2_BRANCH_PENDING_CI",
+]);
 
 export const RUNTIME_LAYERS = Object.freeze([
   Object.freeze({
     id: "task-contract",
-    responsibility: "Define immutable construction task and guarded lifecycle transitions",
+    responsibility: "Immutable construction task and guarded lifecycle transitions",
     evidence: "MAIN",
     source: Object.freeze(["packages/kratt-core/src/construction-protocol.mjs"]),
     dependsOn: Object.freeze([]),
   }),
   Object.freeze({
     id: "execution-ledger",
-    responsibility: "Derive deterministic execution identity and validate state/fencing history",
+    responsibility: "Deterministic execution identity, immutable revisions and fencing checks",
     evidence: "MAIN",
     source: Object.freeze(["packages/kratt-core/src/construction-execution-ledger.mjs"]),
     dependsOn: Object.freeze(["task-contract"]),
   }),
   Object.freeze({
     id: "trusted-authorization",
-    responsibility: "Verify request-bound approval, trusted evidence and policy before dispatch",
+    responsibility: "WP-01 policy, request-bound approval and trusted evidence verification",
     evidence: "MAIN",
     source: Object.freeze([
       "packages/kratt-core/src/trusted-runtime.mjs",
@@ -35,40 +45,81 @@ export const RUNTIME_LAYERS = Object.freeze([
     dependsOn: Object.freeze(["task-contract"]),
   }),
   Object.freeze({
-    id: "evidence-ledger",
-    responsibility: "Append and verify local hash-chained evidence; production durability is not provided by this reference ledger",
-    evidence: "MAIN_REFERENCE_ONLY",
+    id: "evidence-projection",
+    responsibility: "Durable Evidence Cards and hash-chained evidence projection over PrimeStore",
+    evidence: "MAIN_LOCAL_ONLY",
     source: Object.freeze([
+      "packages/kratt-runtime/src/durable-evidence.mjs",
+      "packages/kratt-runtime/src/evidence-kernel.mjs",
       "packages/kratt-core/src/evidence-ledger.mjs",
-      "packages/kratt-core/src/evidence-integrity.mjs",
+      "packages/kratt-core/src/prime-store.mjs",
     ]),
     dependsOn: Object.freeze(["task-contract"]),
   }),
   Object.freeze({
-    id: "durable-worker-leases",
-    responsibility: "Claim work with durable leases and fencing tokens",
-    evidence: "OPEN_DRAFT_DEPENDENCY",
-    source: Object.freeze([]),
-    dependsOn: Object.freeze(["execution-ledger", "trusted-authorization"]),
-    candidate: "feature/durable-worker-leases-fencing-v1",
+    id: "worker-leases",
+    responsibility: "Persistent bounded leases and monotonically increasing fencing within a local single-process boundary",
+    evidence: "MAIN_LOCAL_ONLY",
+    source: Object.freeze(["packages/kratt-runtime/src/worker-lease-coordinator.mjs"]),
+    dependsOn: Object.freeze(["execution-ledger"]),
   }),
   Object.freeze({
-    id: "authorized-dispatch",
-    responsibility: "Bind approved intent to idempotent reservation, outbox and audit record",
-    evidence: "MAIN",
-    source: Object.freeze([
-      "packages/kratt-core/src/authorized-dispatch.mjs",
-      "packages/kratt-core/src/outbox-worker.mjs",
-      "packages/kratt-core/src/postgres-outbox-store.mjs",
+    id: "governed-execution",
+    responsibility: "Bind WP-01 authorization, verified ECK, fenced lease, execution ledger and governance receipt",
+    evidence: "MAIN_NO_EXTERNAL_EFFECTS",
+    source: Object.freeze(["packages/kratt-runtime/src/governed-execution.mjs"]),
+    dependsOn: Object.freeze([
+      "task-contract", "execution-ledger", "trusted-authorization", "evidence-projection", "worker-leases"
     ]),
-    dependsOn: Object.freeze(["trusted-authorization", "evidence-ledger"]),
   }),
   Object.freeze({
-    id: "reflection-recovery",
-    responsibility: "Persist recovery/reflection state and reconcile it against execution/evidence history",
+    id: "execution-recovery",
+    responsibility: "Verify journal, reject gaps/forks and return latest execution record without replay",
+    evidence: "MAIN_NO_REPLAY",
+    source: Object.freeze([
+      "packages/kratt-core/src/construction-execution-ledger.mjs",
+      "packages/kratt-runtime/src/governed-execution.mjs",
+    ]),
+    dependsOn: Object.freeze(["execution-ledger", "evidence-projection"]),
+  }),
+  Object.freeze({
+    id: "postgres-outbox",
+    responsibility: "PostgreSQL authorization intent, nonce/cancellation reservation and at-least-once outbox library",
+    evidence: "MAIN_POSTGRES_LIBRARY",
+    source: Object.freeze([
+      "packages/kratt-core/src/postgres-outbox-store.mjs",
+      "packages/kratt-core/migrations/0001_postgres_outbox.sql",
+      "packages/kratt-core/src/outbox-worker.mjs",
+    ]),
+    dependsOn: Object.freeze(["trusted-authorization"]),
+  }),
+  Object.freeze({
+    id: "reflection-engine",
+    responsibility: "Durable persisted reflection/recovery journal integrated with governed execution",
     evidence: "NOT_PRESENT_ON_MAIN",
     source: Object.freeze([]),
-    dependsOn: Object.freeze(["execution-ledger", "evidence-ledger", "durable-worker-leases"]),
+    dependsOn: Object.freeze(["evidence-projection", "execution-recovery"]),
+  }),
+  Object.freeze({
+    id: "postgres-runtime-journal",
+    responsibility: "Shared PostgreSQL hash-chained journal compatible with evidence and execution stores",
+    evidence: "WAVE2_BRANCH_PENDING_CI",
+    source: Object.freeze(["packages/kratt-core/src/postgres-runtime-store.mjs"]),
+    dependsOn: Object.freeze(["evidence-projection", "execution-ledger"]),
+  }),
+  Object.freeze({
+    id: "postgres-worker-leases",
+    responsibility: "Cross-process transactional worker leases and fencing using database row locks",
+    evidence: "WAVE2_BRANCH_PENDING_CI",
+    source: Object.freeze(["packages/kratt-runtime/src/postgres-worker-lease-coordinator.mjs"]),
+    dependsOn: Object.freeze(["worker-leases", "postgres-runtime-journal"]),
+  }),
+  Object.freeze({
+    id: "postgres-governed-runtime",
+    responsibility: "PostgreSQL-backed composition of governed execution, evidence journal and fenced leases",
+    evidence: "WAVE2_BRANCH_PENDING_CI",
+    source: Object.freeze(["packages/kratt-runtime/src/postgres-governed-execution.mjs"]),
+    dependsOn: Object.freeze(["governed-execution", "postgres-runtime-journal", "postgres-worker-leases"]),
   }),
 ]);
 
@@ -83,9 +134,7 @@ export function validateRuntimeLayers(layers = RUNTIME_LAYERS) {
     }
     if (ids.has(layer.id)) errors.push("LAYER_ID_DUPLICATE:" + layer.id);
     ids.add(layer.id);
-    if (!["MAIN", "MAIN_REFERENCE_ONLY", "OPEN_DRAFT_DEPENDENCY", "NOT_PRESENT_ON_MAIN"].includes(layer.evidence)) {
-      errors.push("LAYER_EVIDENCE_INVALID:" + layer.id);
-    }
+    if (!EVIDENCE_STATES.includes(layer.evidence)) errors.push("LAYER_EVIDENCE_INVALID:" + layer.id);
     if (!Array.isArray(layer.source) || new Set(layer.source).size !== layer.source.length) {
       errors.push("LAYER_SOURCE_INVALID:" + layer.id);
     }
