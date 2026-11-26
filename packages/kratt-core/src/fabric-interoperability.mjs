@@ -25,6 +25,7 @@ const ok = value => ({ ok: true, value });
 const isRecord = value => typeof value === "object" && value !== null && !Array.isArray(value) && !utilTypes.isProxy(value) &&
   [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const validId = value => typeof value === "string" && ID.test(value);
+const validHash = value => typeof value === "string" && SHA256.test(value);
 const validTaskId = value => typeof value === "string" && TASK_ID.test(value);
 const validToken = value => typeof value === "string" && TOKEN.test(value);
 
