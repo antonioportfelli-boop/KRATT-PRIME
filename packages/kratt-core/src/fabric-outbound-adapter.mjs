@@ -159,15 +159,17 @@ export function createSteelFabricOutboundAdapter({
     }
     const scope = policy.scope_by_event_type?.[eventType];
     if (!listOfTokens(scope)) return fail("OUTBOUND_SCOPE_POLICY_INVALID");
-    const approvalProvider = policy.approval_provider ?? "fabric";
-    if (!ID.test(approvalProvider) || approval.provider !== approvalProvider ||
+    const taskProvider = task.constraints?.provider;
+    if (typeof taskProvider !== "string" || !ID.test(taskProvider)) return fail("OUTBOUND_TASK_PROVIDER_REQUIRED");
+    const approvalProvider = policy.approval_provider ?? taskProvider;
+    if (!ID.test(approvalProvider) || approvalProvider !== taskProvider || approval.provider !== taskProvider ||
         approval.authority !== policy.approval_authority || !ID.test(policy.approval_authority ?? "")) {
       return fail("APPROVAL_POLICY_BINDING_MISMATCH");
     }
     const approvalBinding = {
       task_id: task.task_id,
       actor: principal.id,
-      provider: approvalProvider,
+      provider: taskProvider,
       operation: task.action,
       target: task.target,
       authority: policy.approval_authority,
