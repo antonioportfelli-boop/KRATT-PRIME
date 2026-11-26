@@ -35,6 +35,8 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
 
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const receiverKeyPair = generateKeyPairSync("ed25519");
+    const receiverPublicKeyPem = receiverKeyPair.publicKey.export({ type: "spki", format: "pem" }).toString();
     const registry = createPostgresFabricTrustRegistry(pool, {
       clock: () => new Date(NOW), localNodeId: "kratt-node",
       authorizeAdmin: async ({ actorId }) => actorId === "security-admin"
@@ -47,6 +49,16 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
       nodeId: "kratt-node", repositoryFullName: "antonioportfelli-boop/KRATT-PRIME",
       repositoryRevision: KRATT_COMMIT, actorId: "security-admin"
     })).ok, true);
+    const receiverKeyPending = await registry.registerKey({
+      nodeId: "kratt-node", keyId: "kratt-ack-key-01", publicKeyPem: receiverPublicKeyPem,
+      validFrom: "2026-01-01T00:00:00.000Z", signUntil: "2027-01-01T00:00:00.000Z", actorId: "security-admin"
+    });
+    assert.equal(receiverKeyPending.ok, true, JSON.stringify(receiverKeyPending));
+    const receiverKeyActivated = await registry.transitionKey({
+      nodeId: "kratt-node", keyId: "kratt-ack-key-01", nextStatus: "ACTIVE",
+      actorId: "security-admin", reason: "activate local receiver ACK verification key"
+    });
+    assert.equal(receiverKeyActivated.ok, true, JSON.stringify(receiverKeyActivated));
 
     assert.equal((await registry.registerKey({
       nodeId: "steel-node", keyId: "steel-key-01", publicKeyPem, actorId: "untrusted-user"
@@ -145,10 +157,45 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     const verifiedOnly = await receiveSteelFabricEventV1(pool, JSON.stringify(afterRetirement), deps);
     assert.equal(verifiedOnly.ok, true, JSON.stringify(verifiedOnly));
 
-    // The inbound transaction holds the trusted key and active policy rows FOR SHARE.
-    // A concurrent revocation waits until the accepted event and receipt are committed.
+    // Receiver signing-key revocation waits behind the same transaction that protects
+    // the destination-side ACK verification/signing identity.
+    const receiverKeyRaceEvent = makeEvent({
+      id: "trust-receiver-key-revocation-race", sequence: 3, scope: ["repository.read"],
+      issuedAt: "2026-11-26T11:59:45.000Z", expiresAt: "2026-11-26T12:00:15.000Z"
+    });
+    let releaseReceiverKeyHandler;
+    let receiverKeyHandlerEnteredResolve;
+    const receiverKeyHandlerEntered = new Promise(resolve => { receiverKeyHandlerEnteredResolve = resolve; });
+    const receiverKeyHandlerGate = new Promise(resolve => { releaseReceiverKeyHandler = resolve; });
+    const receiverKeyLockDeps = {
+      ...deps,
+      revalidateAuthorization: ({ client, event, authenticatedKey, authorization, now }) => registry.lockInboundAuthorization(client, {
+        event, authenticatedKey, expectedPolicyRevision: authorization.policy_revision, nowMs: now
+      }),
+      handler: async (canonical, tx) => {
+        await tx.client.query("INSERT INTO handler_receipts(event_id) VALUES($1)", [canonical.identity.event_id]);
+        receiverKeyHandlerEnteredResolve();
+        await receiverKeyHandlerGate;
+        return "accepted-before-receiver-key-revocation";
+      }
+    };
+    const receiverKeyReceive = receiveSteelFabricEventV1(pool, JSON.stringify(receiverKeyRaceEvent), receiverKeyLockDeps);
+    await receiverKeyHandlerEntered;
+    const receiverKeyRevocation = registry.transitionKey({
+      nodeId: "kratt-node", keyId: "kratt-ack-key-01", nextStatus: "REVOKED",
+      actorId: "security-admin", reason: "serialize local receiver key revocation behind in-flight ingress"
+    });
+    await waitForTrustKeyUpdateWait();
+    releaseReceiverKeyHandler();
+    const receiverKeyReceiveResult = await receiverKeyReceive;
+    assert.equal(receiverKeyReceiveResult.ok, true, JSON.stringify(receiverKeyReceiveResult));
+    const receiverKeyRevocationResult = await receiverKeyRevocation;
+    assert.equal(receiverKeyRevocationResult.ok, true, JSON.stringify(receiverKeyRevocationResult));
+
+    // The inbound transaction holds the source trusted key and active policy rows FOR SHARE.
+    // A concurrent source-key revocation waits until the accepted event and receipt commit.
     const lockedEvent = makeEvent({
-      id: "trust-lock-revocation-race", sequence: 3, scope: ["repository.read"],
+      id: "trust-lock-revocation-race", sequence: 4, scope: ["repository.read"],
       issuedAt: "2026-11-26T11:59:45.000Z", expiresAt: "2026-11-26T12:00:15.000Z"
     });
     let releaseLockedHandler;
@@ -185,7 +232,7 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
       actorId: "security-admin", reason: "retired key cannot be reactivated"
     });
     assert.equal(invalidReactivation.code, "TRUST_KEY_TRANSITION_INVALID");
-    const afterRevoke = makeEvent({ id: "trust-after-revoke", sequence: 4 });
+    const afterRevoke = makeEvent({ id: "trust-after-revoke", sequence: 5 });
     assert.equal((await receiveSteelFabricEventV1(pool, JSON.stringify(afterRevoke), deps)).code, "KEY_REVOKED");
 
     const audit = await registry.verifyAuditChain();
@@ -203,8 +250,8 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
       "SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count," +
       "(SELECT count(*)::int FROM handler_receipts) AS handler_count"
     );
-    assert.equal(counts.rows[0].inbox_count, 3);
-    assert.equal(counts.rows[0].handler_count, 3);
+    assert.equal(counts.rows[0].inbox_count, 4);
+    assert.equal(counts.rows[0].handler_count, 4);
   } finally {
     if (pool) await pool.end();
     await admin.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => undefined);
