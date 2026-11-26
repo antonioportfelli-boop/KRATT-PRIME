@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { generateKeyPairSync } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createPostgresRuntimeStore } from "../src/postgres-runtime-store.mjs";
 import { createPostgresWorkerLeaseCoordinator } from "../../kratt-runtime/src/postgres-worker-lease-coordinator.mjs";
 import { DurableEvidenceRepository } from "../../kratt-runtime/src/durable-evidence.mjs";
+import { createPostgresGovernedExecutionRuntime } from "../../kratt-runtime/src/postgres-governed-execution.mjs";
 
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -153,6 +155,49 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
     assert.equal(evidenceStatus.ok, true);
     assert.equal(evidenceStatus.eventCount, 3);
     assert.equal(evidenceStatus.scope, "POSTGRES_SHARED_DATABASE");
+
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const composedRuntime = await createPostgresGovernedExecutionRuntime({
+      pool: poolA,
+      trustedApprovalKeys: [{
+        key_id: "integration-approval-key",
+        approver_id: "integration-approver",
+        public_key_pem: publicKey.export({ type: "spki", format: "pem" }),
+        authorities: ["repository-write"]
+      }],
+      verifyPolicyEvidence: evidence => evidence?.result === "VERIFIED",
+      authenticatePrincipal: async () => ({ id: "integration-principal", active: true }),
+      loadTrustedContext: async () => ({
+        schema_version: "kratt-prime/v0.1",
+        authorities: [],
+        allowed_targets: [],
+        policies: [],
+        evaluated_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        kill_switch: false
+      }),
+      verifyEvidenceProvenance: async () => true,
+      nowEpochMs: () => Date.now(),
+      leaseTtlMs: 5_000
+    });
+
+    const readiness = await composedRuntime.readiness();
+    assert.equal(readiness.ok, true, JSON.stringify(readiness));
+    assert.equal(readiness.backend, "POSTGRES_SHARED_DATABASE");
+    assert.equal(readiness.dispatch, false);
+    assert.equal(readiness.externalEffects, false);
+    assert.equal(readiness.storageProtection.encryptionAtRest, "UNVERIFIED");
+    assert.equal(readiness.storageProtection.remoteReplication, "UNVERIFIED");
+
+    const composedEvidence = await composedRuntime.appendEvidence(
+      evidenceInput("evidence-composed-runtime", "run-composed")
+    );
+    assert.equal(composedEvidence.ok, true, JSON.stringify(composedEvidence));
+    const composedList = await composedRuntime.listEvidence();
+    assert.equal(composedList.ok, true);
+    assert.equal(composedList.count, 4);
+    assert.ok(composedList.cards.some(card => card.cardId === "evidence-composed-runtime"));
+    assert.equal((await composedRuntime.evidenceStatus()).scope, "POSTGRES_SHARED_DATABASE");
 
     const leasesA = createPostgresWorkerLeaseCoordinator(poolA);
     const leasesB = createPostgresWorkerLeaseCoordinator(poolB);
