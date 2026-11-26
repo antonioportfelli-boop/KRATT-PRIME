@@ -23,7 +23,7 @@ const ROOT_KEYS = [
   "versions", "capabilities", "operations",
 ];
 const SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const IDENTIFIER = /^[A-Za-z][A-Za-z0-9._:-]{0,127}$/;
+const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const PROVIDER = /^[a-z][a-z0-9.-]{0,63}$/;
 const VERSION_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,63}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
