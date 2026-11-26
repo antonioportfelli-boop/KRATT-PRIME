@@ -123,12 +123,12 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     " (o.status='LEASED' AND o.lease_until<=$1 AND o.delivery_started_at IS NULL)) "+
     " AND i.status='INTENT_COMMITTED' "+
     " AND NOT EXISTS(SELECT 1 FROM kratt_cancelled_tasks x WHERE x.task_id=i.task_id) "+
-    " ORDER BY o.available_at,o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT $2"+
+    " ORDER BY o.available_at,o.outbox_id FOR UPDATE SKIP LOCKED LIMIT $2"+
     ") "+
     "UPDATE kratt_dispatch_outbox o SET status='LEASED',lease_owner=$3,lease_token=$4,lease_until=$5,"+
     "attempts=o.attempts+1,delivery_started_at=NULL,delivery_lease_token=NULL,updated_at=$1 "+
-    "FROM picked JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
-    "WHERE o.outbox_id=picked.outbox_id "+
+    "FROM picked, kratt_dispatch_intents i "+
+    "WHERE o.outbox_id=picked.outbox_id AND i.idempotency_key=o.idempotency_key "+
     "RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token,o.lease_until,i.task_id",
     [at,limit,workerId,token,until]);
    return r.rows;
