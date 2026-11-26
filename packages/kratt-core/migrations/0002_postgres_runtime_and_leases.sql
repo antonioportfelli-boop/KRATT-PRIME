@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS kratt_worker_lease_operations (
   operation_id TEXT PRIMARY KEY
     CHECK (operation_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   operation_digest TEXT NOT NULL CHECK (operation_digest ~ '^sha256:[0-9a-f]{64}$'),
-  operation TEXT NOT NULL CHECK (operation IN ('acquire', 'renew', 'release')),
+  operation TEXT NOT NULL CHECK (operation IN ('acquire', 'renew', 'release', 'expire')),
   reservation_key TEXT NOT NULL
     REFERENCES kratt_worker_lease_reservations(reservation_key),
   result_json JSONB NOT NULL,
