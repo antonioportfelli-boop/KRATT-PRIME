@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createPostgresFabricTrustRegistry } from "../src/postgres-fabric-trust-registry.mjs";
 import { receiveSteelFabricEventV1, fabricEventContentDigest, fabricSigningInput } from "../src/fabric-interoperability.mjs";
+import { createFabricReceiverAcknowledgement } from "../src/fabric-negotiation-ack.mjs";
 
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -169,8 +170,18 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     const receiverKeyHandlerGate = new Promise(resolve => { releaseReceiverKeyHandler = resolve; });
     const receiverKeyLockDeps = {
       ...deps,
+      deliveryAttempt: 1,
       revalidateAuthorization: ({ client, event, authenticatedKey, authorization, now }) => registry.lockInboundAuthorization(client, {
         event, authenticatedKey, expectedPolicyRevision: authorization.policy_revision, nowMs: now
+      }),
+      lockReceiverSigningIdentity: (client, nodeId, keyId, acknowledgement, now) =>
+        registry.lockReceiverSigningIdentity(client, nodeId, keyId, acknowledgement, now),
+      createAcknowledgement: context => createFabricReceiverAcknowledgement({
+        event: context.event, receiverNode: "kratt-node", policyRevision: context.authorization.policy_revision,
+        deliveryAttempt: context.deliveryAttempt, result: context.ackResult,
+        resolveSigningIdentity: async () => registry.resolveActiveSigningIdentity({ keyId: "kratt-ack-key-01" }),
+        sign: async ({ message }) => sign(null, Buffer.from(message, "utf8"), receiverKeyPair.privateKey),
+        now: () => Date.parse(NOW)
       }),
       handler: async (canonical, tx) => {
         await tx.client.query("INSERT INTO handler_receipts(event_id) VALUES($1)", [canonical.identity.event_id]);
@@ -189,6 +200,8 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     releaseReceiverKeyHandler();
     const receiverKeyReceiveResult = await receiverKeyReceive;
     assert.equal(receiverKeyReceiveResult.ok, true, JSON.stringify(receiverKeyReceiveResult));
+    assert.equal(receiverKeyReceiveResult.value.acknowledgement.result, "ACCEPTED");
+    assert.equal(receiverKeyReceiveResult.value.acknowledgement.key_id, "kratt-ack-key-01");
     const receiverKeyRevocationResult = await receiverKeyRevocation;
     assert.equal(receiverKeyRevocationResult.ok, true, JSON.stringify(receiverKeyRevocationResult));
 
