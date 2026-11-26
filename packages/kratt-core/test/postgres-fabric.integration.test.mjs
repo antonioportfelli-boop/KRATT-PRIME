@@ -102,6 +102,12 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       now: () => NOW
     });
     assert.equal(verifiedAck.ok, true, JSON.stringify(verifiedAck));
+    const conflictingReplay = { ...first, payload: { task_id: "changed-task", status: "accepted" }, content_digest: "0".repeat(64), signature: "" };
+    conflictingReplay.content_digest = fabricEventContentDigest(conflictingReplay);
+    conflictingReplay.signature = sign(null, Buffer.from(fabricSigningInput(conflictingReplay), "utf8"), privateKey).toString("base64");
+    const conflictResult = await receiveSteelFabricEventV1(poolB, JSON.stringify(conflictingReplay), deps());
+    assert.equal(conflictResult.ok, false);
+    assert.equal(conflictResult.code, "EVENT_REPLAY_OR_CONFLICT");
 
     const parent = makeEvent({ id: "fabric-db-parent", sequence: 2 });
     const parentResult = await receiveSteelFabricEventV1(poolB, JSON.stringify(parent), deps());
@@ -139,13 +145,25 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(failed.code, "EVENT_HANDLER_FAILED");
     const retried = await receiveSteelFabricEventV1(poolB, JSON.stringify(retryAfterHandlerFault), deps());
     assert.equal(retried.ok, true, JSON.stringify(retried));
+    const ackFailureEvent = makeEvent({ id: "fabric-db-ack-retry", sequence: 8, parent: retryAfterHandlerFault.event_id });
+    const failedAck = await receiveSteelFabricEventV1(poolA, JSON.stringify(ackFailureEvent), {
+      ...deps(), createAcknowledgement: async () => ({ ok: false, code: "ACK_SIGNING_FAILED" })
+    });
+    assert.equal(failedAck.ok, false);
+    assert.equal(failedAck.code, "RECEIVER_ACK_CREATION_FAILED");
+    const rolledBack = await poolA.query("SELECT count(*)::int AS count FROM kratt_fabric_event_inbox WHERE event_id=$1", [ackFailureEvent.event_id]);
+    assert.equal(rolledBack.rows[0].count, 0);
+    const ackRetried = await receiveSteelFabricEventV1(poolB, JSON.stringify(ackFailureEvent), deps());
+    assert.equal(ackRetried.ok, true, JSON.stringify(ackRetried));
 
     const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count, (SELECT count(*)::int FROM kratt_fabric_receiver_receipts) AS receipt_count, (SELECT count(*)::int FROM kratt_fabric_inbound_acknowledgements) AS ack_count");
-    assert.equal(counts.rows[0].inbox_count, 6);
-    assert.equal(counts.rows[0].handler_count, 6);
-    assert.equal(counts.rows[0].receipt_count, 6);
-    assert.equal(counts.rows[0].ack_count, 7);
-    await assert.rejects(poolA.query("UPDATE kratt_fabric_event_inbox SET destination_node='elsewhere' WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_EVENT_INBOX_APPEND_ONLY/);
+    assert.equal(counts.rows[0].inbox_count, 7);
+    assert.equal(counts.rows[0].handler_count, 7);
+    assert.equal(counts.rows[0].receipt_count, 7);
+    assert.equal(counts.rows[0].ack_count, 8);
+    await assert.rejects(poolA.query("UPDATE kratt_fabric_receiver_receipts SET processed_at=processed_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_RECEIVER_RECEIPT_APPEND_ONLY/);
+    await assert.rejects(poolA.query("UPDATE kratt_fabric_inbound_acknowledgements SET created_at=created_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_INBOUND_ACK_APPEND_ONLY/);
+    await assert.rejects(poolA.query("UPDATE kratt_fabric_event_inbox SET destination_node=$2 WHERE event_id=$1", [first.event_id, "elsewhere"]), /KRATT_FABRIC_EVENT_INBOX_APPEND_ONLY/);
     await assert.rejects(poolA.query("DELETE FROM kratt_fabric_event_inbox WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_EVENT_INBOX_APPEND_ONLY/);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_source_heads SET last_sequence=1 WHERE source_node=$1", [trustedKey.source_node]), /KRATT_FABRIC_SOURCE_HEAD_TRANSITION_INVALID/);
   } finally {
