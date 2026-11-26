@@ -129,7 +129,7 @@ The PostgreSQL integration test is separate and uses `KRATT_TEST_DATABASE_URL` p
 Current Wave 3 status at the time of this update:
 - inbound 3XT-FABRIC/1 parsing, Ed25519 verification, authorization, PostgreSQL inbox, replay, ordering and causality: implemented and CI-verified;
 - outbound 3XT-FABRIC/1 signing, task-bound approval verification boundary, source sequence reservation, and atomic PostgreSQL intent/outbox/event/audit persistence: implemented and CI-verified;
-- unit suite for outbound composition: seven focused tests;
+- unit suite for outbound composition: eleven focused tests;
 - live PostgreSQL 16 suite: three integration tests (runtime journal/leases, Fabric inbox, Fabric outbound outbox), all run in CI with a live database, not skipped.
 
 Remaining Wave 3 work:
