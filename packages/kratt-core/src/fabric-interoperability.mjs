@@ -312,7 +312,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   const ackEnabled = typeof deps.createAcknowledgement === "function";
   const deliveryAttempt = deps.deliveryAttempt;
   if (ackEnabled && (!Number.isSafeInteger(deliveryAttempt) || deliveryAttempt < 1)) return fail("DELIVERY_ATTEMPT_REQUIRED");
-  if (ackEnabled && typeof deps.resolveReceiverSigningIdentity !== "function") return fail("RECEIVER_SIGNING_IDENTITY_RESOLVER_REQUIRED");
+  if (ackEnabled && typeof deps.lockReceiverSigningIdentity !== "function") return fail("RECEIVER_SIGNING_IDENTITY_LOCKER_REQUIRED");
   if (ackEnabled && typeof deps.revalidateAuthorization !== "function") return fail("INGRESS_AUTHORIZATION_REVALIDATOR_REQUIRED");
   const parsed = parseSteelFabricEventV1(raw);
   if (!parsed.ok) return parsed;
@@ -382,9 +382,11 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     delete unsigned.signature;
     const expectedDigest = createHash("sha256").update(canonicalizeFabricJcs(unsigned), "utf8").digest("hex");
     if (expectedDigest !== acknowledgement.content_digest) throw new Error("RECEIVER_ACK_INVALID");
-    let signer;
-    try { signer = await deps.resolveReceiverSigningIdentity(event.destination_node, acknowledgement.key_id); }
+    let signerResult;
+    try { signerResult = await deps.lockReceiverSigningIdentity(client, event.destination_node, acknowledgement.key_id, acknowledgement, now); }
     catch { throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE"); }
+    if (signerResult?.ok === false) throw new Error(signerResult.code ?? "RECEIVER_ACK_SIGNER_UNAVAILABLE");
+    const signer = signerResult?.ok === true ? signerResult.value : signerResult;
     const ackIssuedAt = strictUtcMillis(acknowledgement.issued_at);
     const trustedNow = Number((deps.now ?? Date.now)());
     const keyValidFrom = signer?.valid_from ? strictUtcMillis(signer.valid_from) : null;
@@ -646,7 +648,7 @@ export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "PERSISTENCE_UNAVAILABLE", "INGRESS_DEPENDENCIES_REQUIRED", "LOCAL_NODE_ID_REQUIRED", "DESTINATION_NOT_LOCAL",
   "EVENT_NOT_YET_VALID", "EVENT_EXPIRED", "EVENT_REPLAY_OR_CONFLICT", "EVENT_RECEIPT_MISSING",
   "EVENT_RECEIPT_POLICY_REVISION_CHANGED", "EVENT_RECEIPT_STORE_FAILED", "TASK_SCOPE_RESOLUTION_FAILED",
-  "TASK_SCOPE_INVALID", "TASK_SCOPE_REQUIRED", "TASK_CANCELLED", "RECEIVER_SIGNING_IDENTITY_RESOLVER_REQUIRED",
+  "TASK_SCOPE_INVALID", "TASK_SCOPE_REQUIRED", "TASK_CANCELLED", "RECEIVER_SIGNING_IDENTITY_LOCKER_REQUIRED",
   "INGRESS_AUTHORIZATION_REVALIDATOR_REQUIRED", "AUTHORIZATION_REVALIDATION_UNAVAILABLE",
   "AUTHORIZATION_REVALIDATION_FAILED", "AUTHORIZATION_REVISION_CHANGED", "TRUST_INGRESS_REVALIDATION_INPUT_INVALID",
   "TRUST_INGRESS_EVENT_TIME_INVALID", "TRUST_INGRESS_POLICY_OR_NODE_CHANGED", "TRUST_INGRESS_KEY_NOT_USABLE",
