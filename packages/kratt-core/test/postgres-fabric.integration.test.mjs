@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { fabricEventContentDigest, fabricSigningInput, receiveSteelFabricEventV1 } from "../src/fabric-interoperability.mjs";
-import { authenticateFabricReceiverAcknowledgement, createFabricReceiverAcknowledgement } from "../src/fabric-negotiation-ack.mjs";
+import { authenticateFabricReceiverAcknowledgement, createFabricReceiverAcknowledgement, fabricReceiverAcknowledgementDigest } from "../src/fabric-negotiation-ack.mjs";
 
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
 const NOW = Date.parse("2026-11-26T17:00:00.000Z");
@@ -103,6 +103,12 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       now: () => NOW
     });
     assert.equal(verifiedAck.ok, true, JSON.stringify(verifiedAck));
+    const forgedAck = { ...accepted.value.acknowledgement, ack_id: "ack:forged", delivery_attempt: 99, receiver_node: "attacker-node", content_digest: "" };
+    forgedAck.content_digest = fabricReceiverAcknowledgementDigest(forgedAck);
+    await assert.rejects(poolA.query(
+      "INSERT INTO kratt_fabric_inbound_acknowledgements(event_id,delivery_attempt,ack_id,content_digest,ack_json,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+      [first.event_id, forgedAck.delivery_attempt, forgedAck.ack_id, forgedAck.content_digest, JSON.stringify(forgedAck), new Date(NOW).toISOString()]
+    ), /KRATT_FABRIC_INBOUND_ACK_IDENTITY_MISMATCH/);
     const conflictingReplay = { ...first, payload: { task_id: "changed-task", status: "accepted" }, content_digest: "0".repeat(64), signature: "" };
     conflictingReplay.content_digest = fabricEventContentDigest(conflictingReplay);
     conflictingReplay.signature = sign(null, Buffer.from(fabricSigningInput(conflictingReplay), "utf8"), privateKey).toString("base64");
