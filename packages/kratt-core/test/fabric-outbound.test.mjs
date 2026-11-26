@@ -65,7 +65,12 @@ function makeStore(overrides = {}) {
   const store = {
     async findOutboxByIdempotencyKey(key) {
       if (overrides.find) return overrides.find(key, state);
-      if (state.existing) return { ok: true, found: true, status: "PENDING", attempts: 0, event: state.existing };
+      if (state.existing) return {
+        ok: true, found: true, status: "PENDING", attempts: 0,
+        event: state.existing.event,
+        ack_policy_revision: state.existing.ackPolicyRevision,
+        request_digest: state.existing.requestDigest
+      };
       return { ok: true, found: false };
     },
     async reserveFabricSequence(input) {
@@ -75,7 +80,11 @@ function makeStore(overrides = {}) {
     async reserveAuthorizedIntent(input) {
       state.reserveCalls.push(input);
       if (overrides.reserve) return overrides.reserve(input, state);
-      state.existing = input.fabricEvent;
+      state.existing = {
+        event: input.fabricEvent,
+        ackPolicyRevision: input.ackPolicyRevision,
+        requestDigest: state.sequenceCalls.at(-1)?.requestDigest
+      };
       return { ok: true, outbox_id: "outbox-fabric-001", audit_sequence: 18 };
     }
   };
