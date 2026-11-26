@@ -13,6 +13,7 @@ import {
   validateFabricSchemaNegotiationResponse,
   validateFabricReceiverAcknowledgement,
   negotiateFabricSchema,
+  authenticateFabricSchemaNegotiationResponse,
   authenticateFabricReceiverAcknowledgement,
   processFabricReceiverAcknowledgement
 } from "../src/fabric-negotiation-ack.mjs";
@@ -111,6 +112,43 @@ test("negotiates the highest exact schema digest in the active receiver policy",
   assert.equal(validateFabricSchemaNegotiationResponse(result.value).ok, true);
   assert.equal(verify(null, Buffer.from(fabricSchemaNegotiationResponseSigningInput(result.value)), receiver.publicKey,
     Buffer.from(result.value.signature, "base64")), true);
+});
+
+test("sender authenticates the receiver's signed negotiation response and request binding", async () => {
+  const request = makeNegotiationRequest();
+  const response = await negotiateFabricSchema(request, negotiationDependencies());
+  assert.equal(response.ok, true, JSON.stringify(response));
+  const authenticated = await authenticateFabricSchemaNegotiationResponse(response.value, {
+    expectedReceiverNode: "steel-node",
+    expectedSenderNode: "kratt-node",
+    expectedNegotiationId: request.negotiation_id,
+    expectedRequestDigest: request.content_digest,
+    resolveTrustedKey: async (nodeId, keyId) =>
+      nodeId === "steel-node" && keyId === receiverIdentity.key_id ? receiverIdentity : null,
+    now: () => NOW
+  });
+  assert.equal(authenticated.ok, true, JSON.stringify(authenticated));
+  assert.equal(authenticated.value.response.selected_version, "2.0.0");
+
+  const wrongBinding = await authenticateFabricSchemaNegotiationResponse(response.value, {
+    expectedReceiverNode: "steel-node",
+    expectedSenderNode: "kratt-node",
+    expectedNegotiationId: request.negotiation_id,
+    expectedRequestDigest: HASH_B,
+    resolveTrustedKey: async () => receiverIdentity,
+    now: () => NOW
+  });
+  assert.equal(wrongBinding.code, "NEGOTIATION_RESPONSE_REQUEST_BINDING_MISMATCH");
+
+  const untrusted = await authenticateFabricSchemaNegotiationResponse(response.value, {
+    expectedReceiverNode: "steel-node",
+    expectedSenderNode: "kratt-node",
+    expectedNegotiationId: request.negotiation_id,
+    expectedRequestDigest: request.content_digest,
+    resolveTrustedKey: async () => null,
+    now: () => NOW
+  });
+  assert.equal(untrusted.code, "NEGOTIATION_RESPONSE_ACK_KEY_UNTRUSTED");
 });
 
 test("does not downgrade below the sender floor or the receiver policy floor", async () => {
@@ -225,26 +263,30 @@ test("UNKNOWN/REJECTED outcomes are passed to reconciliation and never treated a
   }
 });
 
-test("invalid or wrong-event ACK never reaches the acknowledgement store", async () => {
+test("rejects structurally tampered ACKs before storage and delegates event binding to PostgreSQL", async () => {
   const ack = makeAcknowledgement();
   let calls = 0;
-  const invalid = { ...ack, event_id: "forged-event" };
-  const result = await processFabricReceiverAcknowledgement({
-    acknowledgement: invalid, expectedReceiverNode: "steel-node", expectedPolicyRevision: "receiver-policy-7",
+  const malformed = { ...ack, event_id: "forged-event" };
+  const rejectedBeforeStore = await processFabricReceiverAcknowledgement({
+    acknowledgement: malformed, expectedReceiverNode: "steel-node", expectedPolicyRevision: "receiver-policy-7",
     resolveTrustedKey: async () => receiverIdentity, outboxId: "outbox-001", leaseToken: "lease-token-123456",
     now: () => NOW,
     acknowledgementStore: { async applyReceiverAcknowledgement() { calls++; return { ok: true }; } }
   });
-  assert.equal(result.ok, true);
-  assert.equal(calls, 1); // Event-to-outbox binding is enforced transactionally by the PostgreSQL store.
-  const stale = await processFabricReceiverAcknowledgement({
-    acknowledgement: ack, expectedReceiverNode: "steel-node", expectedPolicyRevision: "receiver-policy-7",
+  assert.equal(rejectedBeforeStore.code, "ACK_DIGEST_MISMATCH");
+  assert.equal(calls, 0);
+
+  const signedWrongEvent = { ...ack, ack_id: "ack-wrong-event", event_id: "forged-event", content_digest: "", signature: "" };
+  signedWrongEvent.content_digest = fabricReceiverAcknowledgementDigest(signedWrongEvent);
+  signedWrongEvent.signature = sign(null, Buffer.from(fabricReceiverAcknowledgementSigningInput(signedWrongEvent)), receiver.privateKey).toString("base64");
+  const bindingRejected = await processFabricReceiverAcknowledgement({
+    acknowledgement: signedWrongEvent, expectedReceiverNode: "steel-node", expectedPolicyRevision: "receiver-policy-7",
     resolveTrustedKey: async () => receiverIdentity, outboxId: "outbox-001", leaseToken: "lease-token-123456",
     now: () => NOW,
     acknowledgementStore: { async applyReceiverAcknowledgement() { calls++; return { ok: false, reason: "ACK_EVENT_BINDING_MISMATCH" }; } }
   });
-  assert.equal(stale.code, "ACK_EVENT_BINDING_MISMATCH");
-  assert.equal(calls, 2);
+  assert.equal(bindingRejected.code, "ACK_EVENT_BINDING_MISMATCH");
+  assert.equal(calls, 1);
 });
 
 test("ACK without a negotiated policy revision fails closed", async () => {
