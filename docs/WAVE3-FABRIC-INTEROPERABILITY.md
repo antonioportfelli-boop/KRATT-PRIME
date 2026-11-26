@@ -270,7 +270,7 @@ The receiver returns one explicit result:
 - `UNSUPPORTED`: the schema is known, but the policy is disabled/stale or there is no allowed common version;
 - `UNKNOWN`: the schema ID is not registered.
 
-The response is signed by the receiver's ACTIVE signing identity and binds the original request digest. Semver ranges, payload rewriting, automatic migration, field stripping and silent downgrade are not used. A sender-signed minimum version and a receiver-owned minimum version jointly prevent a lower-version fallback. Existing `3XT-FABRIC/1` event envelopes remain unchanged and valid.
+The response is signed by the receiver's ACTIVE signing identity and binds the original request digest. The sender-side `authenticateFabricSchemaNegotiationResponse` verifies the receiver node/key lifecycle, signature, negotiation ID, peer identities and exact original request digest before the response can be relied on. Semver ranges, payload rewriting, automatic migration, field stripping and silent downgrade are not used. A sender-signed minimum version and a receiver-owned minimum version jointly prevent a lower-version fallback. Existing `3XT-FABRIC/1` event envelopes remain unchanged and valid.
 
 ### Receiver acknowledgement
 
@@ -285,7 +285,7 @@ Results are `ACCEPTED`, `DUPLICATE`, `REJECTED` and `UNKNOWN`. Authentication re
 
 ### Outbox reconciliation and persistence
 
-Migration `0007_fabric_receiver_acknowledgements.sql` adds an append-only sender-side acknowledgement receipt ledger. It has a unique acknowledgement ID and a unique `(outbox_id, delivery_attempt)` constraint. Exact repeated acknowledgements are idempotent; a different acknowledgement for the same attempt or a replayed ID bound elsewhere fails closed.
+Migration `0007_fabric_receiver_acknowledgements.sql` adds an append-only sender-side acknowledgement receipt ledger and the outbox's independent `delivery_attempt_sequence`. The sequence advances once per actual claim and cannot decrease or jump; unlike the WP-03.6 retry-budget counter, it is never reset by a manual retry. The ledger has a unique acknowledgement ID, unique signed-content digest and a unique `(outbox_id, delivery_attempt)` constraint, with its event ID foreign-keyed to the immutable outbound event. Exact repeated acknowledgements are idempotent; a different acknowledgement for the same attempt or a replayed ID bound elsewhere fails closed.
 
 - `ACCEPTED` and identity-matching `DUPLICATE` move the outbox to `DONE` and the intent to `COMPLETED`.
 - `REJECTED` moves the outbox to `RECONCILE`; it is not automatically retried.
@@ -300,7 +300,7 @@ The append-only receipt and hash-chained audit record are committed in the same 
 
 - Unit contract tests: `packages/kratt-core/test/fabric-negotiation-ack.test.mjs`; included automatically by `npm test` because the package script runs `node --experimental-strip-types --test packages/kratt-core/test/*.test.mjs`.
 - PostgreSQL 16 integration test: `packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs`; explicitly included in the PostgreSQL workflow's `node --test` command and in its path filters.
-- The PostgreSQL test applies migrations 0001, 0004, 0006 and 0007 in an isolated schema, reapplies 0007, signs acknowledgements with a test Ed25519 key, verifies exact duplicate versus conflicting acknowledgement handling, checks ACCEPTED/REJECTED/UNKNOWN transitions, wrong-event digest binding, cancellation-before-start and append-only triggers.
+- The PostgreSQL test applies migrations 0001, 0004, 0006 and 0007 in an isolated schema, reapplies 0007, signs acknowledgements with a test Ed25519 key, verifies exact duplicate versus conflicting acknowledgement handling, checks ACCEPTED/REJECTED/UNKNOWN transitions, wrong-event digest binding, cancellation-before-start, append-only triggers and monotonic attempt IDs across evidence-backed manual retry.
 - The STEEL source snapshot remains test-only. The new unit/DB tests exercise the KRATT implementation; they do not run STEEL CI or a live receiver.
 
 **Evidence status:** CI results for the WP-03.7 commit must be attached after GitHub Actions completes. No staging/production migration or delivery was run.
