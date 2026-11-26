@@ -17,6 +17,7 @@ import {
   negotiateFabricSchema,
   authenticateFabricSchemaNegotiationResponse,
   authenticateFabricReceiverAcknowledgement,
+  createFabricReceiverAcknowledgement,
   processFabricReceiverAcknowledgement
 } from "../src/fabric-negotiation-ack.mjs";
 
@@ -303,6 +304,37 @@ test("receiver ACK rejects digest tampering, wrong receiver, stale policy and un
     resolveTrustedKey: async () => receiverIdentity, now: () => NOW
   });
   assert.equal(invalid.code, "ACK_SIGNATURE_INVALID");
+});
+
+test("receiver ACK builder signs ACCEPTED/DUPLICATE outcomes and verifies the active public key", async () => {
+  for (const resultCode of ["ACCEPTED", "DUPLICATE", "REJECTED"]) {
+    const built = await createFabricReceiverAcknowledgement({
+      event: { event_id: "event-builder", source_node: "kratt-node", destination_node: "steel-node", sequence: 42, content_digest: HASH_B },
+      receiverNode: "steel-node", policyRevision: "receiver-policy-7", deliveryAttempt: resultCode === "ACCEPTED" ? 1 : 2,
+      result: resultCode, resolveSigningIdentity: async () => receiverIdentity,
+      sign: async ({ message }) => sign(null, Buffer.from(message, "utf8"), receiver.privateKey), now: () => NOW
+    });
+    assert.equal(built.ok, true, JSON.stringify(built));
+    assert.equal(built.value.result, resultCode);
+    const authenticated = await authenticateFabricReceiverAcknowledgement(built.value, {
+      expectedReceiverNode: "steel-node", expectedPolicyRevision: "receiver-policy-7",
+      resolveTrustedKey: async () => receiverIdentity, now: () => NOW
+    });
+    assert.equal(authenticated.ok, true, JSON.stringify(authenticated));
+  }
+  const disabledSigner = await createFabricReceiverAcknowledgement({
+    event: { event_id: "event-builder-disabled", source_node: "kratt-node", destination_node: "steel-node", sequence: 43, content_digest: HASH_A },
+    receiverNode: "steel-node", policyRevision: "receiver-policy-7", deliveryAttempt: 1,
+    resolveSigningIdentity: async () => ({ ...receiverIdentity, status: "DISABLED" }),
+    sign: async ({ message }) => sign(null, Buffer.from(message, "utf8"), receiver.privateKey), now: () => NOW
+  });
+  assert.equal(disabledSigner.code, "ACK_SIGNER_UNAVAILABLE");
+  const invalidSignature = await createFabricReceiverAcknowledgement({
+    event: { event_id: "event-builder-invalid", source_node: "kratt-node", destination_node: "steel-node", sequence: 44, content_digest: HASH_A },
+    receiverNode: "steel-node", policyRevision: "receiver-policy-7", deliveryAttempt: 1,
+    resolveSigningIdentity: async () => receiverIdentity, sign: async () => Buffer.alloc(64), now: () => NOW
+  });
+  assert.equal(invalidSignature.code, "ACK_SIGNATURE_INVALID");
 });
 
 test("UNKNOWN/REJECTED outcomes are passed to reconciliation and never treated as successful delivery", async () => {

@@ -1,4 +1,4 @@
-import { createHash, verify as cryptoVerify } from "node:crypto";
+import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { types as utilTypes } from "node:util";
 
 export const FABRIC_WIRE_PROTOCOL = "3XT-FABRIC/1";
@@ -8,6 +8,7 @@ export const MAX_FABRIC_EVENT_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_FABRIC_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$/;
 const TOKEN = /^[a-z][a-z0-9._:-]{0,127}$/;
 const SHA1 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -24,6 +25,8 @@ const ok = value => ({ ok: true, value });
 const isRecord = value => typeof value === "object" && value !== null && !Array.isArray(value) && !utilTypes.isProxy(value) &&
   [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const validId = value => typeof value === "string" && ID.test(value);
+const validHash = value => typeof value === "string" && SHA256.test(value);
+const validTaskId = value => typeof value === "string" && TASK_ID.test(value);
 const validToken = value => typeof value === "string" && TOKEN.test(value);
 
 function validUnicode(value) {
@@ -296,9 +299,10 @@ export function authorizeSteelFabricEventV1(input, authenticatedKey, policy) {
 }
 
 /**
- * Durable inbound boundary. The sequence watermark and inbox insert are serialized per source.
- * Gaps are accepted but explicitly surfaced; stale or duplicate sequence numbers are rejected.
- * The handler must use the supplied transaction client for any durable local effects.
+ * Durable inbound boundary with a transactionally persisted processing receipt.
+ * Duplicate event delivery never re-runs the business handler. When an ACK signer is
+ * configured, a signed ACK is persisted per delivery attempt and replayed byte-for-byte.
+ * The handler and all local business writes must use the supplied transaction client.
  */
 export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   if (!pool || typeof pool.connect !== "function") return fail("PERSISTENCE_UNAVAILABLE");
@@ -306,6 +310,11 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     return fail("INGRESS_DEPENDENCIES_REQUIRED");
   }
   if (!validId(deps.localNodeId)) return fail("LOCAL_NODE_ID_REQUIRED");
+  const ackEnabled = typeof deps.createAcknowledgement === "function";
+  const deliveryAttempt = deps.deliveryAttempt;
+  if (ackEnabled && (!Number.isSafeInteger(deliveryAttempt) || deliveryAttempt < 1)) return fail("DELIVERY_ATTEMPT_REQUIRED");
+  if (ackEnabled && typeof deps.lockReceiverSigningIdentity !== "function") return fail("RECEIVER_SIGNING_IDENTITY_LOCKER_REQUIRED");
+  if (ackEnabled && typeof deps.revalidateAuthorization !== "function") return fail("INGRESS_AUTHORIZATION_REVALIDATOR_REQUIRED");
   const parsed = parseSteelFabricEventV1(raw);
   if (!parsed.ok) return parsed;
   const event = parsed.value;
@@ -315,7 +324,6 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   const issuedAt = strictUtcMillis(event.issued_at);
   const expiresAt = strictUtcMillis(event.expires_at);
   if (issuedAt > now + MAX_FABRIC_FUTURE_SKEW_MS) return fail("EVENT_NOT_YET_VALID");
-  if (expiresAt <= now) return fail("EVENT_EXPIRED");
 
   const authenticated = await authenticateSteelFabricEventV1(event, { resolveTrustedKey: deps.resolveTrustedKey, now: () => now });
   if (!authenticated.ok) return authenticated;
@@ -323,108 +331,333 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   try { policy = await deps.resolveNodePolicy(event.source_node, authenticated.value, event); } catch { policy = null; }
   const authorized = authorizeSteelFabricEventV1(event, authenticated.value, policy);
   if (!authorized.ok) return authorized;
+  let taskId = null;
+  const taskEvent = event.event_type.startsWith("factory.task.") || event.event_type.startsWith("task.");
+  if (typeof deps.resolveTaskId === "function" || taskEvent || Object.hasOwn(event.payload, "task_id")) {
+    try { taskId = typeof deps.resolveTaskId === "function" ? await deps.resolveTaskId(event) : event.payload?.task_id; }
+    catch { return fail("TASK_SCOPE_RESOLUTION_FAILED"); }
+    if (taskId !== null && taskId !== undefined && !validTaskId(taskId)) return fail("TASK_SCOPE_INVALID");
+  }
+  if (taskEvent && !validTaskId(taskId)) return fail("TASK_SCOPE_REQUIRED");
+
+  let ackFailureStage = "ACK_NOT_STARTED";
+  const ackKeys = ["protocol", "ack_id", "event_id", "source_node", "receiver_node", "source_sequence",
+    "event_digest", "delivery_attempt", "result", "policy_revision", "issued_at", "key_id", "content_digest", "signature"];
+  const makeOrLoadAck = async (client, authorization, result, ackResult = "ACCEPTED") => {
+    ackFailureStage = "ACK_LEDGER_LOOKUP";
+    if (!ackEnabled) return null;
+    const found = await client.query(
+      "SELECT ack_json FROM kratt_fabric_inbound_acknowledgements WHERE event_id=$1 AND delivery_attempt=$2 FOR UPDATE",
+      [event.event_id, deliveryAttempt]
+    );
+    let acknowledgement;
+    if (found.rowCount === 1) {
+      acknowledgement = found.rows[0].ack_json;
+    } else {
+      let supplied;
+      ackFailureStage = "ACK_BUILDER_CALLBACK";
+      try {
+        supplied = await deps.createAcknowledgement({
+          event, authenticatedKey: authenticated.value, authorization, result,
+          outcome: "ACCEPTED", ackResult, deliveryAttempt, receivedAt: new Date(now).toISOString()
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "";
+        throw new Error(/^ACK_[A-Z0-9_]{1,96}$/.test(reason) ? reason : "ACK_CALLBACK_THROWN");
+      }
+      if (supplied?.ok === false) throw new Error(supplied.code ?? "RECEIVER_ACK_CREATION_FAILED");
+      acknowledgement = supplied?.ok === true ? supplied.value : supplied;
+    }
+    ackFailureStage = "ACK_DOCUMENT_VALIDATION";
+    if (!acknowledgement || typeof acknowledgement !== "object" || Array.isArray(acknowledgement) ||
+        Object.keys(acknowledgement).length !== ackKeys.length || ackKeys.some(key => !Object.hasOwn(acknowledgement, key)) ||
+        acknowledgement.protocol !== "3XT-FABRIC-ACK/1" ||
+        !validId(acknowledgement.ack_id) || acknowledgement.event_id !== event.event_id ||
+        acknowledgement.source_node !== event.source_node || acknowledgement.receiver_node !== event.destination_node ||
+        acknowledgement.source_sequence !== event.sequence || acknowledgement.event_digest !== event.content_digest ||
+        acknowledgement.delivery_attempt !== deliveryAttempt ||
+        !(ackResult === "REJECTED" ? acknowledgement.result === "REJECTED" :
+          ackResult === "DUPLICATE" ? ["ACCEPTED", "DUPLICATE"].includes(acknowledgement.result) : acknowledgement.result === "ACCEPTED") ||
+        acknowledgement.policy_revision !== authorization.policy_revision || !validId(acknowledgement.key_id) ||
+        strictUtcMillis(acknowledgement.issued_at) === null || !validHash(acknowledgement.content_digest) ||
+        typeof acknowledgement.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(acknowledgement.signature))
+      throw new Error("RECEIVER_ACK_INVALID");
+    ackFailureStage = "ACK_DIGEST_VALIDATION";
+    const unsigned = { ...acknowledgement };
+    delete unsigned.content_digest;
+    delete unsigned.signature;
+    const expectedDigest = createHash("sha256").update(canonicalizeFabricJcs(unsigned), "utf8").digest("hex");
+    if (expectedDigest !== acknowledgement.content_digest) throw new Error("RECEIVER_ACK_INVALID");
+    ackFailureStage = "ACK_SIGNER_RESOLUTION";
+    let signerResult;
+    try { signerResult = await deps.lockReceiverSigningIdentity(client, event.destination_node, acknowledgement.key_id, acknowledgement, now); }
+    catch { throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE"); }
+    if (signerResult?.ok === false) throw new Error(signerResult.code ?? "RECEIVER_ACK_SIGNER_UNAVAILABLE");
+    const signer = signerResult?.ok === true ? signerResult.value : signerResult;
+    ackFailureStage = "ACK_SIGNER_LIFECYCLE";
+    const ackIssuedAt = strictUtcMillis(acknowledgement.issued_at);
+    const trustedNow = Number((deps.now ?? Date.now)());
+    const keyValidFrom = signer?.valid_from ? strictUtcMillis(signer.valid_from) : null;
+    const signerUsableForAck = signer?.status === "ACTIVE"
+      ? keyValidFrom !== null && ackIssuedAt >= keyValidFrom &&
+        (!signer.sign_until || (strictUtcMillis(signer.sign_until) !== null && ackIssuedAt <= strictUtcMillis(signer.sign_until)))
+      : signer?.status === "VERIFY_ONLY"
+        ? keyValidFrom !== null && ackIssuedAt >= keyValidFrom &&
+          signer.retired_at && strictUtcMillis(signer.retired_at) !== null && ackIssuedAt <= strictUtcMillis(signer.retired_at) &&
+          signer.verify_until && strictUtcMillis(signer.verify_until) !== null && trustedNow <= strictUtcMillis(signer.verify_until)
+        : false;
+    if (!signer || (signer.node_id ?? signer.source_node) !== event.destination_node ||
+        (signer.node_status !== undefined && signer.node_status !== "ACTIVE") ||
+        signer.key_id !== acknowledgement.key_id || !signer.public_key || !signerUsableForAck)
+      throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE");
+    ackFailureStage = "ACK_PUBLIC_KEY_IMPORT";
+    let publicKey, signatureBytes;
+    try {
+      publicKey = signer.public_key?.type === "public" ? signer.public_key : createPublicKey(signer.public_key);
+      signatureBytes = Buffer.from(acknowledgement.signature, "base64");
+    } catch { throw new Error("RECEIVER_ACK_INVALID"); }
+    ackFailureStage = "ACK_SIGNATURE_VERIFY";
+    const signingInput = ["3XT-FABRIC-ACK/1", acknowledgement.receiver_node, acknowledgement.key_id, acknowledgement.content_digest].join("\n");
+    let signatureValid = false;
+    try {
+      signatureValid = signatureBytes.length === 64 && signatureBytes.toString("base64") === acknowledgement.signature &&
+        cryptoVerify(null, Buffer.from(signingInput, "utf8"), publicKey, signatureBytes);
+    } catch { signatureValid = false; }
+    if (!signatureValid) throw new Error("RECEIVER_ACK_INVALID");
+    if (found.rowCount === 0) {
+      ackFailureStage = "ACK_LEDGER_INSERT";
+      await client.query(
+        "INSERT INTO kratt_fabric_inbound_acknowledgements(event_id,delivery_attempt,ack_id,content_digest,ack_json,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+        [event.event_id, deliveryAttempt, acknowledgement.ack_id, acknowledgement.content_digest, JSON.stringify(acknowledgement), new Date(now).toISOString()]
+      );
+    }
+    ackFailureStage = "ACK_COMPLETE";
+    return acknowledgement;
+  };
+  const duplicateResult = async (client, row) => {
+    const same = row.event_id === event.event_id && row.source_node === event.source_node &&
+      Number(row.source_sequence) === event.sequence && row.content_digest === event.content_digest &&
+      row.destination_node === event.destination_node;
+    if (!same) return { conflict: true };
+    const receipt = await client.query(
+      "SELECT outcome,result_json,policy_revision FROM kratt_fabric_receiver_receipts WHERE event_id=$1 FOR UPDATE",
+      [event.event_id]
+    );
+    if (receipt.rowCount !== 1) return { missing: true };
+    const stored = receipt.rows[0];
+    if (stored.policy_revision !== authorized.value.policy_revision) return { policyChanged: true };
+    const storedAuthorization = { ...authorized.value, policy_revision: stored.policy_revision };
+    if (ackEnabled) phase = "ACK";
+    const duplicateAckResult = stored.outcome === "REJECTED" ? "REJECTED" : "DUPLICATE";
+    const acknowledgement = await makeOrLoadAck(client, storedAuthorization, stored.result_json, duplicateAckResult);
+    phase = "PERSISTENCE";
+    return { value: { duplicate: true, sequence_gap: false, outcome: stored.outcome,
+      result: stored.result_json, acknowledgement } };
+  };
 
   let client;
   try { client = await pool.connect(); } catch { return fail("PERSISTENCE_UNAVAILABLE"); }
-  let handlerStarted = false;
+  let taskCancelled = false;
   let transactionOpen = false;
+  let phase = "PERSISTENCE";
   try {
     await client.query("BEGIN");
     transactionOpen = true;
     const existing = await client.query(
-      `SELECT event_id, source_node, source_sequence, content_digest
+      `SELECT event_id,source_node,destination_node,source_sequence,content_digest
          FROM kratt_fabric_event_inbox
-        WHERE event_id = $1 OR (source_node = $2 AND source_sequence = $3)
+        WHERE event_id=$1 OR (source_node=$2 AND source_sequence=$3)
         FOR UPDATE`,
       [event.event_id, event.source_node, event.sequence]
     );
-    if (existing.rowCount > 0) {
-      const row = existing.rows[0];
-      await client.query("ROLLBACK");
-      transactionOpen = false;
-      if (row.event_id === event.event_id && row.source_node === event.source_node &&
-          Number(row.source_sequence) === event.sequence && row.content_digest === event.content_digest) {
-        return ok({ duplicate: true, sequence_gap: false });
-      }
+    if (existing.rowCount > 1) {
+      await client.query("ROLLBACK"); transactionOpen = false;
       return fail("EVENT_REPLAY_OR_CONFLICT");
+    }
+    if (existing.rowCount === 1) {
+      const duplicate = await duplicateResult(client, existing.rows[0]);
+      if (duplicate.conflict || duplicate.missing || duplicate.policyChanged) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail(duplicate.conflict ? "EVENT_REPLAY_OR_CONFLICT" :
+          duplicate.missing ? "EVENT_RECEIPT_MISSING" : "EVENT_RECEIPT_POLICY_REVISION_CHANGED");
+      }
+      await client.query("COMMIT"); transactionOpen = false;
+      return ok(duplicate.value);
+    }
+    // A committed event may need its saved ACK replayed after its original TTL expires.
+    // Expiry therefore blocks only first-time processing, not an exact persisted replay.
+    if (expiresAt <= now) {
+      await client.query("ROLLBACK"); transactionOpen = false;
+      return fail("EVENT_EXPIRED");
     }
 
     await client.query(
-      `INSERT INTO kratt_fabric_source_heads (source_node, last_sequence, last_event_id)
-       VALUES ($1, 0, NULL) ON CONFLICT (source_node) DO NOTHING`,
+      `INSERT INTO kratt_fabric_source_heads (source_node,last_sequence,last_event_id)
+       VALUES ($1,0,NULL) ON CONFLICT (source_node) DO NOTHING`,
       [event.source_node]
     );
     const headResult = await client.query(
       `SELECT last_sequence, last_event_id FROM kratt_fabric_source_heads
-        WHERE source_node = $1 FOR UPDATE`,
+        WHERE source_node=$1 FOR UPDATE`,
       [event.source_node]
     );
     if (headResult.rowCount !== 1) throw new Error("FABRIC_SOURCE_HEAD_UNAVAILABLE");
 
-    // Re-check after taking the source watermark lock: a concurrent identical delivery
-    // may have committed after the optimistic inbox lookup above.
+    // Re-check after the source watermark lock: concurrent delivery may have committed.
     const racedDuplicate = await client.query(
-      `SELECT event_id, source_node, source_sequence, content_digest
+      `SELECT event_id,source_node,destination_node,source_sequence,content_digest
          FROM kratt_fabric_event_inbox
-        WHERE event_id = $1 OR (source_node = $2 AND source_sequence = $3)
+        WHERE event_id=$1 OR (source_node=$2 AND source_sequence=$3)
         FOR UPDATE`,
       [event.event_id, event.source_node, event.sequence]
     );
-    if (racedDuplicate.rowCount > 0) {
-      const row = racedDuplicate.rows[0];
-      await client.query("ROLLBACK");
-      transactionOpen = false;
-      if (row.event_id === event.event_id && row.source_node === event.source_node &&
-          Number(row.source_sequence) === event.sequence && row.content_digest === event.content_digest) {
-        return ok({ duplicate: true, sequence_gap: false });
-      }
+    if (racedDuplicate.rowCount > 1) {
+      await client.query("ROLLBACK"); transactionOpen = false;
       return fail("EVENT_REPLAY_OR_CONFLICT");
+    }
+    if (racedDuplicate.rowCount === 1) {
+      const duplicate = await duplicateResult(client, racedDuplicate.rows[0]);
+      if (duplicate.conflict || duplicate.missing || duplicate.policyChanged) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail(duplicate.conflict ? "EVENT_REPLAY_OR_CONFLICT" :
+          duplicate.missing ? "EVENT_RECEIPT_MISSING" : "EVENT_RECEIPT_POLICY_REVISION_CHANGED");
+      }
+      await client.query("COMMIT"); transactionOpen = false;
+      return ok(duplicate.value);
     }
     const lastSequence = Number(headResult.rows[0].last_sequence);
     if (event.sequence <= lastSequence) {
-      await client.query("ROLLBACK");
-      transactionOpen = false;
+      await client.query("ROLLBACK"); transactionOpen = false;
       return fail("SEQUENCE_STALE");
     }
     const sequenceGap = event.sequence > lastSequence + 1;
+    if (taskId) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [taskId]);
+      const cancelled = await client.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE", [taskId]);
+      taskCancelled = cancelled.rowCount > 0;
+    }
+    let commitAuthorization = authorized.value;
+    if (typeof deps.revalidateAuthorization === "function") {
+      let live;
+      try {
+        live = await deps.revalidateAuthorization({
+          client, event, authenticatedKey: authenticated.value, authorization: authorized.value, now
+        });
+      } catch {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail("AUTHORIZATION_REVALIDATION_UNAVAILABLE");
+      }
+      if (live?.ok === false) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail(live.code ?? "AUTHORIZATION_REVALIDATION_FAILED");
+      }
+      const livePolicy = live?.ok === true ? (live.value?.policy ?? live.value) : (live?.policy ?? live);
+      const reauthorized = authorizeSteelFabricEventV1(event, authenticated.value, livePolicy);
+      if (!reauthorized.ok) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return reauthorized;
+      }
+      if (reauthorized.value.policy_revision !== authorized.value.policy_revision) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail("AUTHORIZATION_REVISION_CHANGED");
+      }
+      commitAuthorization = reauthorized.value;
+    }
     if (event.parent_event_id !== null) {
-      const parent = await client.query("SELECT event_id FROM kratt_fabric_event_inbox WHERE event_id = $1", [event.parent_event_id]);
+      const parent = await client.query("SELECT event_id FROM kratt_fabric_event_inbox WHERE event_id=$1", [event.parent_event_id]);
       if (parent.rowCount !== 1) {
-        await client.query("ROLLBACK");
-        transactionOpen = false;
+        await client.query("ROLLBACK"); transactionOpen = false;
         return fail("CAUSAL_PARENT_MISSING");
       }
     }
 
     await client.query(
       `INSERT INTO kratt_fabric_event_inbox
-        (event_id, source_node, destination_node, source_sequence, parent_event_id,
-         content_digest, issued_at, expires_at, event_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
-      [event.event_id, event.source_node, event.destination_node, event.sequence, event.parent_event_id,
-       event.content_digest, event.issued_at, event.expires_at, JSON.stringify(event)]
+        (event_id,source_node,destination_node,source_sequence,parent_event_id,content_digest,issued_at,expires_at,event_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+      [event.event_id,event.source_node,event.destination_node,event.sequence,event.parent_event_id,
+       event.content_digest,event.issued_at,event.expires_at,JSON.stringify(event)]
     );
     await client.query(
       `UPDATE kratt_fabric_source_heads
-          SET last_sequence = $2, last_event_id = $3, updated_at = clock_timestamp()
-        WHERE source_node = $1`,
-      [event.source_node, event.sequence, event.event_id]
+          SET last_sequence=$2,last_event_id=$3,updated_at=clock_timestamp()
+        WHERE source_node=$1`,
+      [event.source_node,event.sequence,event.event_id]
     );
     const canonical = toCanonicalFabricEventV2(event, authenticated.value);
     if (!canonical.ok) throw new Error(canonical.code);
-    handlerStarted = true;
-    const handled = await deps.handler(canonical.value, { client, authorization: authorized.value, sequence_gap: sequenceGap });
+    if (taskCancelled) {
+      const rejectedResult = { code: "TASK_CANCELLED" };
+      const rejectedJson = JSON.stringify(rejectedResult);
+      const processedAt = new Date(now).toISOString();
+      phase = "RECEIPT";
+      await client.query(
+        `INSERT INTO kratt_fabric_receiver_receipts
+          (event_id,source_node,destination_node,source_sequence,content_digest,event_type,source_revision,key_id,policy_revision,outcome,result_json,processed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'REJECTED',$10::jsonb,$11)`,
+        [event.event_id,event.source_node,event.destination_node,event.sequence,event.content_digest,
+         event.event_type,event.source_revision,event.key_id,commitAuthorization.policy_revision,rejectedJson,processedAt]
+      );
+      phase = ackEnabled ? "ACK" : "COMMIT";
+      const acknowledgement = await makeOrLoadAck(client, commitAuthorization, rejectedResult, "REJECTED");
+      phase = "COMMIT";
+      await client.query("COMMIT");
+      transactionOpen = false;
+      return ok({ duplicate: false, sequence_gap: sequenceGap, outcome: "REJECTED",
+        result: rejectedResult, acknowledgement });
+    }
+    phase = "HANDLER";
+    const handled = await deps.handler(canonical.value, { client, authorization: commitAuthorization, sequence_gap: sequenceGap, task_id: taskId });
+    let resultJson;
+    try {
+      const resultSnapshot = handled === undefined ? null : snapshotJson(handled);
+      resultJson = JSON.stringify(resultSnapshot);
+      if (typeof resultJson !== "string" || Buffer.byteLength(resultJson, "utf8") > 1024 * 1024) throw new Error("RESULT_SIZE_INVALID");
+      JSON.parse(resultJson);
+    } catch { throw new Error("EVENT_RESULT_NOT_SERIALIZABLE"); }
+    const processedAt = new Date(now).toISOString();
+    phase = "RECEIPT";
+    await client.query(
+      `INSERT INTO kratt_fabric_receiver_receipts
+        (event_id,source_node,destination_node,source_sequence,content_digest,event_type,source_revision,key_id,policy_revision,outcome,result_json,processed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'ACCEPTED',$10::jsonb,$11)`,
+      [event.event_id,event.source_node,event.destination_node,event.sequence,event.content_digest,
+       event.event_type,event.source_revision,event.key_id,commitAuthorization.policy_revision,resultJson,processedAt]
+    );
+    const storedResult = JSON.parse(resultJson);
+    phase = ackEnabled ? "ACK" : "COMMIT";
+    const acknowledgement = await makeOrLoadAck(client, commitAuthorization, storedResult);
+    phase = "COMMIT";
     await client.query("COMMIT");
     transactionOpen = false;
-    return ok({ duplicate: false, sequence_gap: sequenceGap, result: handled });
+    return ok({ duplicate: false, sequence_gap: sequenceGap, outcome: "ACCEPTED",
+      result: storedResult, acknowledgement });
   } catch (error) {
     if (transactionOpen) await client.query("ROLLBACK").catch(() => undefined);
-    return handlerStarted ? fail("EVENT_HANDLER_FAILED") : fail("PERSISTENCE_UNAVAILABLE", error instanceof Error ? error.message : "database operation failed");
+    if (phase === "ACK") {
+      const message = error instanceof Error ? error.message : "";
+      const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
+        ? "SQLSTATE_" + error.code : null;
+      const isTrustReceiverError = /^TRUST_RECEIVER_(KEY|ACK)_/.test(message);
+      const safeException = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(error.name)
+        ? error.name.toUpperCase() : "UNKNOWN_EXCEPTION";
+      const safeReference = error instanceof ReferenceError && /^[A-Za-z_$][A-Za-z0-9_$ ]{0,95}$/.test(error.message)
+        ? ":" + error.message : "";
+      const reason = ["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(message) || isTrustReceiverError
+        ? message
+        : /^ACK_[A-Z0-9_]{1,96}$/.test(message) ? message
+          : ackFailureStage + ":" + (sqlState ?? safeException) + safeReference;
+      if (reason === "RECEIVER_ACK_INVALID" || reason === "RECEIVER_ACK_SIGNER_UNAVAILABLE" || isTrustReceiverError) return fail(reason);
+      return fail("RECEIVER_ACK_CREATION_FAILED", reason);
+    }
+    if (phase === "HANDLER") return fail(error instanceof Error && error.message === "EVENT_RESULT_NOT_SERIALIZABLE"
+      ? "EVENT_RESULT_NOT_SERIALIZABLE" : "EVENT_HANDLER_FAILED");
+    if (phase === "RECEIPT" || phase === "COMMIT") return fail("EVENT_RECEIPT_STORE_FAILED");
+    return fail("PERSISTENCE_UNAVAILABLE", error instanceof Error ? error.message : "database operation failed");
   } finally {
     client.release();
   }
 }
-
 export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "EVENT_SHAPE_INVALID", "EVENT_SNAPSHOT_INVALID", "SCHEMA_UNSUPPORTED", "EVENT_ID_INVALID", "EVENT_TYPE_INVALID",
   "SOURCE_PROVENANCE_INVALID", "CAUSAL_ID_INVALID", "SEQUENCE_INVALID", "TIMESTAMP_INVALID", "EVENT_TTL_INVALID",
@@ -435,5 +668,17 @@ export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "AUTHENTICATED_IDENTITY_REQUIRED", "CANONICAL_MAPPING_FAILED", "SOURCE_NOT_AUTHORIZED",
   "DESTINATION_NOT_AUTHORIZED", "EVENT_TYPE_NOT_AUTHORIZED", "SCOPE_NOT_AUTHORIZED", "KEY_POLICY_MISMATCH",
   "PERSISTENCE_UNAVAILABLE", "INGRESS_DEPENDENCIES_REQUIRED", "LOCAL_NODE_ID_REQUIRED", "DESTINATION_NOT_LOCAL",
-  "EVENT_NOT_YET_VALID", "EVENT_EXPIRED", "EVENT_REPLAY_OR_CONFLICT", "SEQUENCE_STALE", "CAUSAL_PARENT_MISSING", "EVENT_HANDLER_FAILED"
+  "EVENT_NOT_YET_VALID", "EVENT_EXPIRED", "EVENT_REPLAY_OR_CONFLICT", "EVENT_RECEIPT_MISSING",
+  "EVENT_RECEIPT_POLICY_REVISION_CHANGED", "EVENT_RECEIPT_STORE_FAILED", "TASK_SCOPE_RESOLUTION_FAILED",
+  "TASK_SCOPE_INVALID", "TASK_SCOPE_REQUIRED", "TASK_CANCELLED", "RECEIVER_SIGNING_IDENTITY_LOCKER_REQUIRED",
+  "INGRESS_AUTHORIZATION_REVALIDATOR_REQUIRED", "AUTHORIZATION_REVALIDATION_UNAVAILABLE",
+  "AUTHORIZATION_REVALIDATION_FAILED", "AUTHORIZATION_REVISION_CHANGED", "TRUST_INGRESS_REVALIDATION_INPUT_INVALID",
+  "TRUST_INGRESS_EVENT_TIME_INVALID", "TRUST_INGRESS_POLICY_OR_NODE_CHANGED", "TRUST_INGRESS_KEY_NOT_USABLE",
+  "TRUST_INGRESS_KEY_TIME_INVALID", "TRUST_INGRESS_KEY_SIGN_WINDOW_CLOSED", "TRUST_INGRESS_KEY_VERIFY_WINDOW_CLOSED",
+  "TRUST_INGRESS_POLICY_REVISION_CHANGED", "TRUST_INGRESS_REVALIDATION_UNAVAILABLE", "DELIVERY_ATTEMPT_REQUIRED",
+  "RECEIVER_ACK_SIGNER_UNAVAILABLE", "RECEIVER_ACK_INVALID",
+  "TRUST_RECEIVER_KEY_LOCK_INPUT_INVALID", "TRUST_RECEIVER_ACK_TIME_INVALID", "TRUST_RECEIVER_KEY_UNAVAILABLE",
+  "TRUST_RECEIVER_KEY_TIME_INVALID", "TRUST_RECEIVER_KEY_SIGN_WINDOW_CLOSED", "TRUST_RECEIVER_KEY_VERIFY_WINDOW_CLOSED",
+  "TRUST_RECEIVER_KEY_LOCK_UNAVAILABLE",
+  "RECEIVER_ACK_CREATION_FAILED", "EVENT_RESULT_NOT_SERIALIZABLE", "SEQUENCE_STALE", "CAUSAL_PARENT_MISSING", "EVENT_HANDLER_FAILED"
 ]);

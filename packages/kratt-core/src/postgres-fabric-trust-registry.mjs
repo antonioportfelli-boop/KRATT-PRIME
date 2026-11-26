@@ -302,6 +302,115 @@ export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date
     };
   }
 
+  /**
+   * Revalidate and hold the exact inbound trust decision until the caller's transaction commits.
+   * This shares the policy lock key used by upsertPolicy and row-locks source/destination nodes,
+   * signing key and active policy so node disablement, key revocation and policy replacement
+   * serialize against the receiver's business transaction.
+   */
+  /**
+   * Lock the exact local receiver signing key used by a persisted ACK until the surrounding
+   * transaction commits. ACTIVE keys can verify new ACKs; VERIFY_ONLY keys can only verify
+   * ACKs issued before retirement and before the verification window expires.
+   */
+  async function lockReceiverSigningIdentity(client, nodeId, keyId, acknowledgement, nowMs = Date.parse(nowIso())) {
+    if (!client || typeof client.query !== "function" || !ID.test(nodeId ?? "") ||
+        !ID.test(keyId ?? "") || acknowledgement?.receiver_node !== nodeId ||
+        acknowledgement?.key_id !== keyId || !Number.isFinite(nowMs))
+      return fail("TRUST_RECEIVER_KEY_LOCK_INPUT_INVALID");
+    const issuedAt = strictUtcMillis(acknowledgement.issued_at);
+    if (issuedAt === null) return fail("TRUST_RECEIVER_ACK_TIME_INVALID");
+    try {
+      const q = await client.query(
+        "SELECT n.status AS node_status,k.node_id,k.key_id,k.public_key_pem,k.public_key_fingerprint," +
+        "k.status,k.valid_from,k.sign_until,k.retired_at,k.verify_until " +
+        "FROM kratt_fabric_trusted_nodes n JOIN kratt_fabric_trusted_keys k ON k.node_id=n.node_id " +
+        "WHERE n.node_id=$1 AND k.key_id=$2 FOR SHARE OF n,k",
+        [nodeId,keyId]
+      );
+      if (q.rowCount !== 1 || q.rows[0].node_status !== "ACTIVE") return fail("TRUST_RECEIVER_KEY_UNAVAILABLE");
+      const row = q.rows[0];
+      const validFrom = strictUtcMillis(iso(row.valid_from));
+      if (validFrom === null || issuedAt < validFrom) return fail("TRUST_RECEIVER_KEY_TIME_INVALID");
+      if (row.status === "ACTIVE") {
+        const signUntil = row.sign_until ? strictUtcMillis(iso(row.sign_until)) : null;
+        if (row.sign_until && (signUntil === null || issuedAt > signUntil)) return fail("TRUST_RECEIVER_KEY_SIGN_WINDOW_CLOSED");
+      } else if (row.status === "VERIFY_ONLY") {
+        const retiredAt = row.retired_at ? strictUtcMillis(iso(row.retired_at)) : null;
+        const verifyUntil = row.verify_until ? strictUtcMillis(iso(row.verify_until)) : null;
+        if (retiredAt === null || verifyUntil === null || issuedAt > retiredAt || nowMs > verifyUntil)
+          return fail("TRUST_RECEIVER_KEY_VERIFY_WINDOW_CLOSED");
+      } else return fail("TRUST_RECEIVER_KEY_UNAVAILABLE");
+      return ok({
+        node_id: row.node_id, node_status: row.node_status, key_id: row.key_id,
+        public_key: row.public_key_pem, fingerprint: row.public_key_fingerprint, status: row.status,
+        valid_from: iso(row.valid_from), ...(row.sign_until ? { sign_until: iso(row.sign_until) } : {}),
+        ...(row.retired_at ? { retired_at: iso(row.retired_at) } : {}),
+        ...(row.verify_until ? { verify_until: iso(row.verify_until) } : {})
+      });
+    } catch { return fail("TRUST_RECEIVER_KEY_LOCK_UNAVAILABLE"); }
+  }
+
+  async function lockInboundAuthorization(client, { event, authenticatedKey, expectedPolicyRevision, nowMs = Date.parse(nowIso()) } = {}) {
+    if (!client || typeof client.query !== "function" || !event ||
+        event.source_node !== authenticatedKey?.source_node || event.key_id !== authenticatedKey?.key_id ||
+        !ID.test(event.source_node ?? "") || !ID.test(event.destination_node ?? "") ||
+        !TOKEN.test(event.event_type ?? "") || !ID.test(expectedPolicyRevision ?? "") || !Number.isFinite(nowMs))
+      return fail("TRUST_INGRESS_REVALIDATION_INPUT_INVALID");
+    const issued = strictUtcMillis(event.issued_at);
+    if (issued === null) return fail("TRUST_INGRESS_EVENT_TIME_INVALID");
+    try {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        "fabric-trust-policy:" + event.source_node + ":" + event.destination_node + ":" + event.event_type
+      ]);
+      const q = await client.query(
+        "SELECT n.status AS source_node_status,n.repository_revision," +
+        "d.status AS destination_node_status," +
+        "k.status AS key_status,k.public_key_fingerprint,k.valid_from,k.sign_until,k.retired_at,k.verify_until," +
+        "p.policy_version,p.allowed_scope,p.max_ttl_ms,p.key_id AS policy_key_id,p.status AS policy_status " +
+        "FROM kratt_fabric_trusted_nodes n " +
+        "JOIN kratt_fabric_trusted_nodes d ON d.node_id=$2 " +
+        "JOIN kratt_fabric_trusted_keys k ON k.node_id=n.node_id AND k.key_id=$3 " +
+        "JOIN kratt_fabric_trust_policies p ON p.node_id=n.node_id AND p.destination_node=d.node_id " +
+        "WHERE n.node_id=$1 AND n.repository_revision=$4 AND n.status='ACTIVE' " +
+        "AND d.status='ACTIVE' AND p.event_type=$5 AND p.status='ACTIVE' " +
+        "AND (p.key_id IS NULL OR p.key_id=k.key_id) " +
+        "FOR SHARE OF n,d,k,p",
+        [event.source_node,event.destination_node,event.key_id,event.source_revision,event.event_type]
+      );
+      if (q.rowCount !== 1) return fail("TRUST_INGRESS_POLICY_OR_NODE_CHANGED");
+      // Hold receiver-side public keys through this transaction so ACK creation/replay
+      // cannot race an ACTIVE -> VERIFY_ONLY/REVOKED transition.
+      const receiverKeys = await client.query(
+        "SELECT key_id FROM kratt_fabric_trusted_keys WHERE node_id=$1 AND status = ANY($2::text[]) FOR SHARE",
+        [event.destination_node, ["ACTIVE", "VERIFY_ONLY"]]
+      );
+      const row = q.rows[0];
+      if (row.key_status === "REVOKED" || row.key_status === "PENDING" ||
+          !["ACTIVE", "VERIFY_ONLY"].includes(row.key_status)) return fail("TRUST_INGRESS_KEY_NOT_USABLE");
+      const validFrom = Date.parse(iso(row.valid_from));
+      if (!Number.isFinite(validFrom) || issued < validFrom) return fail("TRUST_INGRESS_KEY_TIME_INVALID");
+      if (row.key_status === "ACTIVE") {
+        const signUntil = row.sign_until ? Date.parse(iso(row.sign_until)) : null;
+        if (signUntil !== null && issued > signUntil) return fail("TRUST_INGRESS_KEY_SIGN_WINDOW_CLOSED");
+      } else {
+        const retired = row.retired_at ? Date.parse(iso(row.retired_at)) : NaN;
+        const verifyUntil = row.verify_until ? Date.parse(iso(row.verify_until)) : NaN;
+        if (!Number.isFinite(retired) || !Number.isFinite(verifyUntil) || issued > retired || nowMs > verifyUntil)
+          return fail("TRUST_INGRESS_KEY_VERIFY_WINDOW_CLOSED");
+      }
+      const revision = "r" + event.source_revision + ":p" + row.policy_version;
+      if (revision !== expectedPolicyRevision) return fail("TRUST_INGRESS_POLICY_REVISION_CHANGED");
+      return ok({ policy: {
+        source_node: event.source_node, status: "ACTIVE", destinations: [event.destination_node],
+        allowed_event_types: [event.event_type], allowed_scope: row.allowed_scope,
+        key_id: event.key_id, revision, max_ttl_ms: Number(row.max_ttl_ms)
+      }, key_status: row.key_status, policy_revision: revision, receiver_key_locks: receiverKeys.rowCount });
+    } catch {
+      return fail("TRUST_INGRESS_REVALIDATION_UNAVAILABLE");
+    }
+  }
+
   async function resolveOutboundPolicy({ task, eventType } = {}) {
     if (!localNodeId || !task?.target || typeof task.target.resource_id !== "string" || !TOKEN.test(eventType ?? "")) return null;
     const q = await pool.query(
@@ -375,7 +484,7 @@ export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date
 
   return Object.freeze({
     registerNode, setNodeStatus, updateNodeRevision, registerKey, transitionKey, upsertPolicy,
-    resolveTrustedKey, resolveNodePolicy, resolveOutboundPolicy, resolveActiveSigningIdentity,
+    resolveTrustedKey, resolveNodePolicy, lockInboundAuthorization, lockReceiverSigningIdentity, resolveOutboundPolicy, resolveActiveSigningIdentity,
     resolveSourceRevision, verifyAuditChain
   });
 }

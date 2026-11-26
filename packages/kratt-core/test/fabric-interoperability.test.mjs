@@ -41,7 +41,8 @@ function mockPool({ lastSequence = 0, parentExists = true, existingRows = [] } =
     async query(sql, params = []) {
       const normalized = sql.replace(/\s+/g, " ").trim();
       queries.push({ sql: normalized, params });
-      if (normalized.startsWith("SELECT event_id, source_node, source_sequence, content_digest")) return { rowCount: existingRows.length, rows: existingRows };
+      if (normalized.startsWith("SELECT event_id,source_node,destination_node,source_sequence,content_digest")) return { rowCount: existingRows.length, rows: existingRows };
+      if (normalized.startsWith("SELECT task_id FROM kratt_cancelled_tasks")) return { rowCount: 0, rows: [] };
       if (normalized.startsWith("SELECT last_sequence, last_event_id")) return { rowCount: 1, rows: [{ last_sequence: lastSequence, last_event_id: null }] };
       if (normalized.startsWith("SELECT event_id FROM kratt_fabric_event_inbox WHERE event_id")) return { rowCount: parentExists ? 1 : 0, rows: parentExists ? [{ event_id: params[0] }] : [] };
       if (normalized.includes("INSERT INTO kratt_fabric_event_inbox")) return { rowCount: 1, rows: [] };
@@ -169,6 +170,18 @@ test("ingress persists inbox and source watermark before acknowledging", async (
   assert.equal(queries.at(-2).sql, "COMMIT");
 });
 
+test("task-scoped Fabric ingress requires an explicit signed task identity before opening a transaction", async () => {
+  const { pool, queries } = mockPool();
+  const missingTask = makeEvent({ payload: { state: "accepted" } });
+  const result = await receiveSteelFabricEventV1(pool, JSON.stringify(missingTask), {
+    localNodeId: "kratt-node", resolveTrustedKey: trustedKeyResolver, resolveNodePolicy: async () => policy,
+    now: () => NOW, handler: async () => assert.fail("task-scoped event must fail before the handler")
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "TASK_SCOPE_REQUIRED");
+  assert.equal(queries.length, 0);
+});
+
 test("ingress refuses wrong destination, missing parent and stale sequence", async () => {
   const deps = { localNodeId: "kratt-node", resolveTrustedKey: trustedKeyResolver, resolveNodePolicy: async () => policy, now: () => NOW, handler: async () => assert.fail("handler must not run") };
   const wrongDestination = mockPool();
@@ -186,7 +199,11 @@ test("ingress rejects policy scope escalation and expired messages before persis
   assert.equal((await receiveSteelFabricEventV1(noDb, JSON.stringify(makeEvent()), deps)).code, "SCOPE_NOT_AUTHORIZED");
   const expired = makeEvent({ expires_at: "2026-11-26T11:59:30.000Z" });
   const expiredDeps = { ...deps, resolveNodePolicy: async () => policy };
-  assert.equal((await receiveSteelFabricEventV1(noDb, JSON.stringify(expired), expiredDeps)).code, "EVENT_EXPIRED");
+  const expiredDb = mockPool();
+  const expiredResult = await receiveSteelFabricEventV1(expiredDb.pool, JSON.stringify(expired), expiredDeps);
+  assert.equal(expiredResult.code, "EVENT_EXPIRED");
+  assert.ok(expiredDb.queries.some(query => query.sql === "ROLLBACK"));
+  assert.equal(expiredDb.queries.some(query => query.sql.includes("INSERT INTO kratt_fabric_event_inbox")), false);
 });
 
 test("ingress rolls back if handler fails and never acknowledges the event", async () => {
