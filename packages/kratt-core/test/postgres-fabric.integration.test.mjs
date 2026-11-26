@@ -22,6 +22,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
   let poolA;
   let poolB;
   let poolRestart;
+  let poolRestart;
   try {
     await admin.query(`CREATE SCHEMA ${schema}`);
     poolA = new Pool({ connectionString, max: 4, options: `-c search_path=${schema}` });
@@ -68,9 +69,11 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       event.signature = sign(null, Buffer.from(fabricSigningInput(event), "utf8"), privateKey).toString("base64");
       return event;
     };
-    const deps = (handler, attempt = 1) => ({
+    const deps = (handler, attempt = 1, overrides = {}) => ({
       localNodeId: "kratt-node",
       deliveryAttempt: attempt,
+      resolveReceiverSigningIdentity: async nodeId => nodeId === "kratt-node" ? receiverSigningIdentity : null,
+      revalidateAuthorization: async () => policy,
       createAcknowledgement: context => createFabricReceiverAcknowledgement({
         event: context.event, receiverNode: "kratt-node",
         policyRevision: context.authorization.policy_revision, deliveryAttempt: context.deliveryAttempt,
@@ -85,7 +88,8 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       handler: handler ?? (async (canonical, tx) => {
         await tx.client.query("INSERT INTO handler_receipts(event_id,event_type) VALUES($1,$2)", [canonical.identity.event_id, canonical.identity.event_type]);
         return "stored";
-      })
+      }),
+      ...overrides
     });
 
     const first = makeEvent({ id: "fabric-db-1", sequence: 1 });
@@ -115,6 +119,14 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       now: () => NOW
     });
     assert.equal(verifiedAck.ok, true, JSON.stringify(verifiedAck));
+    const wrongReceiverKey = generateKeyPairSync("ed25519");
+    const corruptedStoredAck = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, {
+      resolveReceiverSigningIdentity: async () => ({ ...receiverSigningIdentity, public_key: wrongReceiverKey.publicKey })
+    }));
+    assert.equal(corruptedStoredAck.ok, false);
+    assert.equal(corruptedStoredAck.code, "RECEIVER_ACK_INVALID");
+    const verifiedAfterSignerRecovery = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps());
+    assert.deepEqual(verifiedAfterSignerRecovery.value.acknowledgement, accepted.value.acknowledgement);
     const replayAfterExpiry = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), {
       ...deps(undefined, 2), now: () => Date.parse(first.expires_at) + 1
     });
@@ -196,6 +208,17 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(handlerRollback.rows[0].handler_count, 0);
     const serializationRetry = await receiveSteelFabricEventV1(poolB, JSON.stringify(serializationEvent), deps());
     assert.equal(serializationRetry.ok, true, JSON.stringify(serializationRetry));
+
+    const policyRaceEvent = makeEvent({ id: "fabric-db-policy-revision-race", sequence: 10 });
+    let policyRaceHandlerCalls = 0;
+    const policyRace = await receiveSteelFabricEventV1(poolA, JSON.stringify(policyRaceEvent), deps(async () => { policyRaceHandlerCalls++; return "must-not-run"; }, 1, {
+      revalidateAuthorization: async () => ({ ...policy, revision: "wave3-policy-revoked-during-ingress" })
+    }));
+    assert.equal(policyRace.ok, false);
+    assert.equal(policyRace.code, "AUTHORIZATION_REVISION_CHANGED");
+    assert.equal(policyRaceHandlerCalls, 0);
+    const policyRaceNotStored = await poolA.query("SELECT count(*)::int AS count FROM kratt_fabric_event_inbox WHERE event_id=$1", [policyRaceEvent.event_id]);
+    assert.equal(policyRaceNotStored.rows[0].count, 0);
 
     const expiredUnprocessed = makeEvent({ id: "fabric-db-expired-new", sequence: 10, issuedAt: new Date(NOW - 120_000).toISOString() });
     const expiredResult = await receiveSteelFabricEventV1(poolA, JSON.stringify(expiredUnprocessed), { ...deps(), now: () => NOW });
