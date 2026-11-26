@@ -1,6 +1,7 @@
 import { createHash, verify as cryptoVerify } from "node:crypto";
 import { canonicalTaskDigest } from "./policy.mjs";
 import { validateTaskEnvelope } from "./contracts.mjs";
+import { incrementFabricMetric } from "./fabric-metrics.mjs";
 import {
   FABRIC_WIRE_PROTOCOL, MAX_FABRIC_EVENT_BYTES, MAX_FABRIC_EVENT_TTL_MS,
   canonicalizeFabricJcs, fabricEventContentDigest, fabricSigningInput,
@@ -107,7 +108,8 @@ export function createSteelFabricOutboundAdapter({
   resolveCorrelationId = async task => `corr:${task.task_id}`,
   resolveCausalParent = async () => null,
   resolvePayloadReference = async () => null,
-  now = () => Date.now()
+  now = () => Date.now(),
+  metrics = null
 } = {}) {
   if (!outboxStore || typeof outboxStore.reserveFabricSequence !== "function" ||
       typeof outboxStore.reserveAuthorizedIntent !== "function" ||
@@ -246,7 +248,8 @@ export function createSteelFabricOutboundAdapter({
     if (!prior?.ok) return fail(prior?.reason ?? "OUTBOX_LOOKUP_FAILED");
     if (prior.found) {
       const duplicate = existingReservation(prior, eventId, sourceNode, policy.revision, reservationDigest);
-      return duplicate ? ok(duplicate) : fail("IDEMPOTENCY_RESERVATION_CONFLICT");
+      if (!duplicate) incrementFabricMetric(metrics, "fabric_idempotency_conflicts");
+      return duplicate ? ok(duplicate) : ok(duplicate);
     }
 
     let sequenceReservation;
@@ -256,7 +259,10 @@ export function createSteelFabricOutboundAdapter({
       });
     } catch { return fail("FABRIC_SEQUENCE_RESERVATION_FAILED"); }
     if (!sequenceReservation?.ok || !Number.isSafeInteger(sequenceReservation.sequence) ||
-        sequenceReservation.sequence < 1) return fail(sequenceReservation?.reason ?? "FABRIC_SEQUENCE_RESERVATION_FAILED");
+        sequenceReservation.sequence < 1) {
+      if (sequenceReservation?.reason === "FABRIC_SEQUENCE_REQUEST_CONFLICT") incrementFabricMetric(metrics, "fabric_idempotency_conflicts");
+      return fail(sequenceReservation?.reason ?? "FABRIC_SEQUENCE_RESERVATION_FAILED");
+    }
 
     const issuedAt = new Date(current).toISOString();
     const expiresAt = new Date(current + ttlMs).toISOString();
@@ -320,8 +326,11 @@ export function createSteelFabricOutboundAdapter({
       let raced;
       try { raced = await outboxStore.findOutboxByIdempotencyKey(idempotencyKey); } catch { raced = null; }
       const duplicate = existingReservation(raced, eventId, sourceNode, policy.revision, reservationDigest);
+      if (!duplicate && (reserved?.reason === "DUPLICATE_OR_REPLAYED" || reserved?.reason === "DUPLICATE_IDEMPOTENCY_KEY"))
+        incrementFabricMetric(metrics, "fabric_idempotency_conflicts");
       return duplicate ? ok(duplicate) : fail(reserved?.reason ?? "OUTBOX_RESERVATION_FAILED");
     }
+    incrementFabricMetric(metrics, "fabric_outbound_events_total");
     return ok({
       duplicate: false,
       queued: true,
