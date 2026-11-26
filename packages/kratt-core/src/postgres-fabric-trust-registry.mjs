@@ -308,6 +308,49 @@ export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date
    * signing key and active policy so node disablement, key revocation and policy replacement
    * serialize against the receiver's business transaction.
    */
+  /**
+   * Lock the exact local receiver signing key used by a persisted ACK until the surrounding
+   * transaction commits. ACTIVE keys can verify new ACKs; VERIFY_ONLY keys can only verify
+   * ACKs issued before retirement and before the verification window expires.
+   */
+  async function lockReceiverSigningIdentity(client, nodeId, keyId, acknowledgement, nowMs = Date.parse(nowIso())) {
+    if (!client || typeof client.query !== "function" || !ID.test(nodeId ?? "") ||
+        !ID.test(keyId ?? "") || acknowledgement?.receiver_node !== nodeId ||
+        acknowledgement?.key_id !== keyId || !Number.isFinite(nowMs))
+      return fail("TRUST_RECEIVER_KEY_LOCK_INPUT_INVALID");
+    const issuedAt = strictUtcMillis(acknowledgement.issued_at);
+    if (issuedAt === null) return fail("TRUST_RECEIVER_ACK_TIME_INVALID");
+    try {
+      const q = await client.query(
+        "SELECT n.status AS node_status,k.node_id,k.key_id,k.public_key_pem,k.public_key_fingerprint," +
+        "k.status,k.valid_from,k.sign_until,k.retired_at,k.verify_until " +
+        "FROM kratt_fabric_trusted_nodes n JOIN kratt_fabric_trusted_keys k ON k.node_id=n.node_id " +
+        "WHERE n.node_id=$1 AND k.key_id=$2 FOR SHARE OF n,k",
+        [nodeId,keyId]
+      );
+      if (q.rowCount !== 1 || q.rows[0].node_status !== "ACTIVE") return fail("TRUST_RECEIVER_KEY_UNAVAILABLE");
+      const row = q.rows[0];
+      const validFrom = strictUtcMillis(iso(row.valid_from));
+      if (validFrom === null || issuedAt < validFrom) return fail("TRUST_RECEIVER_KEY_TIME_INVALID");
+      if (row.status === "ACTIVE") {
+        const signUntil = row.sign_until ? strictUtcMillis(iso(row.sign_until)) : null;
+        if (row.sign_until && (signUntil === null || issuedAt > signUntil)) return fail("TRUST_RECEIVER_KEY_SIGN_WINDOW_CLOSED");
+      } else if (row.status === "VERIFY_ONLY") {
+        const retiredAt = row.retired_at ? strictUtcMillis(iso(row.retired_at)) : null;
+        const verifyUntil = row.verify_until ? strictUtcMillis(iso(row.verify_until)) : null;
+        if (retiredAt === null || verifyUntil === null || issuedAt > retiredAt || nowMs > verifyUntil)
+          return fail("TRUST_RECEIVER_KEY_VERIFY_WINDOW_CLOSED");
+      } else return fail("TRUST_RECEIVER_KEY_UNAVAILABLE");
+      return ok({
+        node_id: row.node_id, node_status: row.node_status, key_id: row.key_id,
+        public_key: row.public_key_pem, fingerprint: row.public_key_fingerprint, status: row.status,
+        valid_from: iso(row.valid_from), ...(row.sign_until ? { sign_until: iso(row.sign_until) } : {}),
+        ...(row.retired_at ? { retired_at: iso(row.retired_at) } : {}),
+        ...(row.verify_until ? { verify_until: iso(row.verify_until) } : {})
+      });
+    } catch { return fail("TRUST_RECEIVER_KEY_LOCK_UNAVAILABLE"); }
+  }
+
   async function lockInboundAuthorization(client, { event, authenticatedKey, expectedPolicyRevision, nowMs = Date.parse(nowIso()) } = {}) {
     if (!client || typeof client.query !== "function" || !event ||
         event.source_node !== authenticatedKey?.source_node || event.key_id !== authenticatedKey?.key_id ||
@@ -441,7 +484,7 @@ export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date
 
   return Object.freeze({
     registerNode, setNodeStatus, updateNodeRevision, registerKey, transitionKey, upsertPolicy,
-    resolveTrustedKey, resolveNodePolicy, lockInboundAuthorization, resolveOutboundPolicy, resolveActiveSigningIdentity,
+    resolveTrustedKey, resolveNodePolicy, lockInboundAuthorization, lockReceiverSigningIdentity, resolveOutboundPolicy, resolveActiveSigningIdentity,
     resolveSourceRevision, verifyAuditChain
   });
 }
