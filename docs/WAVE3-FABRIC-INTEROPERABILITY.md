@@ -270,7 +270,9 @@ The receiver returns one explicit result:
 - `UNSUPPORTED`: the schema is known, but the policy is disabled/stale or there is no allowed common version;
 - `UNKNOWN`: the schema ID is not registered.
 
-The response is signed by the receiver's ACTIVE signing identity and binds the original request digest. The sender-side `authenticateFabricSchemaNegotiationResponse` verifies the receiver node/key lifecycle, signature, negotiation ID, peer identities and exact original request digest before the response can be relied on. Semver ranges, payload rewriting, automatic migration, field stripping and silent downgrade are not used. A sender-signed minimum version and a receiver-owned minimum version jointly prevent a lower-version fallback. Existing `3XT-FABRIC/1` event envelopes remain unchanged and valid.
+The response is signed by the receiver's ACTIVE signing identity and binds the original request digest. The sender-side `authenticateFabricSchemaNegotiationResponse` verifies the receiver node/key lifecycle, signature, negotiation ID, peer identities and exact original request object before the response can be relied on. It rejects a signed selection not present in the sender's exact offer or below the sender's minimum version. Version components are bounded and compared as integer values, not JavaScript floating-point numbers, so values beyond the safe-integer range cannot collapse into equal versions. Semver ranges, payload rewriting, automatic migration, field stripping and silent downgrade are not used. A sender-signed minimum version and a receiver-owned minimum version jointly prevent a lower-version fallback. Existing `3XT-FABRIC/1` event envelopes remain unchanged and valid.
+
+Negotiation and ACK validators first make a bounded JCS-compatible snapshot of the complete nested contract. Proxy-backed data, accessors/getters and non-JSON values are rejected before nested fields are traversed, preventing caller-controlled getters or proxy traps from influencing validation or digest calculation.
 
 ### Receiver acknowledgement
 
@@ -298,7 +300,7 @@ The append-only receipt and hash-chained audit record are committed in the same 
 
 ### Test execution wiring
 
-- Unit contract tests: `packages/kratt-core/test/fabric-negotiation-ack.test.mjs`; included automatically by `npm test` because the package script runs `node --experimental-strip-types --test packages/kratt-core/test/*.test.mjs`.
+- Unit contract tests: `packages/kratt-core/test/fabric-negotiation-ack.test.mjs`; included automatically by `npm test` because the package script runs `node --experimental-strip-types --test packages/kratt-core/test/*.test.mjs`. Coverage includes a validly signed downgrade attempt, version ordering beyond JavaScript safe integers, and nested getter/proxy rejection.
 - PostgreSQL 16 integration test: `packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs`; explicitly included in the PostgreSQL workflow's `node --test` command and in its path filters.
 - The PostgreSQL test applies migrations 0001, 0004, 0006 and 0007 in an isolated schema, reapplies 0007, signs acknowledgements with a test Ed25519 key, verifies exact duplicate versus conflicting acknowledgement handling, checks ACCEPTED/REJECTED/UNKNOWN transitions, wrong-event-ID and wrong-digest binding, cancellation-before-start, late ACK resolution after a started lease expires into RECONCILE, ACK-versus-cancellation serialization, append-only triggers and monotonic BIGINT attempt IDs across evidence-backed manual retry. The sequence advances at each outbox claim and is never reset with the retry budget.
 - The STEEL source snapshot remains test-only. The new unit/DB tests exercise the KRATT implementation; they do not run STEEL CI or a live receiver.
