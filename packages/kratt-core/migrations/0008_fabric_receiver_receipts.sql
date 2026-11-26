@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS kratt_fabric_receiver_receipts (
   source_revision TEXT NOT NULL CHECK (source_revision ~ '^[a-f0-9]{40}$'),
   key_id TEXT NOT NULL CHECK (key_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   policy_revision TEXT NULL CHECK (policy_revision IS NULL OR policy_revision ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
-  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','REJECTED')),
   result_json JSONB NOT NULL,
   processed_at TIMESTAMPTZ NOT NULL,
   CONSTRAINT kratt_fabric_receiver_receipt_source_sequence_unique UNIQUE (source_node, source_sequence)
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS kratt_fabric_inbound_acknowledgements (
     ack_json->>'policy_revision' IS NOT NULL AND
     ack_json->>'policy_revision' ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' AND
     ack_json->>'result' IS NOT NULL AND
-    ack_json->>'result' IN ('ACCEPTED','DUPLICATE')
+    ack_json->>'result' IN ('ACCEPTED','DUPLICATE','REJECTED')
   )
 );
 
@@ -123,7 +123,8 @@ BEGIN
      NEW.ack_json->>'event_digest' IS DISTINCT FROM receipt_row.content_digest OR
      NEW.ack_json->>'policy_revision' IS DISTINCT FROM receipt_row.policy_revision OR
      NEW.ack_json->>'result' IS NULL OR
-     NEW.ack_json->>'result' NOT IN ('ACCEPTED','DUPLICATE') THEN
+     (receipt_row.outcome='REJECTED' AND NEW.ack_json->>'result'<>'REJECTED') OR
+     (receipt_row.outcome='ACCEPTED' AND NEW.ack_json->>'result' NOT IN ('ACCEPTED','DUPLICATE')) THEN
     RAISE EXCEPTION 'KRATT_FABRIC_INBOUND_ACK_IDENTITY_MISMATCH';
   END IF;
   RETURN NEW;
