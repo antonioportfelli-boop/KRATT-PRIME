@@ -1,70 +1,88 @@
-# Wave 2 — KRATT Runtime Reconciliation
+# Wave 2 — KRATT Runtime Operational Reconciliation
 
 **Snapshot:** 2026-11-26  
-**Branch:** feature/wave2-runtime-reconciliation-2026-11-26  
-**Scope:** main-branch source inventory and open-draft dependency reconciliation. No merge, rebase, cherry-pick, runtime activation or deployment.
+**Base:** \`main\` at \`782373cd7760a12141c75655dd890313c30f3021\`  
+**Branch:** \`feature/wave2-runtime-reconciliation-2026-11-26\`
 
-## Result
+## Executive result
 
-KRATT main already contains task lifecycle, execution ledger, trusted authorization, evidence primitives and authorized dispatch/outbox. It does **not** contain a single reconciled construction runtime composition that joins all these concerns. The worker-lease and reflection/recovery pieces are not yet established on main.
+KRATT main already contains a real **governed execution bridge**. The previous inventory that classified the worker lease and reflection/recovery layers as wholly absent was incomplete and has been corrected in this revision.
 
-This tranche adds a versioned dependency inventory and a validator. It is intentionally not a second runtime implementation. The validator makes it harder to misstate draft work as mainline capability and detects unknown/cyclic dependencies.
+The mainline bridge composes:
+- WP-01 authorization and request-bound approval evaluation;
+- verified Evidence Cards, a provenance callback and a stable journal snapshot;
+- construction-task and policy-task binding;
+- a worker lease with a monotonically increasing fencing token;
+- append-only execution revisions and a governance receipt;
+- start, completion, failure, retry, acknowledged cancellation and read-only recovery.
 
-## Mainline inventory
+However, this is not yet a general-purpose production worker fleet. The current bridge uses a local PrimeStore journal and local worker-lease coordinator. The lease coordinator explicitly documents its single-process scope. The governed bridge returns \`dispatch: false\` and \`externalEffects: false\`; it does not invoke real repository/provider side effects. Recovery never replays a worker.
 
-| Layer | Mainline evidence | Current limitation |
+## Verified mainline layers
+
+| Layer | Mainline capability | Limitation |
 |---|---|---|
-| Construction task | \`construction-protocol.mjs\` | State machine only; not an executor |
-| Execution ledger | \`construction-execution-ledger.mjs\` | Deterministic record and fencing checks; storage/worker lifecycle is separate |
-| Trusted authorization | \`trusted-runtime.mjs\`, policy and approval evidence | Trusted composition boundary exists; it is not a full construction scheduler |
-| Evidence | \`evidence-ledger.mjs\`, \`evidence-integrity.mjs\` | Local reference ledger explicitly is not durable or signed |
-| Authorized dispatch | \`authorized-dispatch.mjs\`, outbox worker and PostgreSQL outbox store | Governed dispatch path exists; does not itself reconcile reflection/recovery state |
+| Construction task | Immutable task digest and guarded state transitions | Does not execute code |
+| Execution ledger | Append-only revision history, fence validation, stale revision/fork rejection | Journal adapter must provide durable serialization |
+| Trusted authorization | Existing WP-01 policy + approval/evidence verifier | Trust keyring, nonce store and principal/context loaders are deployment injected |
+| Evidence projection | Durable Evidence Cards over PrimeStore | Local journal; not encrypted or cloud replicated |
+| Worker leases | Lease acquire/renew/release, expiry, replay guard and monotonic fencing | One-process coordinator; not distributed mutual exclusion |
+| Governed execution | Authorization → ECK evidence → lease → execution claim → receipt → start/terminal transitions | Local composition, compensation is not a multi-table atomic transaction, no external worker side effects |
+| Execution recovery | Verifies journal, revision continuity and history chain; returns latest valid state | Never resumes/replays RUNNING work; operator reconciliation is required |
+| PostgreSQL outbox | Shared transactional intent/nonce/cancellation/outbox library | At-least-once provider semantics; no live provider/database configured |
 
-## Draft dependencies
+Relevant mainline sources:
+- \`packages/kratt-runtime/src/governed-execution.mjs\`
+- \`packages/kratt-runtime/src/worker-lease-coordinator.mjs\`
+- \`packages/kratt-runtime/src/durable-evidence.mjs\`
+- \`packages/kratt-core/src/construction-execution-ledger.mjs\`
+- \`packages/kratt-core/src/prime-store.mjs\`
+- \`packages/kratt-core/src/postgres-outbox-store.mjs\`
 
-### Durable worker leases
+## Gaps that prevent an operational-readiness claim
 
-Candidate: \`feature/durable-worker-leases-fencing-v1\`, used as the base for the open WP-10 scale PR #37. This branch must be reviewed as a standalone dependency before dependent work is stacked or merged. Its claim/renew/expire/fencing semantics need a direct audit against the execution ledger's fencing history.
+1. **Local journal scope.** PrimeStore is a local append-only file journal; it is not a shared multi-process or multi-host transaction service.
+2. **Lease scope.** The lease coordinator serializes operations through one shared PrimeStore object in one Node process. It explicitly disclaims cross-host mutual exclusion.
+3. **No external worker executor.** Governed execution intentionally stops at state transitions and returns \`dispatch: false\`. A target must independently enforce fencing before any future side effect.
+4. **Compensation window.** Lease, execution revision and governance receipt are not one transaction. Process failure can leave a bounded orphan lease; recovery must reconcile rather than guess.
+5. **Host trust material.** Authentication, trusted context, trusted approval keys/nonce consumption and source provenance callbacks must be configured by the server owner. The code does not fabricate these dependencies.
+6. **Recovery semantics.** A RUNNING job after a crash is not automatically retried; an operator/worker must establish whether a side effect occurred before a new approved attempt.
+7. **Reflection layer.** A separate persisted reflection/recovery journal was not found in main. Existing execution recovery is not the same as a semantic reflection engine.
 
-### Reflection / recovery
+## Wave 2 branch implementation target
 
-No dedicated reflection-recovery journal file was found in main's \`packages/kratt-core/src\` inventory. Do not claim it is shipped. The recovery design should consume immutable execution and evidence references; it must not become a second source of execution truth or bypass trusted authorization.
+This branch adds an opt-in PostgreSQL mode while retaining the existing local mode:
+- a shared hash-chained PostgreSQL journal adapter that satisfies the existing PrimeStore interface;
+- a transactional PostgreSQL worker lease coordinator using row locks, stable operation IDs and monotonically increasing fencing tokens;
+- an async composition factory that injects both adapters into the existing governed execution bridge;
+- a schema migration, contract tests and a real PostgreSQL CI workflow.
 
-### Related open stacks
+The new backend is **not** production-certified merely because its code exists. It remains pending until the exact PR head passes ordinary CI and a live PostgreSQL 16 integration run.
 
-- PR #37 (WP-10) targets the durable-worker-leases candidate branch, not main.
-- PR #38 (Wave 10 hardening) targets Phase 10 Observatory, not main.
-- PR #41 (Wave 1–10 continuation) targets Wave 10 hardening, not main.
-- PR #43 and #46 are separate Phase 11 candidates; #46 is described as rebuilt on the current Wave 10 branch, while #43 remains divergent.
-- PR #48 is a regression fix stacked on SIPA-11; PR #49 is a separate integration capability registry draft.
-- PR #57 is the platform portfolio/readiness gate and is intentionally separate from this Wave 2 branch.
+## Database and operations boundary
 
-The existence of these PRs is not evidence that their changes are in main. Do not combine them by name or cherry-pick based on titles alone.
+The PostgreSQL mode must use:
+- one reviewed migration path; no automatic DDL from application startup;
+- a least-privilege runtime role with SELECT/INSERT on journal entries, SELECT/UPDATE on journal head, and the required lease-table DML;
+- TLS and platform-managed encryption at rest;
+- tested backup/restore, connection-pool limits, statement timeouts and monitoring;
+- a single authoritative database clock for lease expiry;
+- no network filesystem for the local PrimeStore mode.
 
-## Required reconciliation sequence
-
-1. **Pin immutable candidate heads and bases.** For each dependency, record head SHA, base SHA, ahead/behind counts, changed paths and current CI. Stop if the branch has diverged from its stated base.
-2. **Audit durable lease semantics.** Verify unique lease identity, monotonic fencing, expiry, cancellation, renewal, lost-lease rejection and atomic storage behavior. Check the contract against \`construction-execution-ledger.mjs\`; do not add a parallel worker state machine.
-3. **Define the runtime composition contract.** One construction task → one deterministic execution key → one current fenced claim → trusted authorization → dispatch/outbox → terminal execution result → evidence reference. Each transition must carry the same task revision/digest and correlation ID.
-4. **Define recovery as reconciliation, not replay authority.** Recovery reads execution/evidence history and proposes or performs only idempotent state repair through the existing authorized boundary. Stale claims and missing evidence fail closed.
-5. **Add cross-module integration tests.** Required negatives: mismatched task digest/revision, stale fence, expired claim, revoked approval, duplicate outbox key, missing terminal evidence, tampered ledger chain, cancellation race and storage unavailable.
-6. **Stack one dependency at a time.** Run focused tests, full core/orchestrator tests, typecheck and build at each head. Keep PRs draft until the dependency graph and evidence are complete.
+The PostgreSQL runtime journal is append-only at the table boundary. Its hash chain detects tampering but does not replace database access control, backup integrity, external checkpoints or signing.
 
 ## Acceptance gate
 
-Wave 2 is complete only when:
-- the candidate chain has one explicit base and no unresolved divergence;
-- runtime composition is implemented once, not duplicated across PRs;
-- authorization remains request-bound and independently verified;
-- lease fencing and cancellation are enforced at the storage boundary;
-- recovery cannot dispatch or promote evidence on its own;
-- cross-module tests and full CI pass on the exact reviewed head;
-- main remains unchanged until human review and explicit merge approval.
+Operational readiness for a **staging backend** requires:
+- PostgreSQL migration applied to an isolated test database;
+- real concurrency test with two independent connection pools competing for one reservation;
+- stale fence, expired lease, idempotent replay, renewal, release and restart recovery tests;
+- concurrent journal append and chain verification tests;
+- full core tests, typecheck and application build on the exact reviewed SHA;
+- a host composition that supplies trusted auth, provenance, principal/context loaders and an independently enforced kill switch.
 
-## Artifacts in this tranche
+Production use remains blocked until real worker adapters, target-side fence enforcement, crash reconciliation, security review, backup/restore and live environment evidence exist.
 
-- \`packages/kratt-core/src/runtime-reconciliation.mjs\`: immutable inventory and dependency graph validator.
-- \`packages/kratt-core/test/runtime-reconciliation.test.mjs\`: graph validity, honest maturity labels and invalid graph regression tests.
-- This document: evidence-backed branch map and implementation sequence.
+## Not done
 
-This tranche does not claim to have merged or implemented durable worker leases or reflection recovery.
+No production deployment, external provider call, repository side effect, secret rotation, permission change, main-branch mutation or merge is performed by this PR.
