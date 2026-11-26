@@ -19,6 +19,7 @@ on:
       - "packages/kratt-core/src/fabric-negotiation-ack.mjs"
       - "packages/kratt-core/src/postgres-fabric-ack-store.mjs"
       - "packages/kratt-core/migrations/0007_fabric_receiver_acknowledgements.sql"
+      - "packages/kratt-core/migrations/0008_fabric_receiver_receipts.sql"
       - "packages/kratt-core/test/fabric-negotiation-ack.test.mjs"
       - "packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs"
       - "packages/kratt-core/src/postgres-fabric-trust-registry.mjs"
@@ -31,6 +32,7 @@ on:
     branches:
       - feature/wave2-runtime-reconciliation-2026-11-26
       - feature/wave3-fabric-interoperability-2026-11-26
+      - feature/wp-03-8-receiver-dedup-2026-11-26
   workflow_dispatch:
 
 permissions:
