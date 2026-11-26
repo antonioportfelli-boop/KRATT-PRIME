@@ -71,7 +71,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     const deps = (handler, attempt = 1, overrides = {}) => ({
       localNodeId: "kratt-node",
       deliveryAttempt: attempt,
-      resolveReceiverSigningIdentity: async (nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id ? receiverSigningIdentity : null,
+      lockReceiverSigningIdentity: async (client, nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id ? receiverSigningIdentity : null,
       revalidateAuthorization: async () => policy,
       createAcknowledgement: context => createFabricReceiverAcknowledgement({
         event: context.event, receiverNode: "kratt-node",
@@ -104,7 +104,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.deepEqual(duplicate.value.acknowledgement, accepted.value.acknowledgement);
     assert.equal(duplicate.value.result, "stored");
     const verifyOnlyReplay = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, {
-      resolveReceiverSigningIdentity: async (nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id
+      lockReceiverSigningIdentity: async (client, nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id
         ? { ...receiverSigningIdentity, status: "VERIFY_ONLY", retired_at: new Date(NOW + 1_000).toISOString(), verify_until: new Date(NOW + 60_000).toISOString() }
         : null
     }));
@@ -127,12 +127,12 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(verifiedAck.ok, true, JSON.stringify(verifiedAck));
     const wrongReceiverKey = generateKeyPairSync("ed25519");
     const revokedSignerReplay = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, {
-      resolveReceiverSigningIdentity: async () => ({ ...receiverSigningIdentity, status: "REVOKED" })
+      lockReceiverSigningIdentity: async () => ({ ...receiverSigningIdentity, status: "REVOKED" })
     }));
     assert.equal(revokedSignerReplay.ok, false);
     assert.equal(revokedSignerReplay.code, "RECEIVER_ACK_SIGNER_UNAVAILABLE");
     const corruptedStoredAck = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, {
-      resolveReceiverSigningIdentity: async () => ({ ...receiverSigningIdentity, public_key: wrongReceiverKey.publicKey })
+      lockReceiverSigningIdentity: async () => ({ ...receiverSigningIdentity, public_key: wrongReceiverKey.publicKey })
     }));
     assert.equal(corruptedStoredAck.ok, false);
     assert.equal(corruptedStoredAck.code, "RECEIVER_ACK_INVALID");
