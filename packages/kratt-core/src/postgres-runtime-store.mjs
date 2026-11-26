@@ -154,7 +154,7 @@ async function inTransaction(pool, operation) {
  * external effects: those remain database/deployment responsibilities.
  */
 export function createPostgresRuntimeStore(pool, { maxEntryBytes = 1_048_576 } = {}) {
-  if (!pool || typeof pool.connect !== "function") throw new TypeError("POSTGRES_POOL_REQUIRED");
+  if (!pool || typeof pool.connect !== "function" || typeof pool.query !== "function") throw new TypeError("POSTGRES_POOL_REQUIRED");
   if (!Number.isSafeInteger(maxEntryBytes) || maxEntryBytes < 1_024 || maxEntryBytes > 16_777_216) {
     throw new TypeError("POSTGRES_RUNTIME_ENTRY_LIMIT_INVALID");
   }
