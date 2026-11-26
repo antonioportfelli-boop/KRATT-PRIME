@@ -190,9 +190,9 @@ The new outbox row is committed in `PENDING` state. It is not claimed or dispatc
 
 The outbound unit suite covers signed event creation, server-derived scope/payload/evidence, disallowed event types, approval/time/principal binding, signing-key mismatch, duplicate idempotency and request-digest conflicts. The PostgreSQL 16 integration suite creates an isolated schema, reapplies migrations, races two outbox stores against one idempotency key, verifies the persisted event signature, checks immutable guards (including sequence-head update and delete rejection), and asserts the outbox remains `PENDING` with zero attempts.
 
-CI evidence for the previous verified outbound implementation snapshot `3e3d65e2b9fca960112ba1e60477820a321d23a8`:
-- [Node 22 typecheck/build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45837077370)
-- [KRATT core tests and application typecheck/build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45837077259)
-- [PostgreSQL 16 runtime, inbox and outbound outbox integration](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45837077302)
+CI evidence — exact branch HEAD `7d0e2d9f13b9fdddcd2e8b0d003b879f85b98eb9`:
+- [Node 22 typecheck/build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45838001575) — SUCCESS.
+- [KRATT core tests and application typecheck/build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45838001429) — SUCCESS.
+- [PostgreSQL 16 runtime, leases, Fabric inbox and outbound outbox integration](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45838001401) — SUCCESS.
 
-The database job ran three live PostgreSQL 16 integration tests and reported 3 passed, 0 failed. The ordinary core test step reports three database-dependent tests skipped because the separate live PostgreSQL step executes them against the CI database; the separate step is the database verification evidence. Later hardening changes that reject deletion of an outbound sequence head have been added after this evidence snapshot and require the next CI run before being counted as verified.
+The Node 22 workflow completed the contract/syntax checks, typecheck and build. The KRATT core workflow reported 218 tests, 215 passed, 0 failed and 3 database-dependent tests skipped. The PostgreSQL 16 workflow separately ran the three live database integration tests (shared runtime/leases, Fabric inbox, Fabric outbound outbox) and reported 3 passed, 0 failed and 0 skipped. The outbound database case re-applies migration 0004, races two outbox stores, verifies the signed envelope, checks append-only/update/delete guards and confirms that the outbox stays `PENDING` with zero delivery attempts.
