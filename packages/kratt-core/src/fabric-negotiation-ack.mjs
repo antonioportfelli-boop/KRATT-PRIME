@@ -219,7 +219,7 @@ export async function negotiateFabricSchema(requestInput, {
   let trusted;
   try { trusted = await resolveTrustedKey(request.sender_node, request.key_id); } catch { return fail("NEGOTIATION_KEY_UNAVAILABLE"); }
   const auth = verifyTrustedSignature({
-    identity: trusted, keyId: request.key_id, issuedAt: request.issued_at,
+    identity: trusted, nodeId: request.sender_node, keyId: request.key_id, issuedAt: request.issued_at,
     content: request.content_digest, signature: request.signature,
     domainInput: fabricSchemaNegotiationRequestSigningInput(request), nowMs
   });
