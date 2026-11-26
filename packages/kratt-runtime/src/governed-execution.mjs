@@ -348,7 +348,7 @@ export function createGovernedExecutionRuntime({
 
     let decision;
     try {
-      decision = authorizationRuntime.evaluate(bound.task, policyEvidence.records, bound.context, { approval });
+      decision = await authorizationRuntime.evaluate(bound.task, policyEvidence.records, bound.context, { approval });
     } catch { return failure("AUTHORIZATION_EVALUATION_FAILED"); }
     if (!isPolicyDecision(decision) || decision.decision !== "ALLOW")
       return failure("AUTHORIZATION_NOT_ALLOWED", {
