@@ -95,6 +95,12 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const started=await seed("task-delivery-started","b");
   const claimed=await claimOne();
   assert.equal(claimed.length,1);
+  const wrongOwnerStart=await store.beginOutboxDelivery({
+   outboxId:started.outboxId,leaseToken:claimed[0].lease_token,workerId:"worker-impostor"
+  });
+  assert.equal(wrongOwnerStart.reason,"LEASE_OWNER_MISMATCH");
+  const notStarted=await pool.query("SELECT delivery_started_at FROM kratt_dispatch_outbox WHERE outbox_id=$1",[started.outboxId]);
+  assert.equal(notStarted.rows[0].delivery_started_at,null);
   const begun=await store.beginOutboxDelivery({outboxId:started.outboxId,leaseToken:claimed[0].lease_token,workerId:"worker-01"});
   assert.equal(begun.ok,true,JSON.stringify(begun));
   const duplicateBegin=await store.beginOutboxDelivery({outboxId:started.outboxId,leaseToken:claimed[0].lease_token,workerId:"worker-01"});
@@ -187,6 +193,16 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   claim=await claimOne();assert.equal(claim.length,1);
   assert.equal((await store.beginOutboxDelivery({outboxId:expiredAfter.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01"})).ok,true);
   now+=6000;
+  const expiredFinish=await store.finishOutbox({
+   outboxId:expiredAfter.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01",
+   outcome:{status:"COMPLETED"},actorId:"worker-01",taskId:expiredAfter.taskId
+  });
+  assert.equal(expiredFinish.reason,"LEASE_LOST","an expired worker cannot finish a delivery");
+  const expiredRetry=await store.retryOutbox({
+   outboxId:expiredAfter.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01",
+   errorCode:"NETWORK_TIMEOUT",retrySafety:"SAFE_TO_RETRY"
+  });
+  assert.equal(expiredRetry.reason,"LEASE_LOST","an expired worker cannot reschedule a delivery");
   const afterLeaseExpiry=await claimOne();
   assert.deepEqual(afterLeaseExpiry,[]);
   const ambiguous=await pool.query("SELECT status,last_error_code,delivery_started_at FROM kratt_dispatch_outbox WHERE outbox_id=$1",[expiredAfter.outboxId]);
