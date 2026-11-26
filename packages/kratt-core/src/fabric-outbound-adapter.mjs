@@ -37,10 +37,12 @@ function listOfTokens(value) {
     new Set(value).size === value.length;
 }
 
-function listOfReferences(value) {
-  return Array.isArray(value) && value.length <= 64 &&
-    value.every(item => typeof item === "string" && item.length >= 1 && item.length <= 512) &&
-    new Set(value).size === value.length;
+function snapshotReferenceList(value) {
+  let copy;
+  try { copy = JSON.parse(canonicalizeFabricJcs(value)); } catch { return null; }
+  return Array.isArray(copy) && copy.length <= 64 &&
+    copy.every(item => typeof item === "string" && item.length >= 1 && item.length <= 512) &&
+    new Set(copy).size === copy.length ? copy : null;
 }
 
 function validApprovalShape(approval) {
@@ -111,7 +113,8 @@ export function createSteelFabricOutboundAdapter({
     if (typeof taskDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(taskDigest)) return fail("TASK_DIGEST_UNAVAILABLE");
     const taskDigestHex = taskDigest.slice(7);
     if (idempotencyKey !== `kratt:${task.task_id}:${taskDigestHex}`) return fail("IDEMPOTENCY_KEY_TASK_BINDING_MISMATCH");
-    if (!validApprovalShape(approval)) return fail("REQUEST_BOUND_APPROVAL_INVALID");
+    approval = immutableJsonRecord(approval);
+    if (!approval || !validApprovalShape(approval)) return fail("REQUEST_BOUND_APPROVAL_INVALID");
 
     let current;
     try { current = Number(now()); } catch { return fail("CLOCK_UNAVAILABLE"); }
@@ -123,7 +126,8 @@ export function createSteelFabricOutboundAdapter({
         expiresApproval <= issuedApproval || expiresApproval - issuedApproval > MAX_APPROVAL_AGE_MS ||
         current - issuedApproval > MAX_APPROVAL_AGE_MS) return fail("APPROVAL_TIME_INVALID");
     if (approval.task_id !== task.task_id || approval.actor !== principal.id ||
-        approval.operation !== task.action || approval.request_digest !== taskDigest ||
+        approval.operation !== task.action || approval.target?.resource_type !== task.target.resource_type ||
+        approval.target?.resource_id !== task.target.resource_id || approval.request_digest !== taskDigest ||
         approval.decision !== "APPROVE" || typeof approval.signature !== "string" ||
         approval.signature.length < 1 || approval.signature.length > 8192 ||
         !ID.test(approval.approval_id ?? "") || !ID.test(approval.key_id ?? "") ||
@@ -179,7 +183,8 @@ export function createSteelFabricOutboundAdapter({
     } catch { return fail("OUTBOUND_CONTEXT_UNAVAILABLE"); }
     const payload = immutableJsonRecord(payloadRaw);
     if (!payload) return fail("OUTBOUND_PAYLOAD_INVALID");
-    if (!listOfReferences(evidenceRaw)) return fail("OUTBOUND_EVIDENCE_REFERENCES_INVALID");
+    const evidenceReferences = snapshotReferenceList(evidenceRaw);
+    if (!evidenceReferences) return fail("OUTBOUND_EVIDENCE_REFERENCES_INVALID");
     if (typeof correlationId !== "string" || !ID.test(correlationId)) return fail("CORRELATION_ID_INVALID");
     if (parentEventId !== null && (typeof parentEventId !== "string" || !ID.test(parentEventId))) return fail("CAUSAL_PARENT_INVALID");
     if (payloadReference !== null && (typeof payloadReference !== "string" || payloadReference.length < 1 || payloadReference.length > 512)) {
@@ -199,7 +204,9 @@ export function createSteelFabricOutboundAdapter({
       correlation_id: correlationId,
       parent_event_id: parentEventId,
       payload_reference: payloadReference,
-      evidence_references: evidenceRaw,
+      evidence_references: evidenceReferences,
+      max_ttl_ms: ttlMs,
+      approval_authority: policy.approval_authority,
       payload,
       key_id: identity.key_id,
       policy_revision: typeof policy.revision === "string" ? policy.revision : null
@@ -239,7 +246,7 @@ export function createSteelFabricOutboundAdapter({
       expires_at: expiresAt,
       scope: [...scope],
       payload_reference: payloadReference,
-      evidence_references: [...evidenceRaw],
+      evidence_references: [...evidenceReferences],
       key_id: identity.key_id,
       payload,
       content_digest: "",
