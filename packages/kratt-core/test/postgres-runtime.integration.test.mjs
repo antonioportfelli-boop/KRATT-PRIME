@@ -167,7 +167,7 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
       reservationKey: "integration-task-1",
       taskDigest: digest,
       ownerId,
-      ttlMs: 9_000
+      ttlMs: 1_000
     });
     assert.equal(operationReuse.reason, "WORKER_LEASE_REPLAY_STALE");
     const reusedWithDifferentInput = await restarted.acquire({
