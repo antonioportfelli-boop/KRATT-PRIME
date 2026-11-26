@@ -235,14 +235,23 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     await waitForAdvisoryLockWait();
     await cancelFirstClient.query("COMMIT");
     cancelFirstClient.release();
+    const handlersBeforeCancelReject = await poolA.query("SELECT count(*)::int AS count FROM handler_receipts");
     const cancelWinsResult = await cancelWinsPending;
-    assert.equal(cancelWinsResult.ok, false);
-    assert.equal(cancelWinsResult.code, "TASK_CANCELLED");
+    assert.equal(cancelWinsResult.ok, true, JSON.stringify(cancelWinsResult));
+    assert.equal(cancelWinsResult.value.outcome, "REJECTED");
+    assert.equal(cancelWinsResult.value.acknowledgement.result, "REJECTED");
     const cancelWinsStored = await poolA.query("SELECT count(*)::int AS count FROM kratt_fabric_event_inbox WHERE event_id=$1", [cancellationWins.event_id]);
-    assert.equal(cancelWinsStored.rows[0].count, 0);
+    assert.equal(cancelWinsStored.rows[0].count, 1);
+    const cancelledReplay = await receiveSteelFabricEventV1(poolB, JSON.stringify(cancellationWins), deps(undefined, 2));
+    assert.equal(cancelledReplay.ok, true, JSON.stringify(cancelledReplay));
+    assert.equal(cancelledReplay.value.outcome, "REJECTED");
+    assert.equal(cancelledReplay.value.acknowledgement.result, "REJECTED");
+    assert.equal(cancelledReplay.value.acknowledgement.delivery_attempt, 2);
+    const handlersAfterCancelReject = await poolA.query("SELECT count(*)::int AS count FROM handler_receipts");
+    assert.equal(handlersAfterCancelReject.rows[0].count, handlersBeforeCancelReject.rows[0].count);
 
     // Ingress owns the task lock first: cancellation is serialized behind its handler/receipt/ACK commit.
-    const ingressWins = makeEvent({ id: "fabric-db-ingress-wins", sequence: 10 });
+    const ingressWins = makeEvent({ id: "fabric-db-ingress-wins", sequence: 11 });
     let releaseHandler;
     let handlerEnteredResolve;
     const handlerEntered = new Promise(resolve => { handlerEnteredResolve = resolve; });
