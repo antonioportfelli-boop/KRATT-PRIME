@@ -108,6 +108,16 @@ export const RUNTIME_LAYERS = Object.freeze([
     dependsOn: Object.freeze(["evidence-projection", "execution-ledger"]),
   }),
   Object.freeze({
+    id: "postgres-approval-nonces",
+    responsibility: "Shared PostgreSQL request-bound Ed25519 approval nonce consumption",
+    evidence: "WAVE2_BRANCH_PENDING_CI",
+    source: Object.freeze([
+      "packages/kratt-core/src/postgres-trusted-authorization.mjs",
+      "packages/kratt-core/migrations/0002_postgres_runtime_and_leases.sql",
+    ]),
+    dependsOn: Object.freeze(["trusted-authorization", "postgres-runtime-journal"]),
+  }),
+  Object.freeze({
     id: "postgres-worker-leases",
     responsibility: "Cross-process transactional worker leases and fencing using database row locks",
     evidence: "WAVE2_BRANCH_PENDING_CI",
