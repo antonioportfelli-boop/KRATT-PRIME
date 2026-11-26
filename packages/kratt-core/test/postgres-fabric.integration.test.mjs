@@ -270,7 +270,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(replayAfterCancel.value.duplicate, true);
     assert.deepEqual(replayAfterCancel.value.acknowledgement, ingressWinsResult.value.acknowledgement);
 
-    const longTaskId = "task-" + "x".repeat(170);
+    const longTaskId = "t" + "x".repeat(190);
     const longTaskEvent = makeEvent({ id: "fabric-db-long-task-id", sequence: 11, taskId: longTaskId });
     const longTaskResult = await receiveSteelFabricEventV1(poolA, JSON.stringify(longTaskEvent), deps());
     assert.equal(longTaskResult.ok, true, JSON.stringify(longTaskResult));
