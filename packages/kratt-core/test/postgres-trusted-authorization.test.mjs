@@ -85,6 +85,7 @@ function fixture() {
   const consumed = new Set();
   const pool = {
     async query(sql, values) {
+      if (sql.startsWith("SELECT")) return { rowCount: 0, rows: [] };
       assert.match(sql, /INSERT INTO kratt_governed_approval_nonces/);
       assert.match(sql, /ON CONFLICT DO NOTHING/);
       const key = values[0] + ":" + values[1];
