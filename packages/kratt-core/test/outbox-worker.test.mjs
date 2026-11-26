@@ -73,6 +73,7 @@ test("worker obtains delivery-start fence before invoking the provider", async (
   assert.equal(f.calls[2][1].idempotencyKey, f.item.idempotency_key);
   assert.equal(f.calls[2][1].deliveryAttempt, 4);
   assert.equal(f.calls[3][1].taskId, "task-1");
+  assert.equal(f.calls[3][1].workerId, "worker-1");
   assert.equal(result.results[0].status, "RECORDED");
   assert.equal(result.results[0].dispatched, true);
 });
@@ -121,6 +122,7 @@ test("provider timeout after the fence goes to reconciliation, not blind retry",
   const retry = f.calls.find(call => call[0] === "retry")[1];
   assert.equal(retry.retrySafety, "UNKNOWN");
   assert.equal(retry.errorCode, "PROVIDER_DISPATCH_FAILED");
+  assert.equal(retry.workerId, "worker-1");
   assert.equal(result.results[0].status, "RECONCILE_REQUIRED");
   assert.equal(result.results[0].dispatched, true);
 });
