@@ -388,7 +388,6 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
 
   let client;
   try { client = await pool.connect(); } catch { return fail("PERSISTENCE_UNAVAILABLE"); }
-  let handlerStarted = false;
   let transactionOpen = false;
   let phase = "PERSISTENCE";
   try {
@@ -401,7 +400,11 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
         FOR UPDATE`,
       [event.event_id, event.source_node, event.sequence]
     );
-    if (existing.rowCount > 0) {
+    if (existing.rowCount > 1) {
+      await client.query("ROLLBACK"); transactionOpen = false;
+      return fail("EVENT_REPLAY_OR_CONFLICT");
+    }
+    if (existing.rowCount === 1) {
       const duplicate = await duplicateResult(client, existing.rows[0]);
       if (duplicate.conflict || duplicate.missing || duplicate.policyChanged) {
         await client.query("ROLLBACK"); transactionOpen = false;
@@ -432,7 +435,11 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
         FOR UPDATE`,
       [event.event_id, event.source_node, event.sequence]
     );
-    if (racedDuplicate.rowCount > 0) {
+    if (racedDuplicate.rowCount > 1) {
+      await client.query("ROLLBACK"); transactionOpen = false;
+      return fail("EVENT_REPLAY_OR_CONFLICT");
+    }
+    if (racedDuplicate.rowCount === 1) {
       const duplicate = await duplicateResult(client, racedDuplicate.rows[0]);
       if (duplicate.conflict || duplicate.missing || duplicate.policyChanged) {
         await client.query("ROLLBACK"); transactionOpen = false;
@@ -472,7 +479,6 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     const canonical = toCanonicalFabricEventV2(event, authenticated.value);
     if (!canonical.ok) throw new Error(canonical.code);
     phase = "HANDLER";
-    handlerStarted = true;
     const handled = await deps.handler(canonical.value, { client, authorization: authorized.value, sequence_gap: sequenceGap });
     let resultJson;
     try {
@@ -481,6 +487,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       JSON.parse(resultJson);
     } catch { throw new Error("EVENT_RESULT_NOT_SERIALIZABLE"); }
     const processedAt = new Date(now).toISOString();
+    phase = "RECEIPT";
     await client.query(
       `INSERT INTO kratt_fabric_receiver_receipts
         (event_id,source_node,destination_node,source_sequence,content_digest,event_type,source_revision,key_id,policy_revision,outcome,result_json,processed_at)
@@ -501,6 +508,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       ? "RECEIVER_ACK_INVALID" : "RECEIVER_ACK_CREATION_FAILED");
     if (phase === "HANDLER") return fail(error instanceof Error && error.message === "EVENT_RESULT_NOT_SERIALIZABLE"
       ? "EVENT_RESULT_NOT_SERIALIZABLE" : "EVENT_HANDLER_FAILED");
+    if (phase === "RECEIPT") return fail("EVENT_RECEIPT_STORE_FAILED");
     return fail("PERSISTENCE_UNAVAILABLE", error instanceof Error ? error.message : "database operation failed");
   } finally {
     client.release();
@@ -517,6 +525,6 @@ export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "DESTINATION_NOT_AUTHORIZED", "EVENT_TYPE_NOT_AUTHORIZED", "SCOPE_NOT_AUTHORIZED", "KEY_POLICY_MISMATCH",
   "PERSISTENCE_UNAVAILABLE", "INGRESS_DEPENDENCIES_REQUIRED", "LOCAL_NODE_ID_REQUIRED", "DESTINATION_NOT_LOCAL",
   "EVENT_NOT_YET_VALID", "EVENT_EXPIRED", "EVENT_REPLAY_OR_CONFLICT", "EVENT_RECEIPT_MISSING",
-  "EVENT_RECEIPT_POLICY_REVISION_CHANGED", "DELIVERY_ATTEMPT_REQUIRED", "RECEIVER_ACK_INVALID",
+  "EVENT_RECEIPT_POLICY_REVISION_CHANGED", "EVENT_RECEIPT_STORE_FAILED", "DELIVERY_ATTEMPT_REQUIRED", "RECEIVER_ACK_INVALID",
   "RECEIVER_ACK_CREATION_FAILED", "EVENT_RESULT_NOT_SERIALIZABLE", "SEQUENCE_STALE", "CAUSAL_PARENT_MISSING", "EVENT_HANDLER_FAILED"
 ]);
