@@ -45,3 +45,57 @@ test("durable evidence retains the local-journal default when no scope is advert
   assert.equal(status.ok, true);
   assert.equal(status.scope, "SINGLE_PROCESS_LOCAL_JOURNAL");
 });
+
+
+function evidenceInput(eventId, resource) {
+  return {
+    rootId: "repo-shared",
+    branchId: "feature-wave2",
+    eventId,
+    eventType: "ci.tests.passed",
+    actorId: "ci-verifier",
+    occurredAt: "2026-11-26T12:00:00.000Z",
+    subject: "repo-shared",
+    decision: "VERIFIED",
+    sourceRef: { provider: "ci", resource, revision: "a".repeat(40) },
+    artifactDigest: "sha256:" + "b".repeat(64),
+    metadata: {
+      policy_evidence: {
+        schema_version: "kratt-policy-evidence/v1",
+        claim_type: "TESTS_PASSED",
+        verification_method: "ci-signature"
+      }
+    }
+  };
+}
+
+test("independent evidence repositories refresh cards written by other runtime instances", async () => {
+  const store = memoryJournal("POSTGRES_SHARED_DATABASE");
+  const first = new DurableEvidenceRepository({ store });
+  const second = new DurableEvidenceRepository({ store });
+
+  const firstAppend = await first.append(evidenceInput("evidence-shared-1", "run-1"));
+  assert.equal(firstAppend.ok, true);
+
+  // The second repository was never restarted after the first append.
+  const seenBySecond = await second.list();
+  assert.equal(seenBySecond.ok, true);
+  assert.equal(seenBySecond.count, 1);
+  assert.equal(seenBySecond.cards[0].cardId, "evidence-shared-1");
+
+  const secondAppend = await second.append(evidenceInput("evidence-shared-2", "run-2"));
+  assert.equal(secondAppend.ok, true);
+
+  // The first repository must refresh its in-memory ECK projection too.
+  const seenByFirst = await first.list();
+  assert.equal(seenByFirst.ok, true);
+  assert.equal(seenByFirst.count, 2);
+  assert.deepEqual(seenByFirst.cards.map(card => card.cardId), [
+    "evidence-shared-1", "evidence-shared-2"
+  ]);
+
+  const status = await first.verify();
+  assert.equal(status.ok, true);
+  assert.equal(status.eventCount, 2);
+  assert.equal(status.scope, "POSTGRES_SHARED_DATABASE");
+});
