@@ -10,6 +10,8 @@ on:
       - "packages/kratt-core/test/postgres-runtime*.test.mjs"
       - "packages/kratt-core/src/fabric-interoperability.mjs"
       - "packages/kratt-core/src/fabric-outbound-adapter.mjs"
+      - "packages/kratt-core/src/fabric-metrics.mjs"
+      - "packages/kratt-core/test/fabric-metrics.test.mjs"
       - "packages/kratt-core/src/postgres-outbox-store.mjs"
       - "packages/kratt-core/src/outbox-worker.mjs"
       - "packages/kratt-core/test/outbox-worker.test.mjs"
