@@ -1,4 +1,5 @@
 import { createPostgresRuntimeStore } from "../../kratt-core/src/postgres-runtime-store.mjs";
+import { createPostgresTrustedAuthorizationRuntime } from "../../kratt-core/src/postgres-trusted-authorization.mjs";
 import { createPostgresWorkerLeaseCoordinator } from "./postgres-worker-lease-coordinator.mjs";
 import { DurableEvidenceRepository } from "./durable-evidence.mjs";
 import { createGovernedExecutionRuntime } from "./governed-execution.mjs";
@@ -12,23 +13,33 @@ import { createGovernedExecutionRuntime } from "./governed-execution.mjs";
  */
 export async function createPostgresGovernedExecutionRuntime({
   pool,
+  trustedApprovalKeys,
+  verifyPolicyEvidence,
   ...runtimeOptions
 } = {}) {
   if (!pool || typeof pool.connect !== "function" || typeof pool.query !== "function") {
     throw new TypeError("POSTGRES_POOL_REQUIRED");
   }
-  for (const forbidden of ["store", "leaseCoordinator", "evidenceRepository"]) {
+  for (const forbidden of ["store", "leaseCoordinator", "evidenceRepository", "authorizationRuntime"]) {
     if (Object.hasOwn(runtimeOptions, forbidden)) {
       throw new TypeError("POSTGRES_RUNTIME_DEPENDENCY_OVERRIDE_FORBIDDEN:" + forbidden);
     }
   }
-  if (!runtimeOptions.authorizationRuntime ||
-      typeof runtimeOptions.authorizationRuntime.evaluate !== "function" ||
+  if (!Array.isArray(trustedApprovalKeys) || trustedApprovalKeys.length === 0 ||
+      typeof verifyPolicyEvidence !== "function" ||
       typeof runtimeOptions.authenticatePrincipal !== "function" ||
       typeof runtimeOptions.loadTrustedContext !== "function" ||
       typeof runtimeOptions.verifyEvidenceProvenance !== "function") {
     throw new TypeError("TRUSTED_GOVERNED_RUNTIME_HOST_DEPENDENCIES_REQUIRED");
   }
+
+  const authorizationRuntime = createPostgresTrustedAuthorizationRuntime({
+    pool,
+    trustedApprovalKeys,
+    verifyEvidence: verifyPolicyEvidence,
+    now: runtimeOptions.nowEpochMs ?? (() => Date.now())
+  });
+  await authorizationRuntime.open();
 
   const store = createPostgresRuntimeStore(pool);
   await store.open();
@@ -47,6 +58,7 @@ export async function createPostgresGovernedExecutionRuntime({
 
   const runtime = createGovernedExecutionRuntime({
     ...runtimeOptions,
+    authorizationRuntime,
     store,
     evidenceRepository,
     leaseCoordinator
@@ -99,9 +111,9 @@ export async function createPostgresGovernedExecutionRuntime({
       kind: "POSTGRES_SHARED_DATABASE",
       schemaVersion: "kratt-runtime-postgres/v1",
       migrations: Object.freeze([
-        "packages/kratt-core/migrations/0001_postgres_outbox.sql",
         "packages/kratt-core/migrations/0002_postgres_runtime_and_leases.sql"
       ]),
+      approvalNonceMode: "POSTGRES_SHARED_UNIQUE_INSERT",
       poolOwnership: "CALLER",
       dispatch: false,
       externalEffects: false
