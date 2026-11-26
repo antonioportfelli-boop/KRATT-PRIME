@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/kratt-governed-execution-bridge-v1]
+    branches:
+      - main
+      - feature/kratt-governed-execution-bridge-v1
+      - feature/wave2-runtime-reconciliation-2026-11-26
   pull_request:
     branches: [main]
 
