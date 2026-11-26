@@ -82,6 +82,7 @@ export function createAuthorizedDispatchRuntime({
     throw new TypeError("TRUSTED_CONTEXT_AND_EVIDENCE_LOADERS_REQUIRED");
   if (!commandStore || typeof commandStore.appendDecision !== "function" ||
       typeof commandStore.commitAuthorizedIntent !== "function" ||
+      typeof commandStore.beginAuthorizedDelivery !== "function" ||
       typeof commandStore.appendOutcome !== "function")
     throw new TypeError("DURABLE_COMMAND_STORE_REQUIRED");
   if (!plainObject(providerAdapters)) throw new TypeError("PROVIDER_ADAPTER_REGISTRY_REQUIRED");
@@ -210,6 +211,20 @@ export function createAuthorizedDispatchRuntime({
       return { status: "BLOCKED", reason: "INTENT_NOT_COMMITTED_OR_DUPLICATE", idempotency_key: idempotencyKey };
     }
 
+    // The intent reservation alone is not permission to perform an external effect.
+    // This second durable transaction orders cancellation against provider execution.
+    let deliveryStart;
+    try {
+      deliveryStart = await commandStore.beginAuthorizedDelivery({
+        idempotencyKey, taskId: task.task_id, actorId: identity.id, at: createdAt
+      });
+    } catch { deliveryStart = null; }
+    if (!plainObject(deliveryStart) || deliveryStart.ok !== true ||
+        typeof deliveryStart.deliveryToken !== "string" || !/^[a-f0-9]{64}$/.test(deliveryStart.deliveryToken)) {
+      return { status: "BLOCKED", reason: "DELIVERY_START_NOT_COMMITTED_OR_CANCELLED", idempotency_key: idempotencyKey };
+    }
+    const deliveryToken = deliveryStart.deliveryToken;
+
     let adapterResult;
     try {
       adapterResult = safeAdapterResult(await adapter.dispatch({
@@ -244,7 +259,7 @@ export function createAuthorizedDispatchRuntime({
       result: adapterResult ?? { status: "failed", reason: "PROVIDER_DISPATCH_FAILED_OR_INVALID_RESULT" },
     });
     try {
-      if (!succeeded(await commandStore.appendOutcome({ idempotencyKey, record: outcome }))) {
+      if (!succeeded(await commandStore.appendOutcome({ idempotencyKey, deliveryToken, record: outcome }))) {
         return { status: "OUTCOME_UNRECORDED", reason: "OUTCOME_AUDIT_APPEND_FAILED", dispatched: adapterResult !== null, idempotency_key: idempotencyKey };
       }
     } catch {
