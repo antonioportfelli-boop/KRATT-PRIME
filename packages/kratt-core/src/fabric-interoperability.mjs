@@ -423,7 +423,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       [event.source_node]
     );
     const headResult = await client.query(
-      `SELECT last_sequence,last_event_id FROM kratt_fabric_source_heads
+      `SELECT last_sequence, last_event_id FROM kratt_fabric_source_heads
         WHERE source_node=$1 FOR UPDATE`,
       [event.source_node]
     );
