@@ -1,10 +1,10 @@
 -- KRATT PRIME Wave 3 WP-03.7: authenticated receiver acknowledgement receipt.
 -- Sender-side receipt ledger only; no receiver worker, network sender or migration runner is activated.
--- Append-only records are bound to one immutable outbound event and one delivery attempt.
+-- Append-only records are bound to one immutable outbound event and one monotonic delivery attempt.
 BEGIN;
 
 -- Retry budget counters may reset during manual reconciliation. This independent
--- sequence is the identity of each actual delivery attempt.
+-- sequence is the identity of each actual delivery attempt and never resets.
 ALTER TABLE kratt_dispatch_outbox
   ADD COLUMN IF NOT EXISTS delivery_attempt_sequence BIGINT NOT NULL DEFAULT 0;
 
@@ -47,32 +47,7 @@ CREATE TABLE IF NOT EXISTS kratt_fabric_receiver_acknowledgements (
   result TEXT NOT NULL CHECK (result IN ('ACCEPTED','REJECTED','DUPLICATE','UNKNOWN')),
   policy_revision TEXT NOT NULL CHECK (policy_revision ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   key_id TEXT NOT NULL CHECK (key_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
-  content_digest CHAR(64) NOT NULL UNIQUE CHECK (content_digest ~ '^[a-f0-9]{64}
-  issued_at TIMESTAMPTZ NOT NULL,
-  received_at TIMESTAMPTZ NOT NULL,
-  ack_json JSONB NOT NULL,
-  CONSTRAINT kratt_fabric_receiver_ack_attempt_unique UNIQUE (outbox_id, delivery_attempt)
-);
-
-CREATE INDEX IF NOT EXISTS kratt_fabric_receiver_ack_event_idx
-  ON kratt_fabric_receiver_acknowledgements(event_id, source_sequence);
-CREATE INDEX IF NOT EXISTS kratt_fabric_receiver_ack_received_idx
-  ON kratt_fabric_receiver_acknowledgements(received_at DESC);
-
-CREATE OR REPLACE FUNCTION kratt_reject_fabric_receiver_ack_mutation()
-RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  RAISE EXCEPTION 'KRATT_FABRIC_RECEIVER_ACK_APPEND_ONLY';
-END;
-$$;
-
-DROP TRIGGER IF EXISTS kratt_fabric_receiver_ack_immutable ON kratt_fabric_receiver_acknowledgements;
-CREATE TRIGGER kratt_fabric_receiver_ack_immutable
-  BEFORE UPDATE OR DELETE ON kratt_fabric_receiver_acknowledgements
-  FOR EACH ROW EXECUTE FUNCTION kratt_reject_fabric_receiver_ack_mutation();
-
-COMMIT;
-),
+  content_digest CHAR(64) NOT NULL UNIQUE CHECK (content_digest ~ '^[a-f0-9]{64}$'),
   issued_at TIMESTAMPTZ NOT NULL,
   received_at TIMESTAMPTZ NOT NULL,
   ack_json JSONB NOT NULL,
