@@ -259,6 +259,12 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(cancelledReplay.value.outcome, "REJECTED");
     assert.equal(cancelledReplay.value.acknowledgement.result, "REJECTED");
     assert.equal(cancelledReplay.value.acknowledgement.delivery_attempt, 2);
+    const authenticatedCancelledAck = await authenticateFabricReceiverAcknowledgement(cancelledReplay.value.acknowledgement, {
+      expectedReceiverNode: "kratt-node", expectedPolicyRevision: "wave3-test-policy",
+      resolveTrustedKey: async (nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id ? receiverSigningIdentity : null,
+      now: () => NOW
+    });
+    assert.equal(authenticatedCancelledAck.ok, true, JSON.stringify(authenticatedCancelledAck));
     const handlersAfterCancelReject = await poolA.query("SELECT count(*)::int AS count FROM handler_receipts");
     assert.equal(handlersAfterCancelReject.rows[0].count, handlersBeforeCancelReject.rows[0].count);
 
