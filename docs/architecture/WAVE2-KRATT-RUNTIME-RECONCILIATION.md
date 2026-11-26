@@ -71,6 +71,20 @@ The PostgreSQL mode must use:
 
 The PostgreSQL runtime journal is append-only at the table boundary. Its hash chain detects tampering but does not replace database access control, backup integrity, external checkpoints or signing.
 
+## Implemented on this Wave 2 branch — pending exact-head CI
+
+The branch now includes the following PostgreSQL-specific components without replacing the local PrimeStore backend:
+
+- `packages/kratt-core/src/postgres-runtime-store.mjs`: PrimeStore-compatible shared journal adapter, repeatable-read chain verification, serialized append under the head-row lock and full-chain verification before every append.
+- `packages/kratt-runtime/src/postgres-worker-lease-coordinator.mjs`: transactional row-locked reservations, DB-clock expiry, monotonic fencing, operation idempotency and stale replay rejection.
+- `packages/kratt-core/src/postgres-trusted-authorization.mjs`: Ed25519 request-bound approval verification and one-time nonce consumption through unique PostgreSQL constraints.
+- `packages/kratt-runtime/src/postgres-governed-execution.mjs`: composition root that injects the shared journal, evidence projection, PostgreSQL lease coordinator and PostgreSQL nonce-backed authorization into the existing governed execution runtime.
+- `packages/kratt-core/migrations/0002_postgres_runtime_and_leases.sql`: schema and database triggers for append-only records and constrained lease transitions.
+- Lease renewal: `renewExecutionClaim` appends a same-state execution revision that retains the worker identity and fence while binding the later lease expiry. Governed runtime renewal rechecks authorization context and the exact evidence cards before renewing.
+- Staging runbook and PostgreSQL 16 integration workflow.
+
+These files are **branch implementation**, not mainline capability. They must stay labelled pending until the exact branch head passes all repository CI and the live PostgreSQL integration workflow. A PostgreSQL Actions service proves the test contract in CI, not the production database configuration.
+
 ## Acceptance gate
 
 Operational readiness for a **staging backend** requires:
