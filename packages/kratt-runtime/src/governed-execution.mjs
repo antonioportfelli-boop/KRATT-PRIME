@@ -461,14 +461,23 @@ export function createGovernedExecutionRuntime({
 
   async function leaseIsCurrent(record) {
     if (!record.claim) return { ok: false, reason: "EXECUTION_CLAIM_MISSING" };
-    const inspected = await leases.inspect(leaseReservationKey(record));
+    let inspected, currentTime;
+    try {
+      [inspected, currentTime] = await Promise.all([
+        leases.inspect(leaseReservationKey(record)),
+        Promise.resolve(nowEpochMs())
+      ]);
+    } catch {
+      return { ok: false, reason: "WORKER_LEASE_STORE_UNAVAILABLE" };
+    }
     const reservation = inspected?.reservation;
-    if (inspected?.ok !== true || !reservation || reservation.status !== "LEASED" ||
+    if (inspected?.ok !== true || !Number.isFinite(currentTime) || !reservation ||
+        reservation.status !== "LEASED" ||
         reservation.taskDigest !== record.task_digest ||
         reservation.fence !== record.claim.fence ||
         reservation.lease?.ownerId !== record.claim.worker_id ||
         reservation.lease?.expiresAt !== record.claim.expires_at ||
-        Date.parse(reservation.lease.expiresAt) <= nowEpochMs())
+        Date.parse(reservation.lease.expiresAt) <= currentTime)
       return { ok: false, reason: "WORKER_LEASE_NOT_CURRENT" };
     return { ok: true, reservation };
   }
