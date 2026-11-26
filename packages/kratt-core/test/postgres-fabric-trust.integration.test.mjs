@@ -26,9 +26,12 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     pool = new Pool({ connectionString, max: 6, options: "-c search_path=" + schema });
     const inboxMigration = await readFile(join(migrationDir, "0003_fabric_interoperability.sql"), "utf8");
     const trustMigration = await readFile(join(migrationDir, "0005_fabric_trust_registry.sql"), "utf8");
+    const receiptMigration = await readFile(join(migrationDir, "0008_fabric_receiver_receipts.sql"), "utf8");
     await pool.query(inboxMigration);
     await pool.query(trustMigration);
     await pool.query(trustMigration);
+    await pool.query(receiptMigration);
+    await pool.query("CREATE TABLE kratt_cancelled_tasks(task_id TEXT PRIMARY KEY, cancelled_at TIMESTAMPTZ NOT NULL, actor_id TEXT NOT NULL)");
 
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
@@ -71,6 +74,14 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     assert.equal(firstPolicy.ok, true, JSON.stringify(firstPolicy));
     assert.equal(firstPolicy.value.policy_version, 1);
     await pool.query("CREATE TABLE handler_receipts(event_id TEXT PRIMARY KEY)");
+    async function waitForTrustKeyUpdateWait() {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const waiting = await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type=$1 AND query ILIKE $2", ["Lock", "%kratt_fabric_trusted_keys%"]);
+        if (waiting.rows[0].count > 0) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error("EXPECTED_TRUST_KEY_REVOCATION_WAIT_NOT_OBSERVED");
+    }
 
     function makeEvent({ id, sequence, revision = STEEL_COMMIT, scope = ["repository.read"], issuedAt = "2026-11-26T11:59:00.000Z", expiresAt = "2026-11-26T12:00:00.000Z" }) {
       const body = {
@@ -134,17 +145,47 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     const verifiedOnly = await receiveSteelFabricEventV1(pool, JSON.stringify(afterRetirement), deps);
     assert.equal(verifiedOnly.ok, true, JSON.stringify(verifiedOnly));
 
+    // The inbound transaction holds the trusted key and active policy rows FOR SHARE.
+    // A concurrent revocation waits until the accepted event and receipt are committed.
+    const lockedEvent = makeEvent({
+      id: "trust-lock-revocation-race", sequence: 3, scope: ["repository.read"],
+      issuedAt: "2026-11-26T11:59:45.000Z", expiresAt: "2026-11-26T12:00:15.000Z"
+    });
+    let releaseLockedHandler;
+    let lockedHandlerEnteredResolve;
+    const lockedHandlerEntered = new Promise(resolve => { lockedHandlerEnteredResolve = resolve; });
+    const lockedHandlerGate = new Promise(resolve => { releaseLockedHandler = resolve; });
+    const lockedDeps = {
+      ...deps,
+      revalidateAuthorization: ({ client, event, authenticatedKey, authorization, now }) => registry.lockInboundAuthorization(client, {
+        event, authenticatedKey, expectedPolicyRevision: authorization.policy_revision, nowMs: now
+      }),
+      handler: async (canonical, tx) => {
+        await tx.client.query("INSERT INTO handler_receipts(event_id) VALUES($1)", [canonical.identity.event_id]);
+        lockedHandlerEnteredResolve();
+        await lockedHandlerGate;
+        return "accepted-before-key-revocation";
+      }
+    };
+    const lockedReceive = receiveSteelFabricEventV1(pool, JSON.stringify(lockedEvent), lockedDeps);
+    await lockedHandlerEntered;
+    const revocationPending = registry.transitionKey({
+      nodeId: "steel-node", keyId: "steel-key-01", nextStatus: "REVOKED",
+      actorId: "security-admin", reason: "serialize revocation after in-flight authorized receiver transaction"
+    });
+    await waitForTrustKeyUpdateWait();
+    releaseLockedHandler();
+    const lockedReceiveResult = await lockedReceive;
+    assert.equal(lockedReceiveResult.ok, true, JSON.stringify(lockedReceiveResult));
+    const revocationResult = await revocationPending;
+    assert.equal(revocationResult.ok, true, JSON.stringify(revocationResult));
+
     const invalidReactivation = await registry.transitionKey({
       nodeId: "steel-node", keyId: "steel-key-01", nextStatus: "ACTIVE",
       actorId: "security-admin", reason: "retired key cannot be reactivated"
     });
     assert.equal(invalidReactivation.code, "TRUST_KEY_TRANSITION_INVALID");
-    const revoked = await registry.transitionKey({
-      nodeId: "steel-node", keyId: "steel-key-01", nextStatus: "REVOKED",
-      actorId: "security-admin", reason: "test revocation"
-    });
-    assert.equal(revoked.ok, true, JSON.stringify(revoked));
-    const afterRevoke = makeEvent({ id: "trust-after-revoke", sequence: 3 });
+    const afterRevoke = makeEvent({ id: "trust-after-revoke", sequence: 4 });
     assert.equal((await receiveSteelFabricEventV1(pool, JSON.stringify(afterRevoke), deps)).code, "KEY_REVOKED");
 
     const audit = await registry.verifyAuditChain();
@@ -162,8 +203,8 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
       "SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count," +
       "(SELECT count(*)::int FROM handler_receipts) AS handler_count"
     );
-    assert.equal(counts.rows[0].inbox_count, 2);
-    assert.equal(counts.rows[0].handler_count, 2);
+    assert.equal(counts.rows[0].inbox_count, 3);
+    assert.equal(counts.rows[0].handler_count, 3);
   } finally {
     if (pool) await pool.end();
     await admin.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => undefined);
