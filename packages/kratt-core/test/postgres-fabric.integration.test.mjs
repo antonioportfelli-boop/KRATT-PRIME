@@ -91,14 +91,16 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       ...overrides
     });
 
+    const receiverMetricCalls = [];
+    const receiverMetrics = { increment: (name, amount = 1) => receiverMetricCalls.push([name, amount]), gauge() {} };
     const first = makeEvent({ id: "fabric-db-1", sequence: 1 });
-    const accepted = await receiveSteelFabricEventV1(poolA, JSON.stringify(first), deps());
+    const accepted = await receiveSteelFabricEventV1(poolA, JSON.stringify(first), deps(undefined, 1, { metrics: receiverMetrics }));
     assert.equal(accepted.ok, true, JSON.stringify(accepted));
     assert.equal(accepted.value.duplicate, false);
     assert.equal(accepted.value.outcome, "ACCEPTED");
     assert.equal(accepted.value.acknowledgement.delivery_attempt, 1);
 
-    const duplicate = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps());
+    const duplicate = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, { metrics: receiverMetrics }));
     assert.equal(duplicate.ok, true, JSON.stringify(duplicate));
     assert.equal(duplicate.value.duplicate, true);
     assert.deepEqual(duplicate.value.acknowledgement, accepted.value.acknowledgement);
@@ -243,7 +245,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     await cancelFirstClient.query("BEGIN");
     await cancelFirstClient.query("SELECT pg_advisory_xact_lock(hashtext($1))", [cancellationWins.payload.task_id]);
     await cancelFirstClient.query("INSERT INTO kratt_cancelled_tasks(task_id,cancelled_at,actor_id) VALUES($1,$2,$3)", [cancellationWins.payload.task_id,new Date(NOW).toISOString(),"operator-cancel-first"]);
-    const cancelWinsPending = receiveSteelFabricEventV1(poolB, JSON.stringify(cancellationWins), deps());
+    const cancelWinsPending = receiveSteelFabricEventV1(poolB, JSON.stringify(cancellationWins), deps(undefined, 1, { metrics: receiverMetrics }));
     await waitForAdvisoryLockWait();
     await cancelFirstClient.query("COMMIT");
     cancelFirstClient.release();
@@ -267,6 +269,11 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(authenticatedCancelledAck.ok, true, JSON.stringify(authenticatedCancelledAck));
     const handlersAfterCancelReject = await poolA.query("SELECT count(*)::int AS count FROM handler_receipts");
     assert.equal(handlersAfterCancelReject.rows[0].count, handlersBeforeCancelReject.rows[0].count);
+    const receiverCounters = Object.fromEntries(receiverMetricCalls.map(([name, amount]) =>
+      [name, receiverMetricCalls.filter(item => item[0] === name).reduce((sum, item) => sum + item[1], 0)]));
+    assert.ok((receiverCounters.fabric_receiver_accepted_total ?? 0) >= 1, JSON.stringify(receiverCounters));
+    assert.ok((receiverCounters.fabric_receiver_duplicate_total ?? 0) >= 1, JSON.stringify(receiverCounters));
+    assert.ok((receiverCounters.fabric_receiver_rejected_total ?? 0) >= 1, JSON.stringify(receiverCounters));
 
     // Ingress owns the task lock first: cancellation is serialized behind its handler/receipt/ACK commit.
     const ingressWins = makeEvent({ id: "fabric-db-ingress-wins", sequence: 11 });

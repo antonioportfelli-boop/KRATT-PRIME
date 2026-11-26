@@ -19,4 +19,4 @@ Workers use \`FOR UPDATE SKIP LOCKED\`, lease tokens and lease expiry. Expired l
 - Audit hash-chain head is serialized with a singleton row lock; external checkpoints and restricted database roles remain necessary.
 
 ## Verification and limits
-Source and contract tests are included, but no live PostgreSQL instance, credentials, migration run, database integration test, or provider endpoint was available. Review SQL and run integration tests against the supported PostgreSQL version before use. Database durability, backups, TLS, least-privilege roles, monitoring and failover are deployment responsibilities.
+WP-03.9 adds worker unit tests and a PostgreSQL integration case that uses the real outbox store: cancellation is committed after claim but before delivery start, and the worker must make zero provider calls. CI must execute this against PostgreSQL 16 before WP-03.9 is considered verified. No external provider endpoint is called by the test. Database durability, backups, TLS, least-privilege roles, monitoring and failover are deployment responsibilities.

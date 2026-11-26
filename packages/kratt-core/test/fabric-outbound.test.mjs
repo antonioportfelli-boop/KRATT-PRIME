@@ -65,7 +65,12 @@ function makeStore(overrides = {}) {
   const store = {
     async findOutboxByIdempotencyKey(key) {
       if (overrides.find) return overrides.find(key, state);
-      if (state.existing) return { ok: true, found: true, status: "PENDING", attempts: 0, event: state.existing };
+      if (state.existing) return {
+        ok: true, found: true, status: "PENDING", attempts: 0,
+        event: state.existing.event,
+        ack_policy_revision: state.existing.ackPolicyRevision,
+        request_digest: state.existing.requestDigest
+      };
       return { ok: true, found: false };
     },
     async reserveFabricSequence(input) {
@@ -75,7 +80,11 @@ function makeStore(overrides = {}) {
     async reserveAuthorizedIntent(input) {
       state.reserveCalls.push(input);
       if (overrides.reserve) return overrides.reserve(input, state);
-      state.existing = input.fabricEvent;
+      state.existing = {
+        event: input.fabricEvent,
+        ackPolicyRevision: input.ackPolicyRevision,
+        requestDigest: state.sequenceCalls.at(-1)?.requestDigest
+      };
       return { ok: true, outbox_id: "outbox-fabric-001", audit_sequence: 18 };
     }
   };
@@ -249,4 +258,30 @@ test("database sequence reservation binds an idempotency key to one immutable re
   assert.equal(same.sequence, first.sequence);
   assert.equal(conflict.ok, false);
   assert.equal(conflict.reason, "FABRIC_SEQUENCE_REQUEST_CONFLICT");
+});
+
+
+test("outbound instrumentation emits only fixed counter names and amounts", async () => {
+  const { store } = makeStore();
+  const calls = [];
+  const metrics = { increment: (...args) => calls.push(args), gauge() { throw new Error("unused"); } };
+  const result = await makeAdapter(store, { metrics }).publish({
+    task, principal, approval, idempotencyKey, eventType: "factory.task.requested"
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(calls, [["fabric_outbound_events_total", 1]]);
+});
+
+test("outbound sequence conflicts are counted without weakening fail-closed behavior", async () => {
+  const { store } = makeStore({
+    sequence: async () => ({ ok: false, reason: "FABRIC_SEQUENCE_REQUEST_CONFLICT" })
+  });
+  const calls = [];
+  const metrics = { increment: (...args) => calls.push(args), gauge() {} };
+  const result = await makeAdapter(store, { metrics }).publish({
+    task, principal, approval, idempotencyKey, eventType: "factory.task.requested"
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "FABRIC_SEQUENCE_REQUEST_CONFLICT");
+  assert.deepEqual(calls, [["fabric_idempotency_conflicts", 1]]);
 });

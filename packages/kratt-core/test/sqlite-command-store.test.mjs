@@ -33,7 +33,7 @@ const outcome = (eventType = "dispatch.completed") => ({
   provider: "github",
   operation: "repository.write",
   idempotency_key: key,
-  result: { status: eventType === "dispatch.completed" ? "completed" : "failed" },
+  result: { status: eventType === "dispatch.completed" ? "completed" : eventType === "dispatch.failed" ? "failed" : "unknown" },
 });
 const denial = () => ({
   schema_version: "kratt-audit/v1",
@@ -71,13 +71,76 @@ test("refuses to commit an intent after the task cancellation is recorded", () =
   assert.equal(store.listAuditEvents()[0].record.event_type, "task.cancelled");
 }));
 
-test("appends a completion outcome only for a committed intent", () => withStore((store) => {
-  assert.equal(store.appendOutcome({ idempotencyKey: key, record: outcome() }), false);
+test("appends a completion outcome only after an intent and fenced delivery start", () => withStore((store) => {
+  assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: "a".repeat(64), record: outcome() }), false);
   assert.equal(store.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), true);
-  assert.equal(store.appendOutcome({ idempotencyKey: key, record: outcome() }), true);
-  assert.equal(store.appendOutcome({ idempotencyKey: key, record: outcome() }), false);
-  assert.equal(store.listAuditEvents().map(x => x.record.event_type).join(","), "dispatch.intent_committed,dispatch.completed");
+  const started = store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  assert.match(started.deliveryToken, /^[a-f0-9]{64}$/);
+  assert.equal(store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at }).ok, false);
+  assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: started.deliveryToken, record: outcome() }), true);
+  assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: started.deliveryToken, record: outcome() }), false);
+  assert.equal(store.listAuditEvents().map(x => x.record.event_type).join(","), "dispatch.intent_committed,dispatch.delivery_started,dispatch.completed");
   assert.equal(store.verifyAuditChain().ok, true);
+}));
+
+test("records an unknown post-start provider result for reconciliation without making the intent retryable", () => withStore((store, db) => {
+  assert.equal(store.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), true);
+  const started = store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at });
+  assert.equal(started.ok, true);
+  assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: started.deliveryToken, record: outcome("dispatch.reconcile_required") }), true);
+  assert.equal(store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at: "2026-11-18T15:00:02.000Z" }).ok, false);
+  const intentState = db.prepare("SELECT status FROM kratt_dispatch_intents WHERE idempotency_key = ?").get(key);
+  assert.equal(intentState.status, "INTENT_COMMITTED");
+  assert.equal(store.listAuditEvents().at(-1).record.event_type, "dispatch.reconcile_required");
+  assert.equal(store.verifyAuditChain().ok, true);
+}));
+
+test("a durable delivery-start fence survives store restart and prevents a second provider start", () => {
+  const directory = mkdtempSync(join(tmpdir(), "kratt-command-restart-"));
+  const path = join(directory, "commands.sqlite");
+  let firstDb;
+  let restartedDb;
+  try {
+    firstDb = new DatabaseSync(path);
+    const firstStore = createSqliteCommandStore(firstDb);
+    assert.equal(firstStore.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), true);
+    const started = firstStore.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at });
+    assert.equal(started.ok, true, JSON.stringify(started));
+    firstDb.close();
+    firstDb = null;
+
+    // A new connection/store instance models a process restart after delivery-start commit.
+    restartedDb = new DatabaseSync(path);
+    const restartedStore = createSqliteCommandStore(restartedDb);
+    const secondStart = restartedStore.beginAuthorizedDelivery({
+      idempotencyKey: key, taskId, actorId: actor, at: "2026-11-18T15:00:02.000Z"
+    });
+    assert.equal(secondStart.ok, false);
+    assert.equal(restartedStore.cancelTask({ taskId, actorId: actor, at: "2026-11-18T15:00:02.000Z" }), false);
+    assert.deepEqual(restartedStore.listAuditEvents().map(x => x.record.event_type), [
+      "dispatch.intent_committed", "dispatch.delivery_started"
+    ]);
+    assert.equal(restartedStore.verifyAuditChain().ok, true);
+  } finally {
+    firstDb?.close();
+    restartedDb?.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("delivery start and cancellation are serialized; cancellation cannot win after a start", () => withStore((store) => {
+  assert.equal(store.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), true);
+  const started = store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at });
+  assert.equal(started.ok, true);
+  assert.equal(store.cancelTask({ taskId, actorId: actor, at: "2026-11-18T15:00:02.000Z" }), false);
+  assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: started.deliveryToken, record: outcome() }), true);
+}));
+
+test("cancellation before delivery start permanently blocks provider execution", () => withStore((store) => {
+  assert.equal(store.cancelTask({ taskId, actorId: actor, at }), true);
+  assert.equal(store.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), false);
+  assert.equal(store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at }).ok, false);
 }));
 
 test("appends denial records to the same tamper-evident audit chain", () => withStore((store) => {

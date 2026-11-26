@@ -12,6 +12,7 @@ import {
 } from "../src/fabric-negotiation-ack.mjs";
 import { createPostgresOutboxStore } from "../src/postgres-outbox-store.mjs";
 import { createPostgresFabricAcknowledgementStore } from "../src/postgres-fabric-ack-store.mjs";
+import { createPostgresFabricTrustRegistry } from "../src/postgres-fabric-trust-registry.mjs";
 
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -34,7 +35,7 @@ function makeAck(event, attempt, result = "ACCEPTED", suffix = "one", overrides 
     event_digest: event.content_digest,
     delivery_attempt: Number(attempt),
     result,
-    policy_revision: "steel-policy-7",
+    policy_revision: event.ackPolicyRevision ?? "steel-policy-7",
     issued_at: "2026-11-26T17:00:00.000Z",
     key_id: receiverIdentity.key_id,
     content_digest: "",
@@ -53,34 +54,66 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
   const schema = "kratt_wave3_ack_" + randomUUID().replaceAll("-", "");
   const admin = new Pool({ connectionString, max: 2 });
   let pool;
+  let poolB;
   try {
     await admin.query("CREATE SCHEMA " + schema);
     pool = new Pool({ connectionString, max: 10, options: "-c search_path=" + schema });
+    poolB = new Pool({ connectionString, max: 10, options: "-c search_path=" + schema });
     for (const path of [
       "../migrations/0001_postgres_outbox.sql",
       "../migrations/0004_fabric_outbound.sql",
+      "../migrations/0005_fabric_trust_registry.sql",
       "../migrations/0006_outbox_delivery_reliability.sql",
       "../migrations/0007_fabric_receiver_acknowledgements.sql",
-      "../migrations/0007_fabric_receiver_acknowledgements.sql"
+      "../migrations/0009_fabric_ack_outbox_reconciliation.sql"
     ]) {
       const sql = await readFile(join(here, path), "utf8");
       await pool.query(sql);
     }
 
     let clock = NOW;
+    const trust = createPostgresFabricTrustRegistry(pool, {
+      clock: () => new Date(clock), authorizeAdmin: async () => true
+    });
+    assert.equal((await trust.registerNode({
+      nodeId: "steel-node", repositoryFullName: "3XTRINITY/STEEL",
+      repositoryRevision: "a".repeat(40), actorId: "operator-01"
+    })).ok, true);
+    assert.equal((await trust.registerKey({
+      nodeId: "steel-node", keyId: receiverIdentity.key_id,
+      publicKeyPem: receiverKeys.publicKey.export({ type: "spki", format: "pem" }),
+      validFrom: "2026-01-01T00:00:00.000Z", actorId: "operator-01"
+    })).ok, true);
+    assert.equal((await trust.transitionKey({
+      nodeId: "steel-node", keyId: receiverIdentity.key_id, nextStatus: "ACTIVE",
+      actorId: "operator-01", reason: "activate isolated test receiver key"
+    })).ok, true);
+    const metricCalls = [];
+    const metrics = {
+      increment: (name, amount = 1) => metricCalls.push(["counter", name, amount]),
+      gauge: (name, value) => metricCalls.push(["gauge", name, value])
+    };
     const outbox = createPostgresOutboxStore(pool, {
       clock: () => new Date(clock),
       authorizeReconciliation: async request => request.actorId === "operator-01" && request.evidenceDigest === "d".repeat(64)
     });
     const acknowledgements = createPostgresFabricAcknowledgementStore(pool, {
       clock: () => new Date(clock),
-      expectedReceiverNode: "steel-node",
-      expectedPolicyRevision: "steel-policy-7",
-      resolveTrustedKey: async (nodeId, keyId) =>
-        nodeId === receiverIdentity.node_id && keyId === receiverIdentity.key_id ? receiverIdentity : null
+      lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
+        trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs),
+      metrics
+    });
+    const trustB = createPostgresFabricTrustRegistry(poolB, {
+      clock: () => new Date(clock), authorizeAdmin: async () => true
+    });
+    const acknowledgementsB = createPostgresFabricAcknowledgementStore(poolB, {
+      clock: () => new Date(clock),
+      lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
+        trustB.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs),
+      metrics
     });
 
-    async function seed(tag) {
+    async function seed(tag, ackPolicyRevision = "steel-policy-7") {
       const taskId = "task-ack-" + tag;
       const idempotencyKey = "kratt:" + taskId + ":" + createHash("sha256").update(tag, "utf8").digest("hex");
       const outboxId = "outbox:" + taskId;
@@ -104,54 +137,85 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
         content_digest: createHash("sha256").update("fabric-event:" + tag, "utf8").digest("hex"),
         signature: "test-fixture-only"
       };
-      await pool.query(
-        "INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,actor_id,provider,operation,status,created_at) " +
-        "VALUES($1,$2,'operator-01','fabric','fabric.publish','INTENT_COMMITTED',$3)",
-        [idempotencyKey, taskId, new Date(clock).toISOString()]
-      );
-      await pool.query(
-        "INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) " +
-        "VALUES($1,$2,'fabric',$3::jsonb,'PENDING',$4)",
-        [outboxId, idempotencyKey, JSON.stringify({ fabric_envelope: event }), new Date(clock).toISOString()]
-      );
-      await pool.query(
-        "INSERT INTO kratt_fabric_outbound_heads(source_node,last_sequence) VALUES('kratt-node',$1) " +
-        "ON CONFLICT(source_node) DO UPDATE SET last_sequence=EXCLUDED.last_sequence,updated_at=clock_timestamp()",
-        [event.sequence]
-      );
-      await pool.query(
-        "INSERT INTO kratt_fabric_outbound_sequences(source_node,idempotency_key,request_digest,source_sequence) VALUES('kratt-node',$1,$2,$3)",
-        [idempotencyKey, "c".repeat(64), event.sequence]
-      );
-      await pool.query(
-        "INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json) " +
-        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)",
-        [event.event_id,idempotencyKey,event.source_node,event.destination_node,event.sequence,event.key_id,
-          event.content_digest,event.issued_at,event.expires_at,JSON.stringify(event)]
-      );
-      return { taskId, idempotencyKey, outboxId, event };
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,actor_id,provider,operation,status,created_at) " +
+          "VALUES($1,$2,'operator-01','fabric','fabric.publish','INTENT_COMMITTED',$3)",
+          [idempotencyKey, taskId, new Date(clock).toISOString()]
+        );
+        await client.query(
+          "INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) " +
+          "VALUES($1,$2,'fabric',$3::jsonb,'PENDING',$4)",
+          [outboxId, idempotencyKey, JSON.stringify({ fabric_envelope: event }), new Date(clock).toISOString()]
+        );
+        await client.query(
+          "INSERT INTO kratt_fabric_outbound_heads(source_node,last_sequence) VALUES('kratt-node',$1) " +
+          "ON CONFLICT(source_node) DO UPDATE SET last_sequence=EXCLUDED.last_sequence,updated_at=clock_timestamp()",
+          [event.sequence]
+        );
+        await client.query(
+          "INSERT INTO kratt_fabric_outbound_sequences(source_node,idempotency_key,request_digest,source_sequence) VALUES('kratt-node',$1,$2,$3)",
+          [idempotencyKey, "c".repeat(64), event.sequence]
+        );
+        await client.query(
+          "INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json,ack_policy_revision) " +
+          "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)",
+          [event.event_id,idempotencyKey,event.source_node,event.destination_node,event.sequence,event.key_id,
+            event.content_digest,event.issued_at,event.expires_at,JSON.stringify(event),ackPolicyRevision]
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+      return { taskId, idempotencyKey, outboxId, event: { ...event, ackPolicyRevision }, ackPolicyRevision };
     }
 
     async function begin(item) {
       const claimed = await outbox.claimOutbox({ workerId: "worker-ack", limit: 10, leaseSeconds: 60 });
       const row = claimed.find(value => value.outbox_id === item.outboxId);
       assert.ok(row, "expected outbox row to be claimed");
-      const started = await outbox.beginOutboxDelivery({ outboxId: item.outboxId, leaseToken: row.lease_token });
+      const started = await outbox.beginOutboxDelivery({ outboxId: item.outboxId, leaseToken: row.lease_token, workerId: "worker-ack" });
       assert.equal(started.ok, true, JSON.stringify(started));
       return row;
     }
 
-    async function process(item, lease, ack) {
+    async function process(item, lease, ack, store = acknowledgements) {
       return processFabricReceiverAcknowledgement({
         acknowledgement: ack,
         expectedReceiverNode: "steel-node",
-        expectedPolicyRevision: "steel-policy-7",
-        resolveTrustedKey: async (nodeId, keyId) =>
-          nodeId === receiverIdentity.node_id && keyId === receiverIdentity.key_id ? receiverIdentity : null,
-        acknowledgementStore: acknowledgements,
+        expectedPolicyRevision: item.ackPolicyRevision,
+        resolveTrustedKey: (nodeId, keyId) => trust.resolveTrustedKey(nodeId, keyId),
+        acknowledgementStore: store,
         outboxId: item.outboxId,
         leaseToken: lease.lease_token,
         now: () => clock
+      });
+    }
+
+    function acknowledgementStoreFailingOn(sqlFragment) {
+      const faultPool = {
+        query: (...args) => pool.query(...args),
+        async connect() {
+          const client = await pool.connect();
+          return {
+            query: async (sql, ...args) => {
+              if (typeof sql === "string" && sql.includes(sqlFragment))
+                throw new Error("injected ACK transaction failure");
+              return client.query(sql, ...args);
+            },
+            release: () => client.release()
+          };
+        }
+      };
+      return createPostgresFabricAcknowledgementStore(faultPool, {
+        clock: () => new Date(clock),
+        lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
+          trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
       });
     }
 
@@ -164,7 +228,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.equal((await pool.query("SELECT status FROM kratt_dispatch_intents WHERE task_id=$1", [accepted.taskId])).rows[0].status, "COMPLETED");
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [accepted.outboxId])).rows[0].n, 1);
 
-    const exactDuplicate = await process(accepted, acceptedLease, acceptedAck);
+    const exactDuplicate = await process(accepted, acceptedLease, acceptedAck, acknowledgementsB);
     assert.equal(exactDuplicate.ok, true);
     assert.equal(exactDuplicate.value.duplicate, true);
     const conflictingDuplicate = await process(accepted, acceptedLease,
@@ -195,7 +259,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.ok(retryClaim);
     assert.equal(Number(retryClaim.delivery_attempt_sequence), Number(rejectedLease.delivery_attempt_sequence) + 1);
     assert.equal(Number(retryClaim.attempts), 1);
-    assert.equal((await outbox.beginOutboxDelivery({ outboxId: rejected.outboxId, leaseToken: retryClaim.lease_token })).ok, true);
+    assert.equal((await outbox.beginOutboxDelivery({ outboxId: rejected.outboxId, leaseToken: retryClaim.lease_token, workerId: "worker-ack" })).ok, true);
     const acceptedAfterRetry = await process(rejected, retryClaim,
       makeAck(rejected.event, retryClaim.delivery_attempt_sequence, "ACCEPTED", "accepted-after-retry"));
     assert.equal(acceptedAfterRetry.ok, true, JSON.stringify(acceptedAfterRetry));
@@ -204,6 +268,21 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       "SELECT delivery_attempt,result FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1 ORDER BY delivery_attempt",
       [rejected.outboxId]
     )).rows.map(row => [Number(row.delivery_attempt), row.result]), [[1, "REJECTED"], [2, "ACCEPTED"]]);
+
+    const policyBound = await seed("per-intent-policy-revision", "steel-policy-8");
+    const policyBoundLease = await begin(policyBound);
+    const policyBoundResult = await process(policyBound, policyBoundLease,
+      makeAck(policyBound.event, policyBoundLease.delivery_attempt_sequence, "ACCEPTED", "policy-bound"));
+    assert.equal(policyBoundResult.ok, true, JSON.stringify(policyBoundResult));
+    assert.equal(policyBoundResult.value.outbox_status, "DONE");
+
+    const duplicateOutcome = await seed("duplicate-outcome");
+    const duplicateOutcomeLease = await begin(duplicateOutcome);
+    const duplicateOutcomeResult = await process(duplicateOutcome, duplicateOutcomeLease,
+      makeAck(duplicateOutcome.event, duplicateOutcomeLease.delivery_attempt_sequence, "DUPLICATE", "duplicate-outcome"));
+    assert.equal(duplicateOutcomeResult.ok, true, JSON.stringify(duplicateOutcomeResult));
+    assert.equal(duplicateOutcomeResult.value.status, "DUPLICATE");
+    assert.equal(duplicateOutcomeResult.value.outbox_status, "DONE");
 
     const unknown = await seed("unknown");
     const unknownLease = await begin(unknown);
@@ -226,6 +305,11 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     });
     const mismatchResult = await process(mismatch, mismatchLease, wrongDigest);
     assert.equal(mismatchResult.code, "ACK_EVENT_BINDING_MISMATCH");
+    const wrongPolicy = makeAck(mismatch.event, mismatchLease.delivery_attempt_sequence, "ACCEPTED", "wrong-policy", {
+      policy_revision: "steel-policy-forged"
+    });
+    const wrongPolicyResult = await process(mismatch, mismatchLease, wrongPolicy);
+    assert.equal(wrongPolicyResult.code, "ACK_POLICY_REVISION_MISMATCH");
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [mismatch.outboxId])).rows[0].n, 0);
 
     // A receiver may acknowledge after the worker lease expires, but only the original
@@ -251,11 +335,26 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.ok(cancelClaim);
     const cancelResult = await outbox.cancelTaskWithReason({ taskId: cancelled.taskId, actorId: "operator-01" });
     assert.equal(cancelResult.ok, true);
-    const startAfterCancel = await outbox.beginOutboxDelivery({ outboxId: cancelled.outboxId, leaseToken: cancelClaim.lease_token });
+    const startAfterCancel = await outbox.beginOutboxDelivery({ outboxId: cancelled.outboxId, leaseToken: cancelClaim.lease_token, workerId: "worker-ack" });
     assert.equal(startAfterCancel.reason, "LEASE_LOST");
     const cancelledAck = makeAck(cancelled.event, cancelClaim.delivery_attempt_sequence, "ACCEPTED", "cancelled");
     const cancelledAckResult = await process(cancelled, cancelClaim, cancelledAck);
-    assert.equal(cancelledAckResult.code, "ACK_TASK_CANCELLED");
+    assert.equal(cancelledAckResult.ok, true, JSON.stringify(cancelledAckResult));
+    assert.equal(cancelledAckResult.value.late_ack, true);
+    assert.equal(cancelledAckResult.value.outbox_status, "CANCELLED");
+    const lateReplay = await process(cancelled, cancelClaim, cancelledAck);
+    assert.equal(lateReplay.ok, true);
+    assert.equal(lateReplay.value.duplicate, true);
+    assert.equal(lateReplay.value.late_ack, true);
+    const lateLedger = await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_late_acknowledgements WHERE outbox_id=$1", [cancelled.outboxId]
+    );
+    assert.equal(lateLedger.rows[0].n, 1);
+    const cancelledPair = await pool.query(
+      "SELECT o.status AS outbox_status,i.status AS intent_status FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i USING(idempotency_key) WHERE o.outbox_id=$1",
+      [cancelled.outboxId]
+    );
+    assert.deepEqual(cancelledPair.rows[0], { outbox_status: "CANCELLED", intent_status: "CANCELLED" });
 
     assert.deepEqual(await outbox.claimOutbox({ workerId: "worker-ack", limit: 10, leaseSeconds: 60 }), []);
     await assert.rejects(
@@ -266,8 +365,149 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       pool.query("DELETE FROM kratt_fabric_receiver_acknowledgements WHERE ack_id=$1", [acceptedAck.ack_id]),
       /KRATT_FABRIC_RECEIVER_ACK_APPEND_ONLY/
     );
+    await assert.rejects(
+      pool.query("TRUNCATE TABLE kratt_fabric_late_acknowledgements"),
+      /KRATT_FABRIC_ACK_LEDGER_TRUNCATE_FORBIDDEN/
+    );
+
+    // Audit insertion failure rolls back the ACK ledger and leaves the intent/outbox retryable.
+    const auditFault = await seed("audit-insert-fails");
+    const auditFaultLease = await begin(auditFault);
+    const auditFaultAck = makeAck(auditFault.event, auditFaultLease.delivery_attempt_sequence, "ACCEPTED", "audit-insert-fails");
+    const auditFaultResult = await process(
+      auditFault, auditFaultLease, auditFaultAck,
+      acknowledgementStoreFailingOn("INSERT INTO kratt_audit_events")
+    );
+    assert.equal(auditFaultResult.ok, false);
+    assert.equal(auditFaultResult.code, "ACK_STORE_UNAVAILABLE");
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [auditFault.outboxId]
+    )).rows[0].n, 0);
+    assert.equal((await pool.query(
+      "SELECT status FROM kratt_dispatch_intents WHERE task_id=$1", [auditFault.taskId]
+    )).rows[0].status, "INTENT_COMMITTED");
+    const auditFaultOutbox = await pool.query(
+      "SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1", [auditFault.outboxId]
+    );
+    assert.equal(auditFaultOutbox.rows[0].status, "LEASED");
+    assert.equal((await process(auditFault, auditFaultLease, auditFaultAck)).value.outbox_status, "DONE");
+
+    // If the outbox terminal update fails after the intent update, the same transaction
+    // must roll back the intent, ACK ledger and audit record together.
+    const outboxFault = await seed("outbox-terminal-update-fails");
+    const outboxFaultLease = await begin(outboxFault);
+    const outboxFaultAck = makeAck(outboxFault.event, outboxFaultLease.delivery_attempt_sequence, "ACCEPTED", "outbox-terminal-update-fails");
+    const outboxFaultResult = await process(
+      outboxFault, outboxFaultLease, outboxFaultAck,
+      acknowledgementStoreFailingOn("UPDATE kratt_dispatch_outbox SET status='DONE'")
+    );
+    assert.equal(outboxFaultResult.ok, false);
+    assert.equal(outboxFaultResult.code, "ACK_STORE_UNAVAILABLE");
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [outboxFault.outboxId]
+    )).rows[0].n, 0);
+    assert.equal((await pool.query(
+      "SELECT status FROM kratt_dispatch_intents WHERE task_id=$1", [outboxFault.taskId]
+    )).rows[0].status, "INTENT_COMMITTED");
+    assert.equal((await pool.query(
+      "SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1", [outboxFault.outboxId]
+    )).rows[0].status, "LEASED");
+    assert.equal((await process(outboxFault, outboxFaultLease, outboxFaultAck)).value.outbox_status, "DONE");
+
+    // The server commits the ACK but the client loses the COMMIT response. A fresh
+    // pool must discover the durable receipt without a second terminal transition.
+    const ambiguous = await seed("commit-response-lost");
+    const ambiguousLease = await begin(ambiguous);
+    const ambiguousAck = makeAck(ambiguous.event, ambiguousLease.delivery_attempt_sequence, "ACCEPTED", "commit-response-lost");
+    const ambiguousPool = {
+      query: (...args) => pool.query(...args),
+      async connect() {
+        const client = await pool.connect();
+        let commitResponseLost = false;
+        return {
+          query: async (sql, ...args) => {
+            const result = await client.query(sql, ...args);
+            if (sql === "COMMIT" && !commitResponseLost) {
+              commitResponseLost = true;
+              throw new Error("simulated client disconnect after server commit");
+            }
+            return result;
+          },
+          release: () => client.release()
+        };
+      }
+    };
+    const ambiguousStore = createPostgresFabricAcknowledgementStore(ambiguousPool, {
+      clock: () => new Date(clock),
+      lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
+        trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
+    });
+    const lostReply = await process(ambiguous, ambiguousLease, ambiguousAck, ambiguousStore);
+    assert.equal(lostReply.ok, false);
+    assert.equal(lostReply.code, "ACK_STORE_UNAVAILABLE");
+    const recoveredReply = await process(ambiguous, ambiguousLease, ambiguousAck, acknowledgementsB);
+    assert.equal(recoveredReply.ok, true);
+    assert.equal(recoveredReply.value.duplicate, true);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [ambiguous.outboxId]
+    )).rows[0].n, 1);
+
+    // Once the exact trusted key is locked FOR SHARE, concurrent revocation must wait
+    // until the ACK ledger and terminal intent/outbox transition commit.
+    const keyRace = await seed("key-revocation-race");
+    const keyRaceLease = await begin(keyRace);
+    const keyRaceAck = makeAck(keyRace.event, keyRaceLease.delivery_attempt_sequence, "ACCEPTED", "key-revocation-race");
+    let releaseKeyLock;
+    let signalKeyLock;
+    const keyLockHeld = new Promise(resolve => { signalKeyLock = resolve; });
+    const keyLockGate = new Promise(resolve => { releaseKeyLock = resolve; });
+    const lockingStore = createPostgresFabricAcknowledgementStore(pool, {
+      clock: () => new Date(clock),
+      lockTrustedReceiverKey: async (client, nodeId, keyId, ack, nowMs) => {
+        const locked = await trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs);
+        signalKeyLock();
+        await keyLockGate;
+        return locked;
+      }
+    });
+    const keyRacePending = process(keyRace, keyRaceLease, keyRaceAck, lockingStore);
+    await keyLockHeld;
+    let revocationFinished = false;
+    const revocationPending = trust.transitionKey({
+      nodeId: "steel-node", keyId: receiverIdentity.key_id, nextStatus: "REVOKED",
+      actorId: "operator-01", reason: "serialize receiver key revocation after ACK commit"
+    }).then(result => { revocationFinished = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(revocationFinished, false, "key revocation must wait for the ACK FOR SHARE lock");
+    releaseKeyLock();
+    const keyRaceResult = await keyRacePending;
+    assert.equal(keyRaceResult.ok, true, JSON.stringify(keyRaceResult));
+    assert.equal(keyRaceResult.value.outbox_status, "DONE");
+    assert.equal((await revocationPending).ok, true);
+
+    const revoked = await seed("receiver-key-revoked");
+    const revokedLease = await begin(revoked);
+    const revokedAck = makeAck(revoked.event, revokedLease.delivery_attempt_sequence, "ACCEPTED", "revoked-key");
+    const revokedResult = await process(revoked, revokedLease, revokedAck, acknowledgementsB);
+    assert.equal(revokedResult.ok, false);
+    assert.equal(revokedResult.code, "ACK_KEY_UNTRUSTED");
+
+    const counters = Object.fromEntries(metricCalls.filter(call => call[0] === "counter")
+      .map(([, name, amount]) => [name, (metricCalls.filter(x => x[0] === "counter" && x[1] === name)
+        .reduce((total, x) => total + x[2], 0))]));
+    assert.ok((counters.fabric_ack_verified_total ?? 0) >= 5, JSON.stringify(counters));
+    assert.ok((counters.fabric_ack_replayed_total ?? 0) >= 2, JSON.stringify(counters));
+    assert.ok((counters.fabric_ack_rejected_total ?? 0) >= 1, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_accepted_total ?? 0) >= 2, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_duplicate_total ?? 0) >= 1, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_rejected_total ?? 0) >= 1, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_unknown_total ?? 0) >= 1, JSON.stringify(counters));
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [revoked.outboxId]
+    )).rows[0].n, 0);
   } finally {
     await pool?.end();
+    await poolB?.end();
     await admin.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => undefined);
     await admin.end();
   }

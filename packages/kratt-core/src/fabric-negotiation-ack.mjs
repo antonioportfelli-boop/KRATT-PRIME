@@ -426,22 +426,25 @@ export async function authenticateFabricReceiverAcknowledgement(input, {
 }
 
 export async function processFabricReceiverAcknowledgement({
-  acknowledgement, expectedReceiverNode, expectedPolicyRevision, resolveTrustedKey, acknowledgementStore,
-  outboxId, leaseToken, now = () => Date.now()
+  acknowledgement, expectedReceiverNode, acknowledgementStore, outboxId, leaseToken
 } = {}) {
   if (!acknowledgementStore || typeof acknowledgementStore.applyReceiverAcknowledgement !== "function")
     return fail("ACK_STORE_REQUIRED");
   if (!validId(outboxId) || typeof leaseToken !== "string" || leaseToken.length < 16 || leaseToken.length > 128)
     return fail("ACK_DELIVERY_CONTEXT_INVALID");
-  const authenticated = await authenticateFabricReceiverAcknowledgement(acknowledgement, {
-    expectedReceiverNode, expectedPolicyRevision, resolveTrustedKey, now
-  });
-  if (!authenticated.ok) return authenticated;
+
+  // Structural snapshotting happens before the storage boundary. Signature, trust-key
+  // state and the expected policy revision are checked by the PostgreSQL store against
+  // the persisted outbound event while holding the exact receiver key FOR SHARE.
+  const parsed = validateFabricReceiverAcknowledgement(acknowledgement);
+  if (!parsed.ok) return parsed;
+  if (expectedReceiverNode !== undefined &&
+      (!validId(expectedReceiverNode) || parsed.value.receiver_node !== expectedReceiverNode))
+    return fail("ACK_WRONG_RECEIVER");
+
   try {
     const stored = await acknowledgementStore.applyReceiverAcknowledgement({
-      outboxId, leaseToken, acknowledgement: authenticated.value.acknowledgement,
-      authenticatedReceiver: authenticated.value.authenticatedReceiver,
-      receivedAt: authenticated.value.receivedAt
+      outboxId, leaseToken, acknowledgement: parsed.value
     });
     return stored?.ok === true ? ok(stored) : fail(stored?.reason ?? "ACK_STORE_REJECTED");
   } catch {

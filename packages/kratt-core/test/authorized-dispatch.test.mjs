@@ -30,7 +30,7 @@ const allowed = {
   evaluated_at: at,
 };
 
-function setup({ decision = allowed, commit = true, appendDecision = true, appendOutcome = true, dispatch } = {}) {
+function setup({ decision = allowed, commit = true, beginDelivery = { ok: true, deliveryToken: "d".repeat(64) }, appendDecision = true, appendOutcome = true, dispatch } = {}) {
   const events = [];
   const claimed = new Set();
   const calls = [];
@@ -46,8 +46,12 @@ function setup({ decision = allowed, commit = true, appendDecision = true, appen
       events.push(["intent", record]);
       return true;
     },
-    async appendOutcome({ idempotencyKey, record }) {
-      calls.push(["outcome", idempotencyKey]);
+    async beginAuthorizedDelivery({ idempotencyKey, taskId }) {
+      calls.push(["begin", taskId, idempotencyKey]);
+      return beginDelivery;
+    },
+    async appendOutcome({ idempotencyKey, deliveryToken, record }) {
+      calls.push(["outcome", idempotencyKey, deliveryToken]);
       events.push(["outcome", record]);
       return appendOutcome;
     },
@@ -74,11 +78,12 @@ test("writes a durable intent before dispatch and a durable outcome after it", a
   const { runtime, events, calls } = setup();
   const result = await runtime.execute({ principal: "session", task: task() });
   assert.equal(result.status, "COMPLETED");
-  assert.deepEqual(calls.map(x => x[0]), ["commit", "dispatch", "outcome"]);
+  assert.deepEqual(calls.map(x => x[0]), ["commit", "begin", "dispatch", "outcome"]);
   assert.deepEqual(events.map(x => x[0]), ["intent", "outcome"]);
   assert.equal(events[0][1].event_type, "dispatch.intent_committed");
   assert.equal(events[1][1].event_type, "dispatch.completed");
-  assert.equal(calls[0][2], calls[1][1]);
+  assert.equal(calls[0][2], calls[1][2]);
+  assert.equal(calls[3][2], "d".repeat(64));
 });
 
 test("denies a task whose actor differs from the authenticated principal", async () => {
@@ -96,7 +101,7 @@ test("never dispatches when authentication fails", async () => {
     authenticatePrincipal: async () => { throw new Error("invalid session"); },
     loadTrustedContext: async () => ({}),
     loadEvidence: async () => [],
-    commandStore: { appendDecision: async () => true, commitAuthorizedIntent: async () => true, appendOutcome: async () => true },
+    commandStore: { appendDecision: async () => true, commitAuthorizedIntent: async () => true, beginAuthorizedDelivery: async () => ({ ok: true, deliveryToken: "d".repeat(64) }), appendOutcome: async () => true },
     providerAdapters: { github: { dispatch: async () => { throw new Error("must not run"); } } },
     now: () => Date.parse(at),
   });
@@ -122,6 +127,22 @@ test("does not dispatch when durable intent commit fails", async () => {
   assert.deepEqual(events, []);
 });
 
+test("never calls a provider when durable delivery start is denied after intent commit", async () => {
+  const { runtime, calls } = setup({ beginDelivery: { ok: false, reason: "TASK_CANCELLED" } });
+  const result = await runtime.execute({ principal: "session", task: task() });
+  assert.equal(result.status, "BLOCKED");
+  assert.equal(result.reason, "DELIVERY_START_NOT_COMMITTED_OR_CANCELLED");
+  assert.deepEqual(calls.map(x => x[0]), ["commit", "begin"]);
+});
+
+test("never calls a provider when durable delivery start cannot be persisted", async () => {
+  const { runtime, calls } = setup({ beginDelivery: new Error("database unavailable") });
+  const result = await runtime.execute({ principal: "session", task: task() });
+  assert.equal(result.status, "BLOCKED");
+  assert.equal(result.reason, "DELIVERY_START_NOT_COMMITTED_OR_CANCELLED");
+  assert.deepEqual(calls.map(x => x[0]), ["commit", "begin"]);
+});
+
 test("prevents duplicate intent dispatch through the durable idempotency claim", async () => {
   const { runtime, calls } = setup();
   const first = await runtime.execute({ principal: "session", task: task() });
@@ -138,7 +159,7 @@ test("does not dispatch if trusted context or evidence cannot be loaded", async 
     authenticatePrincipal: async () => ({ id: "operator-01", active: true }),
     loadTrustedContext: async () => { throw new Error("policy store offline"); },
     loadEvidence: async () => [],
-    commandStore: { appendDecision: async record => { events.push(record); return true; }, commitAuthorizedIntent: async () => true, appendOutcome: async () => true },
+    commandStore: { appendDecision: async record => { events.push(record); return true; }, commitAuthorizedIntent: async () => true, beginAuthorizedDelivery: async () => ({ ok: true, deliveryToken: "d".repeat(64) }), appendOutcome: async () => true },
     providerAdapters: { github: { dispatch: async () => { calls.push("dispatch"); return { status: "completed" }; } } },
     now: () => Date.parse(at),
   });
@@ -155,7 +176,7 @@ test("fails closed when the provider adapter is missing", async () => {
     authenticatePrincipal: async () => ({ id: "operator-01", active: true }),
     loadTrustedContext: async () => ({}),
     loadEvidence: async () => [],
-    commandStore: { appendDecision: async record => { events.push(record); return true; }, commitAuthorizedIntent: async () => true, appendOutcome: async () => true },
+    commandStore: { appendDecision: async record => { events.push(record); return true; }, commitAuthorizedIntent: async () => true, beginAuthorizedDelivery: async () => ({ ok: true, deliveryToken: "d".repeat(64) }), appendOutcome: async () => true },
     providerAdapters: {},
     now: () => Date.parse(at),
   });
@@ -164,11 +185,14 @@ test("fails closed when the provider adapter is missing", async () => {
   assert.equal(events[0].event_type, "authorization.denied");
 });
 
-test("reports provider failure and records its outcome", async () => {
+test("provider timeout after delivery start becomes reconciliation, never a false failure", async () => {
   const { runtime, events } = setup({ dispatch: async () => { throw new Error("provider unavailable"); } });
   const result = await runtime.execute({ principal: "session", task: task() });
-  assert.equal(result.status, "FAILED");
-  assert.equal(events.at(-1)[1].event_type, "dispatch.failed");
+  assert.equal(result.status, "RECONCILE_REQUIRED");
+  assert.equal(result.reconciliation_required, true);
+  assert.equal(result.dispatched, true);
+  assert.equal(events.at(-1)[1].event_type, "dispatch.reconcile_required");
+  assert.equal(events.at(-1)[1].result.status, "unknown");
 });
 
 test("does not claim completion when outcome audit persistence fails", async () => {
@@ -178,11 +202,13 @@ test("does not claim completion when outcome audit persistence fails", async () 
   assert.equal(result.dispatched, true);
 });
 
-test("rejects malformed provider results before treating them as completed", async () => {
+test("unverifiable provider result after delivery start becomes reconciliation, not a failure claim", async () => {
   const { runtime, events } = setup({ dispatch: async () => ({ status: "completed", access_token: "secret" }) });
   const result = await runtime.execute({ principal: "session", task: task() });
-  assert.equal(result.status, "FAILED");
-  assert.equal(events.at(-1)[1].result.reason, "PROVIDER_DISPATCH_FAILED_OR_INVALID_RESULT");
+  assert.equal(result.status, "RECONCILE_REQUIRED");
+  assert.equal(result.reconciliation_required, true);
+  assert.equal(events.at(-1)[1].event_type, "dispatch.reconcile_required");
+  assert.equal(events.at(-1)[1].result.status, "unknown");
 });
 
 test("requires durable storage and trusted authentication dependencies", () => {
@@ -284,7 +310,8 @@ test("composes real Ed25519 approval verification, durable nonce consumption and
         audit.push(record);
         return true;
       },
-      async appendOutcome({ record }) { audit.push(record); return true; },
+      async beginAuthorizedDelivery() { audit.push({ event_type: "dispatch.delivery_started" }); return { ok: true, deliveryToken: "d".repeat(64) }; },
+      async appendOutcome({ record, deliveryToken }) { assert.equal(deliveryToken, "d".repeat(64)); audit.push(record); return true; },
     },
     providerAdapters: {
       github: {

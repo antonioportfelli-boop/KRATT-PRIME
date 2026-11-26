@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
+import { incrementFabricMetric } from "./fabric-metrics.mjs";
 import { types as utilTypes } from "node:util";
 
 export const FABRIC_WIRE_PROTOCOL = "3XT-FABRIC/1";
@@ -305,6 +306,7 @@ export function authorizeSteelFabricEventV1(input, authenticatedKey, policy) {
  * The handler and all local business writes must use the supplied transaction client.
  */
 export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
+  const metrics = deps.metrics ?? null;
   if (!pool || typeof pool.connect !== "function") return fail("PERSISTENCE_UNAVAILABLE");
   if (typeof deps.resolveTrustedKey !== "function" || typeof deps.resolveNodePolicy !== "function" || typeof deps.handler !== "function") {
     return fail("INGRESS_DEPENDENCIES_REQUIRED");
@@ -482,6 +484,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
           duplicate.missing ? "EVENT_RECEIPT_MISSING" : "EVENT_RECEIPT_POLICY_REVISION_CHANGED");
       }
       await client.query("COMMIT"); transactionOpen = false;
+      incrementFabricMetric(metrics, "fabric_receiver_duplicate_total");
       return ok(duplicate.value);
     }
     // A committed event may need its saved ACK replayed after its original TTL expires.
@@ -523,6 +526,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
           duplicate.missing ? "EVENT_RECEIPT_MISSING" : "EVENT_RECEIPT_POLICY_REVISION_CHANGED");
       }
       await client.query("COMMIT"); transactionOpen = false;
+      incrementFabricMetric(metrics, "fabric_receiver_duplicate_total");
       return ok(duplicate.value);
     }
     const lastSequence = Number(headResult.rows[0].last_sequence);
@@ -603,6 +607,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       phase = "COMMIT";
       await client.query("COMMIT");
       transactionOpen = false;
+      incrementFabricMetric(metrics, "fabric_receiver_rejected_total");
       return ok({ duplicate: false, sequence_gap: sequenceGap, outcome: "REJECTED",
         result: rejectedResult, acknowledgement });
     }
@@ -630,6 +635,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     phase = "COMMIT";
     await client.query("COMMIT");
     transactionOpen = false;
+    incrementFabricMetric(metrics, "fabric_receiver_accepted_total");
     return ok({ duplicate: false, sequence_gap: sequenceGap, outcome: "ACCEPTED",
       result: storedResult, acknowledgement });
   } catch (error) {

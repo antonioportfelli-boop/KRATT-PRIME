@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { incrementFabricMetric, setFabricGauge } from "./fabric-metrics.mjs";
 const SCHEMA="kratt-audit/v1", ID=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/, HEX=/^[a-f0-9]{64}$/, ZERO="0".repeat(64);
 const digest=v=>createHash("sha256").update(v,"utf8").digest("hex");
 const validId=v=>typeof v==="string"&&ID.test(v);
@@ -22,9 +23,23 @@ async function tx(pool,work){
  }catch(e){try{await c.query("ROLLBACK");}catch{}throw e;}
  finally{c.release();}
 }
-export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeReconciliation}={}){
+export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeReconciliation,metrics=null}={}){
  if(!pool||typeof pool.connect!=="function"||typeof pool.query!=="function")throw new TypeError("POSTGRES_POOL_REQUIRED");
  if(typeof clock!=="function")throw new TypeError("TRUSTED_CLOCK_REQUIRED");
+ async function refreshOutboxGauges(){
+  if(!metrics)return;
+  try{
+   const q=await pool.query("SELECT count(*) FILTER (WHERE status='PENDING')::bigint AS pending, "+
+    "count(*) FILTER (WHERE status='RECONCILE')::bigint AS reconcile FROM kratt_dispatch_outbox");
+   setFabricGauge(metrics,"fabric_outbox_pending",Number(q.rows[0]?.pending??0));
+   setFabricGauge(metrics,"fabric_outbox_reconcile_required",Number(q.rows[0]?.reconcile??0));
+  }catch{}
+ }
+ async function stateTx(work){
+  const result=await tx(pool,work);
+  await refreshOutboxGauges();
+  return result;
+ }
  function nowIso(){
   const v=clock(),d=v instanceof Date?new Date(v.getTime()):new Date(v);
   if(!Number.isFinite(d.getTime()))throw new TypeError("TRUSTED_CLOCK_INVALID");
@@ -39,7 +54,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
   await c.query("UPDATE kratt_audit_head SET sequence=$1,hash=$2 WHERE singleton=TRUE",[sequence,hash]);
   return{sequence,hash};
  }
- async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload,provider,fabricEvent}={}){
+ async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload,provider,fabricEvent,ackPolicyRevision}={}){
   const at=nowIso();
   if(!task||!validId(task.task_id)||!principal||!validId(principal.id)||task.actor!==principal.id||
    !validId(approval?.key_id)||!validId(approval?.nonce)||!validId(approval?.approval_id)||!validTime(approval?.expires_at)||
@@ -47,7 +62,8 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    return{ok:false,reason:"RESERVATION_INPUT_INVALID"};
   const selectedProvider=provider??task.constraints?.provider??"unknown";
   if(!validId(selectedProvider))return{ok:false,reason:"RESERVATION_PROVIDER_INVALID"};
-  if(fabricEvent&&(selectedProvider!=="fabric"||!validId(fabricEvent.event_id)||!validId(fabricEvent.source_node)||
+  if(selectedProvider==="fabric"&&(!fabricEvent||!validId(ackPolicyRevision)))return{ok:false,reason:"FABRIC_ACK_POLICY_REVISION_REQUIRED"};
+  if(fabricEvent&&(selectedProvider!=="fabric"||!validId(ackPolicyRevision)||!validId(fabricEvent.event_id)||!validId(fabricEvent.source_node)||
    !validId(fabricEvent.destination_node)||!validId(fabricEvent.key_id)||!HEX.test(fabricEvent.content_digest??"")||
    !Number.isSafeInteger(fabricEvent.sequence)||fabricEvent.sequence<1))return{ok:false,reason:"FABRIC_EVENT_INVALID"};
   const intentId="intent:"+digest(idempotencyKey),outboxId="outbox:"+digest(idempotencyKey);
@@ -55,7 +71,8 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    created_at:at,actor_id:principal.id,task_id:task.task_id,provider:selectedProvider,operation:task.action,
    idempotency_key:idempotencyKey,approval_key_id:approval.key_id,approval_id:approval.approval_id,request_digest:approval.request_digest,
    ...(fabricEvent?{fabric_event_id:fabricEvent.event_id,fabric_source_node:fabricEvent.source_node,fabric_destination_node:fabricEvent.destination_node,
-    fabric_sequence:fabricEvent.sequence,fabric_content_digest:fabricEvent.content_digest,fabric_key_id:fabricEvent.key_id}:{})};
+    fabric_sequence:fabricEvent.sequence,fabric_content_digest:fabricEvent.content_digest,fabric_key_id:fabricEvent.key_id,
+    fabric_ack_policy_revision:ackPolicyRevision}:{})};
   try{
    return await tx(pool,async c=>{
     await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[task.task_id]);
@@ -63,23 +80,23 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
      [approval.key_id,approval.nonce,approval.approval_id,approval.expires_at,at]);
     if(nonce.rowCount!==1)return{ok:false,reason:"APPROVAL_REPLAYED"};
     const cancelled=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE",[task.task_id]);
-    if(cancelled.rowCount)return{ok:false,reason:"TASK_CANCELLED"};
+    if(cancelled.rowCount){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"TASK_CANCELLED"};}
     const intent=await c.query("INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,actor_id,provider,operation,status,created_at) VALUES($1,$2,$3,$4,$5,'INTENT_COMMITTED',$6) ON CONFLICT(idempotency_key) DO NOTHING RETURNING idempotency_key",
      [idempotencyKey,task.task_id,principal.id,event.provider,task.action,at]);
-    if(intent.rowCount!==1)return{ok:false,reason:"DUPLICATE_IDEMPOTENCY_KEY"};
+    if(intent.rowCount!==1){incrementFabricMetric(metrics,"fabric_idempotency_conflicts");return{ok:false,reason:"DUPLICATE_IDEMPOTENCY_KEY"};}
     await c.query("INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) VALUES($1,$2,$3,$4::jsonb,'PENDING',$5)",
      [outboxId,idempotencyKey,event.provider,JSON.stringify(providerPayload??(fabricEvent?{fabric_envelope:fabricEvent}:{task})),at]);
     if(fabricEvent){
-     await c.query("INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)",
-      [fabricEvent.event_id,idempotencyKey,fabricEvent.source_node,fabricEvent.destination_node,fabricEvent.sequence,fabricEvent.key_id,fabricEvent.content_digest,fabricEvent.issued_at,fabricEvent.expires_at,JSON.stringify(fabricEvent)]);
+     await c.query("INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json,ack_policy_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)",
+      [fabricEvent.event_id,idempotencyKey,fabricEvent.source_node,fabricEvent.destination_node,fabricEvent.sequence,fabricEvent.key_id,fabricEvent.content_digest,fabricEvent.issued_at,fabricEvent.expires_at,JSON.stringify(fabricEvent),ackPolicyRevision]);
     }
     const audit=await appendAudit(c,event);return{ok:true,intent_id:intentId,outbox_id:outboxId,audit_sequence:audit.sequence};
    });
-  }catch(e){if(e?.code==="23505")return{ok:false,reason:"DUPLICATE_OR_REPLAYED"};throw e;}
+  }catch(e){if(e?.code==="23505"){incrementFabricMetric(metrics,"fabric_idempotency_conflicts");return{ok:false,reason:"DUPLICATE_OR_REPLAYED"};}throw e;}
  }
  async function reserveFabricSequence({sourceNode,idempotencyKey,requestDigest}={}){
   if(!validId(sourceNode)||!validIdempotencyKey(idempotencyKey)||!HEX.test(requestDigest??""))return{ok:false,reason:"FABRIC_SEQUENCE_INPUT_INVALID"};
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",["fabric-outbound:"+sourceNode]);
    const existing=await c.query("SELECT source_sequence,request_digest FROM kratt_fabric_outbound_sequences WHERE source_node=$1 AND idempotency_key=$2 FOR UPDATE",[sourceNode,idempotencyKey]);
    if(existing.rowCount===1){
@@ -98,23 +115,26 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
  }
  async function findOutboxByIdempotencyKey(idempotencyKey){
   if(!validIdempotencyKey(idempotencyKey))return{ok:false,reason:"IDEMPOTENCY_KEY_INVALID"};
-  const q=await pool.query("SELECT o.provider,o.status,o.payload,o.attempts,o.available_at,o.last_error_code,o.delivery_started_at,o.manual_reconciliation_count,e.event_json,e.content_digest "+
-   "FROM kratt_dispatch_outbox o LEFT JOIN kratt_fabric_outbound_events e ON e.idempotency_key=o.idempotency_key WHERE o.idempotency_key=$1",[idempotencyKey]);
+  const q=await pool.query("SELECT o.provider,o.status,o.payload,o.attempts,o.available_at,o.last_error_code,o.delivery_started_at,o.manual_reconciliation_count,e.event_json,e.content_digest,e.ack_policy_revision,s.request_digest "+
+   "FROM kratt_dispatch_outbox o LEFT JOIN kratt_fabric_outbound_events e ON e.idempotency_key=o.idempotency_key "+
+   "LEFT JOIN kratt_fabric_outbound_sequences s ON s.source_node=e.source_node AND s.idempotency_key=o.idempotency_key WHERE o.idempotency_key=$1",[idempotencyKey]);
   if(q.rowCount!==1)return{ok:true,found:false};
   const r=q.rows[0];
   if(r.provider!=="fabric"||!r.event_json)return{ok:false,reason:"IDEMPOTENCY_KEY_USED_BY_OTHER_PROVIDER"};
   return{ok:true,found:true,status:r.status,attempts:Number(r.attempts),available_at:r.available_at,event:r.event_json,
    content_digest:r.content_digest,last_error_code:r.last_error_code,delivery_started_at:r.delivery_started_at,
+   ack_policy_revision:r.ack_policy_revision,request_digest:r.request_digest,
    reconciliation_count:Number(r.manual_reconciliation_count)};
  }
  async function claimOutbox({workerId,limit=10,leaseSeconds=60}={}){
   if(!validId(workerId)||!Number.isInteger(limit)||limit<1||limit>100||!Number.isInteger(leaseSeconds)||leaseSeconds<5||leaseSeconds>900)
    throw new TypeError("OUTBOX_CLAIM_OPTIONS_INVALID");
   const token=randomUUID(),at=nowIso(),until=new Date(Date.parse(at)+leaseSeconds*1000).toISOString();
-  return tx(pool,async c=>{
-   await c.query("UPDATE kratt_dispatch_outbox SET status='RECONCILE',lease_owner=NULL,lease_token=NULL,lease_until=NULL,"+
+  return stateTx(async c=>{
+   const expired=await c.query("UPDATE kratt_dispatch_outbox SET status='RECONCILE',lease_owner=NULL,lease_token=NULL,lease_until=NULL,"+
     "last_error_code='DELIVERY_LEASE_EXPIRED_AFTER_START',updated_at=$1 "+
-    "WHERE status='LEASED' AND lease_until<=$1 AND delivery_started_at IS NOT NULL",[at]);
+    "WHERE status='LEASED' AND lease_until<=$1 AND delivery_started_at IS NOT NULL RETURNING outbox_id",[at]);
+   if(expired.rowCount>0)incrementFabricMetric(metrics,"fabric_delivery_lease_expired",expired.rowCount);
    const attemptColumn = await c.query(
     "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() " +
     "AND table_name='kratt_dispatch_outbox' AND column_name='delivery_attempt_sequence') AS available"
@@ -138,34 +158,38 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     "attempts=o.attempts+1"+attemptSequenceUpdate+",delivery_started_at=NULL,delivery_lease_token=NULL,updated_at=$1 "+
     "FROM picked, kratt_dispatch_intents i "+
     "WHERE o.outbox_id=picked.outbox_id AND i.idempotency_key=o.idempotency_key "+
-    "RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token,o.lease_until,i.task_id,"+attemptSequenceReturn,
+    "RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_owner,o.lease_token,o.lease_until,i.task_id,"+attemptSequenceReturn,
     [at,limit,workerId,token,until]);
    return r.rows;
   });
  }
- async function beginOutboxDelivery({outboxId,leaseToken}={}){
-  if(!validId(outboxId)||typeof leaseToken!=="string"||leaseToken.length<16||leaseToken.length>128)
+ async function beginOutboxDelivery({outboxId,leaseToken,workerId}={}){
+  if(!validId(outboxId)||!validId(workerId)||typeof leaseToken!=="string"||leaseToken.length<16||leaseToken.length>128)
    return{ok:false,reason:"OUTBOX_DELIVERY_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    const identity=await c.query("SELECT i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key WHERE o.outbox_id=$1",[outboxId]);
    if(identity.rowCount!==1)return{ok:false,reason:"OUTBOX_NOT_FOUND"};
    const taskId=identity.rows[0].task_id;
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[taskId]);
-   const q=await c.query("SELECT o.status,o.lease_token,o.lease_until,o.delivery_started_at,o.delivery_lease_token,"+
+   const q=await c.query("SELECT o.status,o.lease_owner,o.lease_token,o.lease_until,o.delivery_started_at,o.delivery_lease_token,"+
     "i.task_id,i.status AS intent_status FROM kratt_dispatch_outbox o "+
     "JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
     "WHERE o.outbox_id=$1 FOR UPDATE OF o,i",[outboxId]);
    if(q.rowCount!==1)return{ok:false,reason:"OUTBOX_NOT_FOUND"};
    const r=q.rows[0];
    if(r.task_id!==taskId)return{ok:false,reason:"TASK_BINDING_CONFLICT"};
-   if(r.status!=="LEASED"||r.lease_token!==leaseToken||!r.lease_until||Date.parse(new Date(r.lease_until).toISOString())<=Date.parse(at))
+   if(r.status!=="LEASED"||r.lease_token!==leaseToken||!r.lease_until||Date.parse(new Date(r.lease_until).toISOString())<=Date.parse(at)){
+    incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");
     return{ok:false,reason:"LEASE_LOST"};
-   if(r.intent_status!=="INTENT_COMMITTED")return{ok:false,reason:"INTENT_TERMINAL"};
+   }
+   if(r.lease_owner!==workerId){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"LEASE_OWNER_MISMATCH"};}
+   if(r.intent_status!=="INTENT_COMMITTED"){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"INTENT_TERMINAL"};}
    const cancelled=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1",[taskId]);
    if(cancelled.rowCount)return{ok:false,reason:"TASK_CANCELLED"};
    if(r.delivery_started_at){
     if(r.delivery_lease_token===leaseToken)return{ok:true,duplicate:true,task_id:taskId,delivery_started_at:r.delivery_started_at};
+    incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");
     return{ok:false,reason:"DELIVERY_RECONCILIATION_REQUIRED"};
    }
    await c.query("UPDATE kratt_dispatch_outbox SET delivery_started_at=$2,delivery_lease_token=$3,updated_at=$2 WHERE outbox_id=$1",
@@ -173,21 +197,21 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    return{ok:true,duplicate:false,task_id:taskId,delivery_started_at:at};
   });
  }
- async function finishOutbox({outboxId,leaseToken,outcome,actorId,taskId}={}){
-  if(!validId(outboxId)||typeof leaseToken!=="string"||!validId(actorId)||!validId(taskId)||
+ async function finishOutbox({outboxId,leaseToken,workerId,outcome,actorId,taskId}={}){
+  if(!validId(outboxId)||!validId(workerId)||typeof leaseToken!=="string"||!validId(actorId)||!validId(taskId)||
    !["COMPLETED","FAILED"].includes(outcome?.status))return{ok:false,reason:"OUTBOX_FINISH_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    const q=await c.query("SELECT o.idempotency_key,o.provider,o.attempts,o.delivery_started_at,o.delivery_lease_token,"+
     "i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
-    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 FOR UPDATE OF o,i",[outboxId,leaseToken]);
-   if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};
+    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 AND o.lease_owner=$3 AND o.lease_until>$4 FOR UPDATE OF o,i",[outboxId,leaseToken,workerId,at]);
+   if(q.rowCount!==1){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"LEASE_LOST"};}
    const item=q.rows[0];
    if(item.task_id!==taskId)return{ok:false,reason:"TASK_BINDING_MISMATCH"};
    if(!item.delivery_started_at||item.delivery_lease_token!==leaseToken)return{ok:false,reason:"DELIVERY_NOT_STARTED"};
    const event={schema_version:SCHEMA,event_id:"outcome:"+digest(item.idempotency_key),
     event_type:outcome.status==="COMPLETED"?"dispatch.completed":"dispatch.failed",created_at:at,
-    actor_id:actorId,task_id:item.task_id,provider:item.provider,idempotency_key:item.idempotency_key,
+    actor_id:actorId,worker_id:workerId,task_id:item.task_id,provider:item.provider,idempotency_key:item.idempotency_key,
     result:{status:outcome.status.toLowerCase()}};
    await appendAudit(c,event);
    const iu=await c.query("UPDATE kratt_dispatch_intents SET status=$1,updated_at=$2 WHERE idempotency_key=$3 AND status='INTENT_COMMITTED' RETURNING idempotency_key",
@@ -199,23 +223,23 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    return{ok:true};
   });
  }
- async function retryOutbox({outboxId,leaseToken,errorCode,maxAttempts=8,retrySafety="UNKNOWN"}={}){
-  if(!validId(outboxId)||typeof leaseToken!=="string"||!/^[A-Z0-9_:-]{1,96}$/.test(errorCode??"")||
+ async function retryOutbox({outboxId,leaseToken,workerId,errorCode,maxAttempts=8,retrySafety="UNKNOWN"}={}){
+  if(!validId(outboxId)||!validId(workerId)||typeof leaseToken!=="string"||!/^[A-Z0-9_:-]{1,96}$/.test(errorCode??"")||
    !Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>32||!["SAFE_TO_RETRY","UNKNOWN"].includes(retrySafety))
    return{ok:false,reason:"OUTBOX_RETRY_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    const q=await c.query("SELECT o.attempts,o.delivery_started_at,o.delivery_lease_token,o.idempotency_key,o.provider,"+
     "i.task_id,o.lease_owner FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
-    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 FOR UPDATE OF o,i",[outboxId,leaseToken]);
-   if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};
+    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 AND o.lease_owner=$3 AND o.lease_until>$4 FOR UPDATE OF o,i",[outboxId,leaseToken,workerId,at]);
+   if(q.rowCount!==1){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"LEASE_LOST"};}
    const r=q.rows[0],attempts=Number(r.attempts);
    const canRetry=retrySafety==="SAFE_TO_RETRY"||!r.delivery_started_at;
    if(!canRetry){
     await c.query("UPDATE kratt_dispatch_outbox SET status='RECONCILE',lease_owner=NULL,lease_token=NULL,lease_until=NULL,"+
      "last_error_code=$2,updated_at=$3 WHERE outbox_id=$1",[outboxId,errorCode,at]);
     await appendAudit(c,{schema_version:SCHEMA,event_id:"reconcile-required:"+digest(r.idempotency_key+":"+String(attempts)),
-     event_type:"dispatch.reconcile_required",created_at:at,actor_id:r.lease_owner,task_id:r.task_id,
+     event_type:"dispatch.reconcile_required",created_at:at,actor_id:r.lease_owner,worker_id:r.lease_owner,task_id:r.task_id,
      provider:r.provider,idempotency_key:r.idempotency_key,attempts,error_code:errorCode});
     return{ok:true,status:"RECONCILE",terminal:false,reconciliation_required:true,attempts,retry_at:null};
    }
@@ -235,7 +259,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
  async function cancelTaskWithReason({taskId,actorId}={}){
   if(!validId(taskId)||!validId(actorId))return{ok:false,reason:"CANCEL_INPUT_INVALID"};
   const at=nowIso();
-  return tx(pool,async c=>{
+  const result=await stateTx(async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[taskId]);
    const existing=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE",[taskId]);
    if(existing.rowCount)return{ok:true,duplicate:true,task_id:taskId,cancelled_outbox_count:0};
@@ -259,6 +283,8 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     created_at:at,actor_id:actorId,task_id:taskId,result:{cancelled_outbox_count:cancelled.rowCount}});
    return{ok:true,duplicate:false,task_id:taskId,cancelled_outbox_count:cancelled.rowCount};
   });
+  if(result?.ok===true && result.duplicate!==true)incrementFabricMetric(metrics,"fabric_task_cancelled");
+  return result;
  }
  async function cancelTask(input={}){const r=await cancelTaskWithReason(input);return r.ok===true;}
  async function reconcileOutbox({outboxId,actorId,decision,evidenceDigest,reason}={}){
@@ -274,7 +300,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
   const identity=await pool.query("SELECT i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key WHERE o.outbox_id=$1",[outboxId]);
   if(identity.rowCount!==1)return{ok:false,reason:"OUTBOX_NOT_FOUND"};
   const taskId=identity.rows[0].task_id;
-  return tx(pool,async c=>{
+  return stateTx(async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[taskId]);
    const q=await c.query("SELECT o.status,o.idempotency_key,o.attempts,o.manual_reconciliation_count,i.task_id,i.status AS intent_status "+
     "FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
