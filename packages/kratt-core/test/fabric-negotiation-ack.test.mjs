@@ -307,7 +307,7 @@ test("receiver ACK rejects digest tampering, wrong receiver, stale policy and un
 });
 
 test("receiver ACK builder signs ACCEPTED/DUPLICATE outcomes and verifies the active public key", async () => {
-  for (const resultCode of ["ACCEPTED", "DUPLICATE"]) {
+  for (const resultCode of ["ACCEPTED", "DUPLICATE", "REJECTED"]) {
     const built = await createFabricReceiverAcknowledgement({
       event: { event_id: "event-builder", source_node: "kratt-node", destination_node: "steel-node", sequence: 42, content_digest: HASH_B },
       receiverNode: "steel-node", policyRevision: "receiver-policy-7", deliveryAttempt: resultCode === "ACCEPTED" ? 1 : 2,
