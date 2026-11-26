@@ -37,10 +37,12 @@ const validHash = value => typeof value === "string" && SHA256.test(value);
 function exactKeys(value, expected) {
   if (!isRecord(value)) return false;
   const keys = Reflect.ownKeys(value);
-  return keys.length === expected.length && keys.every(key => typeof key === "string" &&
-    expected.includes(key) && Object.hasOwn(value, key) &&
-    Object.getOwnPropertyDescriptor(value, key)?.get === undefined &&
-    Object.getOwnPropertyDescriptor(value, key)?.set === undefined);
+  if (keys.length !== expected.length) return false;
+  return keys.every(key => {
+    if (typeof key !== "string" || !expected.includes(key)) return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor?.enumerable === true && Object.hasOwn(descriptor, "value");
+  });
 }
 
 function strictUtc(value) {
