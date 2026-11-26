@@ -357,7 +357,10 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
           event, authenticatedKey: authenticated.value, authorization, result,
           outcome: "ACCEPTED", ackResult, deliveryAttempt, receivedAt: new Date(now).toISOString()
         });
-      } catch { throw new Error("RECEIVER_ACK_CREATION_FAILED"); }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "";
+        throw new Error(/^ACK_[A-Z0-9_]{1,96}$/.test(reason) ? reason : "ACK_CALLBACK_THROWN");
+      }
       if (supplied?.ok === false) throw new Error(supplied.code ?? "RECEIVER_ACK_CREATION_FAILED");
       acknowledgement = supplied?.ok === true ? supplied.value : supplied;
     }
