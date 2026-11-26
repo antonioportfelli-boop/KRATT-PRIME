@@ -220,7 +220,8 @@ test("WP-01 approval + verified ECK provenance + fenced lease govern execution l
 
   const completed = await runtime.complete({
     principal, task, constructionTask, record: started.record,
-    resultDigest: `sha256:${"c".repeat(64)}`
+    // Deterministic digest fixture; avoid escaped template-literal delimiters.
+    resultDigest: "sha256:" + "d".repeat(64)
   });
   assert.equal(completed.ok, true);
   assert.equal(completed.state, "SUCCEEDED");
@@ -318,4 +319,36 @@ test("expired worker lease prevents the workflow from entering RUNNING", async (
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, "WORKER_LEASE_NOT_CURRENT");
+}));
+
+
+test("governed execution renews the current fenced lease and persists the new expiry", async () => withRuntime(async fixture => {
+  const { runtime, task, constructionTask, makeApproval } = fixture;
+  const authorized = await runtime.authorizeAndClaim({
+    principal, task, constructionTask, approval: makeApproval("nonce-renew-1234567890")
+  });
+  assert.equal(authorized.ok, true, JSON.stringify(authorized));
+
+  const started = await runtime.start({
+    principal, task, constructionTask, record: authorized.record
+  });
+  assert.equal(started.ok, true);
+
+  fixture.setCurrentMs(Date.parse(at) + 30_000);
+  const renewed = await runtime.renew({
+    principal, task, constructionTask, record: started.record
+  });
+  assert.equal(renewed.ok, true, JSON.stringify(renewed));
+  assert.equal(renewed.state, "RUNNING");
+  assert.equal(renewed.record.revision, started.record.revision + 1);
+  assert.equal(renewed.record.last_fencing_token, started.record.last_fencing_token);
+  assert.equal(renewed.record.claim.expires_at, "2026-11-26T12:01:30.000Z");
+  assert.equal(renewed.record.history.at(-1).lease_renewed, true);
+
+  const completed = await runtime.complete({
+    principal, task, constructionTask, record: renewed.record,
+    resultDigest: "sha256:" + "d".repeat(64)
+  });
+  assert.equal(completed.ok, true, JSON.stringify(completed));
+  assert.equal(completed.state, "SUCCEEDED");
 }));

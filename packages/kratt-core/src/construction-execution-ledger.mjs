@@ -11,8 +11,8 @@ export const EXECUTION_STATES = Object.freeze([
 
 const NEXT = Object.freeze({
   QUEUED: ["CLAIMED", "CANCELLED"],
-  CLAIMED: ["RUNNING", "RETRY_WAIT", "FAILED", "CANCELLED"],
-  RUNNING: ["SUCCEEDED", "RETRY_WAIT", "FAILED"],
+  CLAIMED: ["CLAIMED", "RUNNING", "RETRY_WAIT", "FAILED", "CANCELLED"],
+  RUNNING: ["RUNNING", "SUCCEEDED", "RETRY_WAIT", "FAILED"],
   RETRY_WAIT: ["CLAIMED", "CANCELLED"],
   SUCCEEDED: [], FAILED: [], CANCELLED: []
 });
@@ -97,6 +97,7 @@ function validRecord(record) {
   if (hash(unsigned) !== record_digest) return false;
   let previous = "QUEUED";
   let lastFence = 0;
+  let activeClaim = null;
   for (let i = 0; i < record.history.length; i += 1) {
     const event = record.history[i];
     if (!plain(event) || event.sequence !== i + 1 || event.from !== previous ||
@@ -105,10 +106,61 @@ function validRecord(record) {
       if (!Number.isSafeInteger(event.fence) || event.fence < lastFence) return false;
       lastFence = event.fence;
     }
+    if (event.to === "CLAIMED" && event.lease_renewed !== true) {
+      if (!validId(event.worker_id) || !validId(event.lease_id) ||
+          !Number.isSafeInteger(event.fence) || event.fence < 1 ||
+          (event.lease_expires_at !== undefined &&
+            (!validTime(event.lease_expires_at) || Date.parse(event.lease_expires_at) <= Date.parse(event.at)))) return false;
+      activeClaim = {
+        worker_id: event.worker_id, lease_id: event.lease_id,
+        fence: event.fence, expires_at: event.lease_expires_at ?? null
+      };
+    } else if (event.lease_expired === true) {
+      if (!activeClaim || !["RETRY_WAIT", "FAILED"].includes(event.to) ||
+          event.worker_id !== activeClaim.worker_id || event.lease_id !== activeClaim.lease_id ||
+          event.fence !== activeClaim.fence || !validTime(activeClaim.expires_at) ||
+          event.lease_expires_at !== activeClaim.expires_at ||
+          Date.parse(event.lease_expires_at) > Date.parse(event.at) ||
+          !validTime(event.lease_observed_at) ||
+          Date.parse(event.lease_observed_at) < Date.parse(event.lease_expires_at) ||
+          Date.parse(event.lease_observed_at) > Date.parse(event.at) ||
+          !validId(event.recovery_operation_id) ||
+          event.reason !== "WORKER_LEASE_EXPIRED" ||
+          event.retryable !== (event.to === "RETRY_WAIT")) return false;
+      activeClaim = null;
+    } else if (event.lease_renewed === true) {
+      if (!activeClaim || event.from !== event.to ||
+          !["CLAIMED", "RUNNING"].includes(event.to) ||
+          event.worker_id !== activeClaim.worker_id || event.lease_id !== activeClaim.lease_id ||
+          event.fence !== activeClaim.fence || !validTime(event.lease_expires_at) ||
+          Date.parse(event.lease_expires_at) <= Date.parse(event.at) ||
+          (activeClaim.expires_at !== null &&
+            Date.parse(event.lease_expires_at) <= Date.parse(activeClaim.expires_at))) return false;
+      activeClaim.expires_at = event.lease_expires_at;
+    } else if (["RUNNING", "SUCCEEDED", "RETRY_WAIT", "FAILED"].includes(event.to)) {
+      if (!activeClaim || event.worker_id !== activeClaim.worker_id ||
+          event.lease_id !== activeClaim.lease_id || event.fence !== activeClaim.fence) return false;
+      if (event.lease_expires_at !== undefined) {
+        if (!validTime(event.lease_expires_at) ||
+            Date.parse(event.lease_expires_at) <= Date.parse(event.at) ||
+            (activeClaim.expires_at !== null && event.lease_expires_at !== activeClaim.expires_at)) return false;
+        activeClaim.expires_at = event.lease_expires_at;
+      } else if (activeClaim.expires_at !== null) {
+        // New-format claims may never omit their lease expiry after it is bound.
+        return false;
+      }
+    }
     previous = event.to;
   }
   if (previous !== record.state || lastFence !== record.last_fencing_token) return false;
-  if (record.claim !== null && (!validClaim(record.claim) || record.claim.fence !== record.last_fencing_token)) return false;
+  const activeState = ["CLAIMED", "RUNNING"].includes(record.state);
+  if (activeState !== (record.claim !== null)) return false;
+  if (record.claim !== null && (!validClaim(record.claim) ||
+      record.claim.fence !== record.last_fencing_token ||
+      !activeClaim || record.claim.worker_id !== activeClaim.worker_id ||
+      record.claim.lease_id !== activeClaim.lease_id ||
+      record.claim.fence !== activeClaim.fence ||
+      (activeClaim.expires_at !== null && record.claim.expires_at !== activeClaim.expires_at))) return false;
   if (record.result_digest !== null && !DIGEST.test(record.result_digest)) return false;
   return true;
 }
@@ -138,7 +190,8 @@ export function claimExecution(record, claim, { now = () => new Date().toISOStri
   if (!validClaim(claim) || Date.parse(claim.expires_at) <= Date.parse(at)) return fail("CLAIM_INVALID_OR_EXPIRED");
   if (claim.fence <= record.last_fencing_token) return fail("STALE_FENCE");
   const event = eventFor(record, "CLAIMED", at, {
-    worker_id: claim.worker_id, lease_id: claim.lease_id, fence: claim.fence
+    worker_id: claim.worker_id, lease_id: claim.lease_id,
+    fence: claim.fence, lease_expires_at: claim.expires_at
   });
   return { ok: true, record: withEvent(record, event, {
     attempts: record.attempts + 1, last_fencing_token: claim.fence,
@@ -149,7 +202,8 @@ export function claimExecution(record, claim, { now = () => new Date().toISOStri
 function checkClaim(record, claim, now) {
   if (!validClaim(claim)) return fail("CLAIM_INVALID");
   if (!record.claim || record.claim.worker_id !== claim.worker_id ||
-      record.claim.lease_id !== claim.lease_id || record.claim.fence !== claim.fence)
+      record.claim.lease_id !== claim.lease_id || record.claim.fence !== claim.fence ||
+      record.claim.expires_at !== claim.expires_at)
     return fail("CLAIM_MISMATCH");
   if (Date.parse(claim.expires_at) <= Date.parse(now) ||
       Date.parse(record.claim.expires_at) <= Date.parse(now)) return fail("CLAIM_EXPIRED");
@@ -165,9 +219,99 @@ export function startExecution(record, claim, { now = () => new Date().toISOStri
   const check = checkClaim(record, claim, at);
   if (!check.ok) return check;
   const event = eventFor(record, "RUNNING", at, {
-    worker_id: claim.worker_id, lease_id: claim.lease_id, fence: claim.fence
+    worker_id: claim.worker_id, lease_id: claim.lease_id,
+    fence: claim.fence, lease_expires_at: claim.expires_at
   });
   return { ok: true, record: withEvent(record, event, { updated_at: at }) };
+}
+
+/**
+ * Extend the active claim without changing the execution state or fencing token.
+ * The caller must first renew the authoritative lease in its storage backend.
+ * This function only appends the renewed expiry to the immutable execution log.
+ */
+export function renewExecutionClaim(record, claim, expiresAt, {
+  now = () => new Date().toISOString()
+} = {}) {
+  if (!validRecord(record)) return fail("EXECUTION_RECORD_INVALID");
+  if (!["CLAIMED", "RUNNING"].includes(record.state)) return fail("EXECUTION_NOT_ACTIVE");
+  let at;
+  try { at = now(); } catch { return fail("EXECUTION_CLOCK_UNAVAILABLE"); }
+  if (!validTime(at)) return fail("EXECUTION_CLOCK_INVALID");
+  const checked = checkClaim(record, claim, at);
+  if (!checked.ok) return checked;
+  if (!validTime(expiresAt) || Date.parse(expiresAt) <= Date.parse(at) ||
+      Date.parse(expiresAt) <= Date.parse(record.claim.expires_at)) {
+    return fail("LEASE_RENEWAL_EXPIRY_INVALID");
+  }
+  const renewedClaim = { ...record.claim, expires_at: expiresAt };
+  const event = eventFor(record, record.state, at, {
+    worker_id: record.claim.worker_id,
+    lease_id: record.claim.lease_id,
+    fence: record.claim.fence,
+    lease_expires_at: expiresAt,
+    lease_renewed: true
+  });
+  return {
+    ok: true,
+    record: withEvent(record, event, {
+      claim: renewedClaim,
+      updated_at: at
+    })
+  };
+}
+
+/**
+ * Reconcile an expired CLAIMED/RUNNING execution only after the authoritative
+ * lease coordinator has atomically expired that exact owner/fence reservation.
+ * This records recovery; it does not restart or dispatch the worker.
+ */
+export function recoverExpiredExecution(record, leaseProof, {
+  now = () => new Date().toISOString()
+} = {}) {
+  if (!validRecord(record)) return fail("EXECUTION_RECORD_INVALID");
+  if (!["CLAIMED", "RUNNING"].includes(record.state) || !record.claim) {
+    return fail("EXECUTION_NOT_ACTIVE");
+  }
+  let at;
+  try { at = now(); } catch { return fail("EXECUTION_CLOCK_UNAVAILABLE"); }
+  if (!validTime(at)) return fail("EXECUTION_CLOCK_INVALID");
+
+  const expectedReservation = "reserve-" + record.execution_key;
+  if (!plain(leaseProof) || leaseProof.ok !== true || leaseProof.state !== "EXPIRED" ||
+      leaseProof.leaseExpired !== true || leaseProof.dispatch !== false ||
+      leaseProof.reservationKey !== expectedReservation ||
+      leaseProof.taskDigest !== record.task_digest ||
+      leaseProof.ownerId !== record.claim.worker_id ||
+      leaseProof.fencingToken !== record.claim.fence ||
+      leaseProof.expiredAt !== record.claim.expires_at ||
+      !validId(leaseProof.operationId) || !validTime(leaseProof.observedAt) ||
+      Date.parse(leaseProof.observedAt) < Date.parse(leaseProof.expiredAt) ||
+      Date.parse(leaseProof.observedAt) > Date.parse(at)) {
+    return fail("EXPIRED_LEASE_PROOF_INVALID");
+  }
+
+  const canRetry = record.attempts < record.max_attempts;
+  const nextState = canRetry ? "RETRY_WAIT" : "FAILED";
+  const event = eventFor(record, nextState, at, {
+    worker_id: record.claim.worker_id,
+    lease_id: record.claim.lease_id,
+    fence: record.claim.fence,
+    lease_expires_at: record.claim.expires_at,
+    lease_expired: true,
+    lease_observed_at: leaseProof.observedAt,
+    recovery_operation_id: leaseProof.operationId,
+    reason: "WORKER_LEASE_EXPIRED",
+    retryable: canRetry
+  });
+  return {
+    ok: true,
+    record: withEvent(record, event, {
+      updated_at: at,
+      claim: null,
+      failure: { reason: "WORKER_LEASE_EXPIRED", retryable: canRetry }
+    })
+  };
 }
 
 export function completeExecution(record, claim, resultDigest, { now = () => new Date().toISOString() } = {}) {
@@ -181,7 +325,7 @@ export function completeExecution(record, claim, resultDigest, { now = () => new
   if (!check.ok) return check;
   const event = eventFor(record, "SUCCEEDED", at, {
     worker_id: claim.worker_id, lease_id: claim.lease_id, fence: claim.fence,
-    result_digest: resultDigest
+    lease_expires_at: claim.expires_at, result_digest: resultDigest
   });
   return { ok: true, record: withEvent(record, event, {
     updated_at: at, result_digest: resultDigest, claim: null, failure: null
@@ -203,7 +347,7 @@ export function failExecution(record, claim, reason, {
   const nextState = canRetry ? "RETRY_WAIT" : "FAILED";
   const event = eventFor(record, nextState, at, {
     worker_id: claim.worker_id, lease_id: claim.lease_id, fence: claim.fence,
-    reason: reason.trim(), retryable: canRetry
+    lease_expires_at: claim.expires_at, reason: reason.trim(), retryable: canRetry
   });
   return { ok: true, record: withEvent(record, event, {
     updated_at: at, claim: null, failure: { reason: reason.trim(), retryable: canRetry }
