@@ -122,7 +122,8 @@ export class DurableEvidenceRepository {
     return Object.freeze({ ok: ledger.ok && journal.ok, schemaVersion: DURABLE_EVIDENCE_SCHEMA,
       eventCount: ledger.count, evidenceHeadHash: ledger.headHash,
       journalEntries: journal.count, journalHeadHash: journal.headHash,
-      encrypted: store.encrypted === true, remoteSync: store.remoteSync === true,
+      encrypted: typeof store.encrypted === "boolean" ? store.encrypted : null,
+      remoteSync: typeof store.remoteSync === "boolean" ? store.remoteSync : null,
       scope: typeof store.scope === "string" ? store.scope : "SINGLE_PROCESS_LOCAL_JOURNAL" });
   }
 }
