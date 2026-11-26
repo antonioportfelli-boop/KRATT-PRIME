@@ -113,6 +113,11 @@ export async function createPostgresGovernedExecutionRuntime({
 
   return Object.freeze({
     ...runtime,
+    // Evidence intake is intentionally separate from trust: policy evaluation
+    // still requires the injected provenance verifier before using any card.
+    appendEvidence: input => evidenceRepository.append(input),
+    listEvidence: options => evidenceRepository.list(options),
+    evidenceStatus: () => evidenceRepository.verify(),
     backend: Object.freeze({
       kind: "POSTGRES_SHARED_DATABASE",
       schemaVersion: "kratt-runtime-postgres/v1",
