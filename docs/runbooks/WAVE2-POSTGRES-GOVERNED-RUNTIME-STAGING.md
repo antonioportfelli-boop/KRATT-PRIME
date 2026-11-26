@@ -90,6 +90,37 @@ This is a wiring example, not a production host. The deployment must supply:
 
 The runtime factory reserves the authorization runtime, store, lease coordinator and evidence repository internally. Caller-supplied replacements for these components are rejected.
 
+### Evidence intake API
+
+The returned runtime exposes `appendEvidence(input)`, `listEvidence(options)` and `evidenceStatus()`. Evidence intake persists an ECK card into the shared journal; it does **not** certify that card as trusted. The host must authenticate the intake source, preserve provenance, and implement the injected `verifyEvidenceProvenance` callback to verify the evidence independently when policy later evaluates it.
+
+Illustrative intake:
+
+```js
+const appended = await runtime.appendEvidence({
+  rootId: "repository-id",
+  branchId: "feature-branch",
+  eventId: "ci-run-123",
+  eventType: "ci.tests.passed",
+  actorId: "ci-verifier",
+  occurredAt: new Date().toISOString(),
+  subject: "repository-id",
+  decision: "VERIFIED",
+  sourceRef: { provider: "ci", resource: "run-123", revision: "0123456789012345678901234567890123456789" },
+  artifactDigest: "sha256:<64-lowercase-hex-characters>",
+  metadata: {
+    policy_evidence: {
+      schema_version: "kratt-policy-evidence/v1",
+      claim_type: "TESTS_PASSED",
+      verification_method: "ci-signature"
+    }
+  }
+});
+if (!appended.ok) throw new Error("EVIDENCE_APPEND_FAILED");
+```
+
+Replace the identifiers, revision, and digest with values obtained from the actual trusted source. Never set `decision: "VERIFIED"` based solely on caller input; the runtime's independent provenance verifier must establish the source and artifact authenticity before the card can satisfy policy.
+
 ## 5. Operational semantics
 
 ### Authorization
