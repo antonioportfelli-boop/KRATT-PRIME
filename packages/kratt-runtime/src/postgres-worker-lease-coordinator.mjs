@@ -184,7 +184,7 @@ export function createPostgresWorkerLeaseCoordinator(pool) {
         }
         const savedResult = typeof saved.result_json === "string"
           ? JSON.parse(saved.result_json) : saved.result_json;
-        if (!savedResult?.ok || saved.operation === "release") {
+        if (!savedResult?.ok || ["release", "expire"].includes(saved.operation)) {
           return Object.freeze({ ...savedResult, duplicate: true });
         }
         const current = await client.query(
@@ -247,6 +247,30 @@ export function createPostgresWorkerLeaseCoordinator(pool) {
             ok: true, state: "LEASED", reservationKey: request.reservationKey,
             ownerId: request.ownerId, fencingToken: reservation.fence + 1,
             expiresAt, dispatch: false, executionStarted: false
+          });
+        }
+      } else if (operation === "expire") {
+        if (reservation.status !== "LEASED" || !reservation.lease) {
+          result = fail("WORKER_LEASE_NOT_ACTIVE");
+        } else if (reservation.lease.ownerId !== request.ownerId) {
+          result = fail("WORKER_LEASE_OWNER_MISMATCH", { fencingToken: reservation.fence });
+        } else if (reservation.fence !== request.fencingToken) {
+          result = fail("WORKER_FENCING_TOKEN_STALE", { fencingToken: reservation.fence });
+        } else if (Date.parse(reservation.lease.expiresAt) > Date.parse(now)) {
+          result = fail("WORKER_LEASE_STILL_ACTIVE", { expiresAt: reservation.lease.expiresAt });
+        } else {
+          const expiredAt = reservation.lease.expiresAt;
+          await client.query(
+            "UPDATE " + RESERVATIONS +
+            " SET status = 'AVAILABLE', owner_id = NULL, expires_at = NULL, updated_at = $1 " +
+            "WHERE reservation_key = $2 AND fence = $3 AND owner_id = $4",
+            [now, request.reservationKey, request.fencingToken, request.ownerId]
+          );
+          result = Object.freeze({
+            ok: true, state: "EXPIRED", reservationKey: request.reservationKey,
+            ownerId: request.ownerId, fencingToken: request.fencingToken,
+            expiredAt, observedAt: now, leaseExpired: true,
+            dispatch: false, executionStarted: false
           });
         }
       } else {
@@ -354,6 +378,8 @@ export function createPostgresWorkerLeaseCoordinator(pool) {
     renew: request => execute("renew", request,
       ["operationId", "reservationKey", "taskDigest", "ownerId", "fencingToken", "ttlMs"]),
     release: request => execute("release", request,
+      ["operationId", "reservationKey", "taskDigest", "ownerId", "fencingToken"]),
+    expire: request => execute("expire", request,
       ["operationId", "reservationKey", "taskDigest", "ownerId", "fencingToken"]),
     inspect,
     status
