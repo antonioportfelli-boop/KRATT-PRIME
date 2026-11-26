@@ -69,6 +69,23 @@ CREATE TRIGGER kratt_fabric_inbound_ack_immutable
   BEFORE UPDATE OR DELETE ON kratt_fabric_inbound_acknowledgements
   FOR EACH ROW EXECUTE FUNCTION kratt_reject_fabric_inbound_ack_mutation();
 
+CREATE OR REPLACE FUNCTION kratt_reject_fabric_ledger_truncate()
+RETURNS trigger LANGUAGE plpgsql AS $wp03_8_truncate$
+BEGIN
+  RAISE EXCEPTION 'KRATT_FABRIC_LEDGER_TRUNCATE_FORBIDDEN';
+END;
+$wp03_8_truncate$;
+
+DROP TRIGGER IF EXISTS kratt_fabric_receiver_receipts_no_truncate ON kratt_fabric_receiver_receipts;
+CREATE TRIGGER kratt_fabric_receiver_receipts_no_truncate
+  BEFORE TRUNCATE ON kratt_fabric_receiver_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kratt_reject_fabric_ledger_truncate();
+
+DROP TRIGGER IF EXISTS kratt_fabric_inbound_ack_no_truncate ON kratt_fabric_inbound_acknowledgements;
+CREATE TRIGGER kratt_fabric_inbound_ack_no_truncate
+  BEFORE TRUNCATE ON kratt_fabric_inbound_acknowledgements
+  FOR EACH STATEMENT EXECUTE FUNCTION kratt_reject_fabric_ledger_truncate();
+
 CREATE OR REPLACE FUNCTION kratt_guard_fabric_receiver_receipt_identity()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE inbox_row kratt_fabric_event_inbox%ROWTYPE;
