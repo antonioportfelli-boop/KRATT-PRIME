@@ -1,6 +1,6 @@
 # Wave 3 — 3XT Fabric interoperability
 
-**Status:** implementation candidate; ingress-only; not production or staging approved  
+**Status:** WP-03.1–03.7 implementation candidate; no live transport, staging approval or production approval  
 **Branch:** `feature/wave3-fabric-interoperability-2026-11-26`  
 **Stack base:** `feature/wave2-runtime-reconciliation-2026-11-26` at `c7ddaaef5e23bce31c758671152b3652bcb71b79`  
 **Wave 2 PR:** [#58](https://github.com/antonioportfelli-boop/KRATT-PRIME/pull/58) remains open and Draft.
@@ -132,12 +132,12 @@ Current Wave 3 status at the time of this update:
 - unit suite for outbound composition: eleven focused tests;
 - live PostgreSQL 16 suite: three integration tests (runtime journal/leases, Fabric inbox, Fabric outbound outbox), all run in CI with a live database, not skipped.
 
-Remaining Wave 3 work:
-- persist trusted node/key/policy registry with independently administered revocation/rotation audit semantics;
-- end-to-end KRATT-to-STEEL and STEEL-to-KRATT contract fixtures against the STEEL implementation and pinned source revision;
-- transport worker/provider registration, retry scheduling and cancellation-race reconciliation (currently deliberately not activated);
-- schema evolution and compatibility negotiation;
-- staging role/grant verification, backup/restore drill, connection TLS and encryption-at-rest evidence.
+Remaining Wave 3 work after WP-03.7:
+- WP-03.8 — receiver-side deduplication and durable acknowledgement/replay persistence;
+- WP-03.9 — provider/worker security review; worker remains disabled by default;
+- WP-03.10 — coordinated KRATT/STEEL compatibility gate against each repository's current approved revision;
+- WP-03.11 — staging-only rehearsal, migration/rollback and backup/restore evidence;
+- WP-03.12 — security review, observability and operational-readiness checklist.
 
 **KRATT can now prepare and durably queue authenticated outbound Fabric envelopes, but this is not yet live network delivery or a verified two-repository KRATT ↔ STEEL deployment. It is not staging-verified or production-ready.**
 
@@ -251,3 +251,56 @@ The Node 22 workflow completed the contract/syntax checks, typecheck and build. 
 ### Verification and safety
 - PostgreSQL 16 integration covers migration reapplication, cancellation-before-start, begin-before-cancel, stale lease fencing, bounded backoff, max-attempt dead-letter, denied/admin-authorized reconciliation, unknown network outcome, lease expiry before/after start and append-only ledgers.
 - No HTTP sender/provider worker is registered or invoked. The delivery-start API is only a gate contract for future transport; all external effects remain disabled.
+
+
+## WP-03.7 — Schema negotiation and authenticated receiver acknowledgements
+
+**Status:** contract, sender-side receipt persistence and CI integration added on the Wave 3 feature branch. This is still not a live KRATT↔STEEL transport.
+
+### Schema negotiation
+
+The new `fabric-negotiation-ack.mjs` module defines separate closed envelopes:
+- `3XT-FABRIC-NEGOTIATE/1` for the signed request;
+- `3XT-FABRIC-NEGOTIATE-RESPONSE/1` for the signed receiver decision.
+
+The request binds a negotiation ID, sender and receiver node, schema ID, exact offered version/digest pairs, sender minimum version, receiver policy revision, key ID, timestamps, canonical SHA-256 digest and Ed25519 signature. The receiver authenticates the sender with the existing trusted-key lifecycle and obtains allowed schema versions only from its server-owned policy resolver.
+
+The receiver returns one explicit result:
+- `SUPPORTED`: the highest exact version+digest match satisfying both the sender's minimum version and the receiver's policy floor;
+- `UNSUPPORTED`: the schema is known, but the policy is disabled/stale or there is no allowed common version;
+- `UNKNOWN`: the schema ID is not registered.
+
+The response is signed by the receiver's ACTIVE signing identity and binds the original request digest. Semver ranges, payload rewriting, automatic migration, field stripping and silent downgrade are not used. A sender-signed minimum version and a receiver-owned minimum version jointly prevent a lower-version fallback. Existing `3XT-FABRIC/1` event envelopes remain unchanged and valid.
+
+### Receiver acknowledgement
+
+The separate `3XT-FABRIC-ACK/1` envelope is authenticated with the receiver node's trusted Ed25519 key. It binds:
+- acknowledgement ID and exact outbound event ID;
+- source node and receiver/destination node;
+- source sequence and original event digest;
+- delivery attempt number and negotiated receiver policy revision;
+- result, issue time, key ID, canonical digest and signature.
+
+Results are `ACCEPTED`, `DUPLICATE`, `REJECTED` and `UNKNOWN`. Authentication rejects malformed envelopes, digest/signature tampering, unknown/revoked keys, wrong receiver, stale policy revision and invalid issue times. The PostgreSQL receipt store then compares the authenticated acknowledgement against the persisted outbound event and the exact started delivery attempt; a caller cannot supply a replacement event identity.
+
+### Outbox reconciliation and persistence
+
+Migration `0007_fabric_receiver_acknowledgements.sql` adds an append-only sender-side acknowledgement receipt ledger. It has a unique acknowledgement ID and a unique `(outbox_id, delivery_attempt)` constraint. Exact repeated acknowledgements are idempotent; a different acknowledgement for the same attempt or a replayed ID bound elsewhere fails closed.
+
+- `ACCEPTED` and identity-matching `DUPLICATE` move the outbox to `DONE` and the intent to `COMPLETED`.
+- `REJECTED` moves the outbox to `RECONCILE`; it is not automatically retried.
+- `UNKNOWN` also moves the outbox to `RECONCILE`; it is never interpreted as success or automatic retry.
+- A late acknowledgement can resolve a started delivery that has entered `RECONCILE` after lease expiry only while its original delivery-start token and attempt still match.
+- All acknowledgement transitions share the same task-scoped advisory lock used by cancellation and preserve the delivery-start/lease-token fence.
+- The acknowledgement does not claim an external send was cancelled and does not start another delivery.
+
+The append-only receipt and hash-chained audit record are committed in the same PostgreSQL transaction as the outbox/intent transition. A manual retry after a rejection/unknown result still requires the existing authorized reconciliation path and evidence; no automatic retry policy is added here.
+
+### Test execution wiring
+
+- Unit contract tests: `packages/kratt-core/test/fabric-negotiation-ack.test.mjs`; included automatically by `npm test` because the package script runs `node --experimental-strip-types --test packages/kratt-core/test/*.test.mjs`.
+- PostgreSQL 16 integration test: `packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs`; explicitly included in the PostgreSQL workflow's `node --test` command and in its path filters.
+- The PostgreSQL test applies migrations 0001, 0004, 0006 and 0007 in an isolated schema, reapplies 0007, signs acknowledgements with a test Ed25519 key, verifies exact duplicate versus conflicting acknowledgement handling, checks ACCEPTED/REJECTED/UNKNOWN transitions, wrong-event digest binding, cancellation-before-start and append-only triggers.
+- The STEEL source snapshot remains test-only. The new unit/DB tests exercise the KRATT implementation; they do not run STEEL CI or a live receiver.
+
+**Evidence status:** CI results for the WP-03.7 commit must be attached after GitHub Actions completes. No staging/production migration or delivery was run.
