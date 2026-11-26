@@ -367,7 +367,9 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
         !validId(acknowledgement.ack_id) || acknowledgement.event_id !== event.event_id ||
         acknowledgement.source_node !== event.source_node || acknowledgement.receiver_node !== event.destination_node ||
         acknowledgement.source_sequence !== event.sequence || acknowledgement.event_digest !== event.content_digest ||
-        acknowledgement.delivery_attempt !== deliveryAttempt || acknowledgement.result !== ackResult ||
+        acknowledgement.delivery_attempt !== deliveryAttempt ||
+        !(ackResult === "REJECTED" ? acknowledgement.result === "REJECTED" :
+          ackResult === "DUPLICATE" ? ["ACCEPTED", "DUPLICATE"].includes(acknowledgement.result) : acknowledgement.result === "ACCEPTED") ||
         acknowledgement.policy_revision !== authorization.policy_revision || !validId(acknowledgement.key_id) ||
         strictUtcMillis(acknowledgement.issued_at) === null || !validHash(acknowledgement.content_digest) ||
         typeof acknowledgement.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(acknowledgement.signature))
