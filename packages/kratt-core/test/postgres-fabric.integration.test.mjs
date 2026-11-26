@@ -8,6 +8,7 @@ import { fabricEventContentDigest, fabricSigningInput, receiveSteelFabricEventV1
 import { authenticateFabricReceiverAcknowledgement, createFabricReceiverAcknowledgement } from "../src/fabric-negotiation-ack.mjs";
 
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
+const NOW = Date.parse("2026-11-26T17:00:00.000Z");
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationPath = join(here, "../migrations/0003_fabric_interoperability.sql");
 const receiptMigrationPath = join(here, "../migrations/0008_fabric_receiver_receipts.sql");
