@@ -309,7 +309,7 @@ export function createPostgresWorkerLeaseCoordinator(pool) {
     }
     const result = await pool.query(
       "SELECT reservation_key, task_digest, fence, status, owner_id, expires_at, " +
-      "(status = 'LEASED' AND expires_at > clock_timestamp()) AS lease_active FROM " +
+      "(status = 'AVAILABLE' OR (status = 'LEASED' AND expires_at > clock_timestamp())) AS lease_active FROM " +
       RESERVATIONS + " WHERE reservation_key = $1",
       [reservationKey]
     );
