@@ -49,7 +49,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       status: "ACTIVE", valid_from: "2026-01-01T00:00:00.000Z"
     };
     const receiverKeys = generateKeyPairSync("ed25519");
-    const receiverSigningIdentity = { node_id: "kratt-node", key_id: "kratt-ack-key-wave3", public_key: receiverKeys.publicKey, status: "ACTIVE" };
+    const receiverSigningIdentity = { node_id: "kratt-node", key_id: "kratt-ack-key-wave3", public_key: receiverKeys.publicKey, status: "ACTIVE", valid_from: "2026-01-01T00:00:00.000Z" };
     const policy = {
       source_node: trustedKey.source_node, key_id: trustedKey.key_id, status: "ACTIVE",
       destinations: ["kratt-node"], allowed_event_types: ["factory.task.accepted"],
@@ -71,7 +71,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     const deps = (handler, attempt = 1, overrides = {}) => ({
       localNodeId: "kratt-node",
       deliveryAttempt: attempt,
-      resolveReceiverSigningIdentity: async nodeId => nodeId === "kratt-node" ? receiverSigningIdentity : null,
+      resolveReceiverSigningIdentity: async (nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id ? receiverSigningIdentity : null,
       revalidateAuthorization: async () => policy,
       createAcknowledgement: context => createFabricReceiverAcknowledgement({
         event: context.event, receiverNode: "kratt-node",
@@ -103,6 +103,13 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(duplicate.value.duplicate, true);
     assert.deepEqual(duplicate.value.acknowledgement, accepted.value.acknowledgement);
     assert.equal(duplicate.value.result, "stored");
+    const verifyOnlyReplay = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, {
+      resolveReceiverSigningIdentity: async (nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id
+        ? { ...receiverSigningIdentity, status: "VERIFY_ONLY", retired_at: new Date(NOW + 1_000).toISOString(), verify_until: new Date(NOW + 60_000).toISOString() }
+        : null
+    }));
+    assert.equal(verifyOnlyReplay.ok, true, JSON.stringify(verifyOnlyReplay));
+    assert.deepEqual(verifyOnlyReplay.value.acknowledgement, accepted.value.acknowledgement);
 
     const secondAttempt = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 2));
     assert.equal(secondAttempt.ok, true, JSON.stringify(secondAttempt));
