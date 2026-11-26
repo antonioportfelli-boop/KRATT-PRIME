@@ -65,6 +65,14 @@ test("PostgreSQL trusted authorization exposes a shared one-time approval nonce 
   assert.equal(typeof createPostgresTrustedAuthorizationRuntime, "function");
 });
 
+test("PostgreSQL governed runtime exposes evidence intake while requiring independent provenance", () => {
+  const composition = readFileSync(join(root, "../kratt-runtime/src/postgres-governed-execution.mjs"), "utf8");
+  assert.match(composition, /appendEvidence: input => evidenceRepository\.append\(input\)/);
+  assert.match(composition, /listEvidence: options => evidenceRepository\.list\(options\)/);
+  assert.match(composition, /verifyEvidenceProvenance/);
+  assert.match(composition, /provenance verifier/);
+});
+
 test("factories reject an incomplete pool before issuing queries", () => {
   assert.throws(() => createPostgresRuntimeStore({ connect() {} }), /POSTGRES_POOL_REQUIRED/);
   assert.throws(() => createPostgresWorkerLeaseCoordinator({ query() {} }), /POSTGRES_POOL_REQUIRED/);
