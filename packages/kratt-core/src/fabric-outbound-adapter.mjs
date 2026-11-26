@@ -121,6 +121,7 @@ export function createSteelFabricOutboundAdapter({
     const taskResult = validateTaskEnvelope(taskInput);
     if (!taskResult.ok) return fail("TASK_ENVELOPE_INVALID");
     const task = taskResult.value;
+    principal = immutableJsonRecord(principal);
     if (!principal || typeof principal.id !== "string" || !PRINCIPAL_ID.test(principal.id) || principal.id !== task.actor) {
       return fail("PRINCIPAL_MISMATCH");
     }
