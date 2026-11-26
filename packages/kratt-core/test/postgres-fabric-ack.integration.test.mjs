@@ -68,7 +68,10 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     }
 
     let clock = NOW;
-    const outbox = createPostgresOutboxStore(pool, {\n      clock: () => new Date(clock),\n      authorizeReconciliation: async request => request.actorId === "operator-01" && request.evidenceDigest === "d".repeat(64)\n    });
+    const outbox = createPostgresOutboxStore(pool, {
+      clock: () => new Date(clock),
+      authorizeReconciliation: async request => request.actorId === "operator-01" && request.evidenceDigest === "d".repeat(64)
+    });
     const acknowledgements = createPostgresFabricAcknowledgementStore(pool, { clock: () => new Date(clock) });
 
     async function seed(tag) {
@@ -191,7 +194,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       makeAck(rejected.event, retryClaim.delivery_attempt_sequence, "ACCEPTED", "accepted-after-retry"));
     assert.equal(acceptedAfterRetry.ok, true, JSON.stringify(acceptedAfterRetry));
     assert.equal(acceptedAfterRetry.value.outbox_status, "DONE");
-    assert.equal((await pool.query(
+    assert.deepEqual((await pool.query(
       "SELECT delivery_attempt,result FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1 ORDER BY delivery_attempt",
       [rejected.outboxId]
     )).rows.map(row => [Number(row.delivery_attempt), row.result]), [[1, "REJECTED"], [2, "ACCEPTED"]]);
