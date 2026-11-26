@@ -133,9 +133,10 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
     );
 
     const duplicateRaceId = "evidence-postgres-race";
+    const raceInput = evidenceInput(duplicateRaceId, "run-race");
     const [sameA, sameB] = await Promise.all([
-      evidenceA.append(evidenceInput(duplicateRaceId, "run-race")),
-      evidenceB.append(evidenceInput(duplicateRaceId, "run-race"))
+      evidenceA.append(raceInput),
+      evidenceB.append(raceInput)
     ]);
     assert.equal(sameA.ok, true);
     assert.equal(sameB.ok, true);
