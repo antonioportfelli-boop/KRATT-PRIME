@@ -347,7 +347,7 @@ test("governed execution renews the current fenced lease and persists the new ex
 
   const completed = await runtime.complete({
     principal, task, constructionTask, record: renewed.record,
-    resultDigest: \`sha256:\${"d".repeat(64)}\`
+    resultDigest: "sha256:" + "d".repeat(64)
   });
   assert.equal(completed.ok, true, JSON.stringify(completed));
   assert.equal(completed.state, "SUCCEEDED");
