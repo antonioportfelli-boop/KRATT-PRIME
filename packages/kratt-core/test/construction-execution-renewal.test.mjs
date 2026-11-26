@@ -101,7 +101,8 @@ test("legacy v1 claimed records without historical lease-expiry fields remain re
     expires_at: "2026-11-26T12:00:30.000Z"
   }, { now: () => "2026-11-26T12:00:01.000Z" });
   assert.equal(claimed.ok, true);
-  const { record_digest: ignored, ...unsigned } = claimed.record;
+  const { record_digest: ignored, ...rawUnsigned } = claimed.record;
+  const unsigned = structuredClone(rawUnsigned);
   delete unsigned.history[0].lease_expires_at;
   const legacy = {
     ...unsigned,
