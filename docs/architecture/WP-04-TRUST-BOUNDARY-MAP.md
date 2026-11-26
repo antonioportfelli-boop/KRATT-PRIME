@@ -14,7 +14,8 @@ Purpose: define which component owns authority, which component may execute side
     CONTROL PLANE — trusted host composition root
       identity resolution and source provenance
       adapter contract validation
-      adapter registration and lifecycle authority
+      host-owned registration and lifecycle authority
+      source artifact digest and conformance verification
       capability registry and scope intersection
       policy, approval verification and revocation
       version compatibility decision
@@ -43,11 +44,12 @@ The control plane owns all trust and authorization decisions. The data plane may
 |---|---|---|
 | Policy and request-bound approval | packages/kratt-core/src/policy.mjs; approval-evidence.mjs; trusted-runtime.mjs | Reuse. Do not create a second authorization engine. |
 | Authorized dispatch | packages/kratt-core/src/authorized-dispatch.mjs | Reuse as the future side-effect boundary; require contract operation binding before dispatch. |
-| Integration lifecycle | packages/kratt-core/src/integration-registry.mjs | Existing pure lifecycle helper; review overlap before changing. |
+| Integration lifecycle | packages/kratt-core/src/integration-registry.mjs | Authoritative pure lifecycle transition and operation-gate helper; reused by WP-04.2. |
 | Capability decisions | packages/kratt-core/src/integration-capability-registry.mjs | Existing policy primitive; do not create a second capability registry. |
 | Saga and execution state | packages/kratt-core/src/saga.mjs and the construction execution modules | Reuse existing state transitions and recovery semantics. |
 | Local journal / audit | packages/kratt-core/src/prime-store.mjs and evidence-ledger.mjs | Reuse; do not treat local append-only storage as multi-host persistence. |
 | Adapter manifest contract | packages/kratt-core/src/adapter-contract.mjs (WP-04.1) | Closed declaration validation, exact-version negotiation and pure operation resolution into the existing capability-policy input shape; no trust, authorization, I/O or execution. |
+| Host adapter registration | packages/kratt-core/src/adapter-registration.mjs (WP-04.2 candidate) | Host-injected source reader, provenance verifier, conformance verifier and atomic store; metadata registration only, no loader, credentials or provider execution. |
 
 ### WP-03 feature-branch components — not mainline yet
 
@@ -79,18 +81,21 @@ No STEEL file or branch was changed in this work.
 
 1. Registration and lifecycle transitions are host-owned.
 2. A manifest cannot assign trust, WRITE_ENABLED state, approval, tenant scope or credential values.
-3. Capabilities are declarations until intersected with trusted principal/agent grants and current policy.
-4. Authorization grants are bound to a concrete request, principal, adapter, operation, resource and expiry.
-5. Data-plane workers re-check current cancellation, lease and revocation fences immediately before a possible external call.
-6. ACK receipt is an authenticated observation, not an authorization decision.
-7. Unknown external outcomes remain RECONCILE until provider-specific evidence resolves them.
-8. Recovery reads durable evidence; it never guesses that an external effect did or did not happen.
+3. WP-04.2 binds a registration to exact repository/revision/path bytes, recomputes the artifact digest and requires host-injected provenance evidence.
+4. Read-only conformance is a separate verified transition using the existing integration lifecycle and an atomic revision/audit store contract.
+5. Capabilities are declarations until intersected with trusted principal/agent grants and current policy.
+6. Authorization grants are bound to a concrete request, principal, adapter, operation, resource and expiry.
+7. Data-plane workers re-check current cancellation, lease and revocation fences immediately before a possible external call.
+8. ACK receipt is an authenticated observation, not an authorization decision.
+9. Unknown external outcomes remain RECONCILE until provider-specific evidence resolves them.
+10. Recovery reads durable evidence; it never guesses that an external effect did or did not happen.
 
 ## Current gaps
 
 - No canonical tenant identity or tenant isolation contract was found.
-- No complete adapter package trust/registration/credential broker is present.
-- The adapter runtime is not isolated or activated by WP-04.1.
+- The WP-04.2 store is an injected interface with an in-memory test double; a concrete transactional production store remains unimplemented.
+- The provenance and conformance verifiers are host-supplied trust roots; their concrete signature/key lifecycle and policy configuration have not been independently verified.
+- No adapter package loader/runtime isolation is enabled by WP-04.2.
 - Provider-specific idempotency and live provider behavior remain unverified.
 - STEEL's current main protocol and the historical Fabric snapshot need a formally reviewed mapping.
 - No live STEEL callback/receiver or staging environment was exercised.

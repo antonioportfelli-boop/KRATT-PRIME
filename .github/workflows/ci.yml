@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/kratt-governed-execution-bridge-v1]
+    branches: [main, feature/kratt-governed-execution-bridge-v1, feature/wp-04-2-host-registration-provenance-2026-11-27]
   pull_request:
     branches: [main]
 
