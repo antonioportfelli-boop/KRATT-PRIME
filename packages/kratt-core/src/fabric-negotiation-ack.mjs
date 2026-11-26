@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
+import { types as utilTypes } from "node:util";
 import { canonicalizeFabricJcs } from "./fabric-interoperability.mjs";
 
 export const FABRIC_NEGOTIATION_PROTOCOL = "3XT-FABRIC-NEGOTIATE/1";
@@ -29,7 +30,7 @@ const ACK_RESULTS = new Set(["ACCEPTED", "REJECTED", "DUPLICATE", "UNKNOWN"]);
 
 const fail = (code, detail) => ({ ok: false, code, ...(detail ? { detail } : {}) });
 const ok = value => ({ ok: true, value });
-const isRecord = value => typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = value => typeof value === "object" && value !== null && !Array.isArray(value) && !utilTypes.isProxy(value);
 const validId = value => typeof value === "string" && ID.test(value);
 const validHash = value => typeof value === "string" && SHA256.test(value);
 
@@ -251,7 +252,7 @@ export async function negotiateFabricSchema(requestInput, {
 
   let signingIdentity;
   try { signingIdentity = await resolveSigningIdentity(localNodeId); } catch { return fail("NEGOTIATION_RESPONSE_SIGNER_UNAVAILABLE"); }
-  if (!signingIdentity || signingIdentity.node_id !== localNodeId || signingIdentity.status !== "ACTIVE" ||
+  if (!signingIdentity || (signingIdentity.node_id ?? signingIdentity.source_node) !== localNodeId || signingIdentity.status !== "ACTIVE" ||
     !validId(signingIdentity.key_id) || !publicKeyOf(signingIdentity.public_key)) return fail("NEGOTIATION_RESPONSE_SIGNER_UNAVAILABLE");
   const response = {
     protocol: FABRIC_NEGOTIATION_RESPONSE_PROTOCOL,
