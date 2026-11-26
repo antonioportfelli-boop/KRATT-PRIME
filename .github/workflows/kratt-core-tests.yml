@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - integration/source-reconciliation-2026-10
-      - feature/wp-04-adapter-contract-foundation-2026-11-27
   pull_request:
     branches:
       - main
