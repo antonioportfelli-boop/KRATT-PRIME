@@ -69,7 +69,7 @@ test("worker obtains delivery-start fence before invoking the provider", async (
   });
   const result = await worker.runOnce();
   assert.deepEqual(f.calls.map(call => call[0]), ["claim", "begin", "dispatch", "finish"]);
-  assert.deepEqual(f.calls[1][1], { outboxId: "outbox-1", leaseToken: "lease-token-00000001" });
+  assert.deepEqual(f.calls[1][1], { outboxId: "outbox-1", leaseToken: "lease-token-00000001", workerId: "worker-1" });
   assert.equal(f.calls[2][1].idempotencyKey, f.item.idempotency_key);
   assert.equal(f.calls[2][1].deliveryAttempt, 4);
   assert.equal(f.calls[3][1].taskId, "task-1");
