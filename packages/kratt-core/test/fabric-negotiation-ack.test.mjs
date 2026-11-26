@@ -11,6 +11,7 @@ import {
   fabricSchemaNegotiationResponseSigningInput,
   fabricReceiverAcknowledgementDigest,
   fabricReceiverAcknowledgementSigningInput,
+  validateFabricSchemaNegotiationRequest,
   validateFabricSchemaNegotiationResponse,
   validateFabricReceiverAcknowledgement,
   negotiateFabricSchema,
