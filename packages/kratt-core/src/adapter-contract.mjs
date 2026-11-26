@@ -22,7 +22,16 @@ const ROOT_KEYS = [
   "schema", "contractVersion", "adapterId", "provider", "implementation",
   "versions", "capabilities", "operations",
 ];
-const SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+function isSemver(value) {
+  if (typeof value !== "string") return false;
+  const match = SEMVER.exec(value);
+  if (!match) return false;
+  const prerelease = match[4];
+  return !prerelease || prerelease.split(".").every((part) =>
+    !(/^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))
+  );
+}
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const PROVIDER = /^[a-z][a-z0-9.-]{0,63}$/;
 const VERSION_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,63}$/;
@@ -178,7 +187,7 @@ function normalizeImplementation(value) {
   if (!hasExactDataKeys(value, ["version", "executionMode", "source", "artifactDigest"])) {
     fail("IMPLEMENTATION_SHAPE_INVALID");
   }
-  if (typeof value.version !== "string" || !SEMVER.test(value.version)) fail("IMPLEMENTATION_VERSION_INVALID");
+  if (!isSemver(value.version)) fail("IMPLEMENTATION_VERSION_INVALID");
   if (!ADAPTER_EXECUTION_MODES.includes(value.executionMode)) fail("EXECUTION_MODE_INVALID");
   if (!hasExactDataKeys(value.source, ["repository", "revision", "path"])) fail("IMPLEMENTATION_SOURCE_INVALID");
   if (typeof value.source.repository !== "string" || !REPOSITORY.test(value.source.repository) ||
@@ -212,7 +221,7 @@ function normalizeImplementation(value) {
 export function normalizeAdapterContract(input) {
   if (!hasExactDataKeys(input, ROOT_KEYS)) fail("ADAPTER_CONTRACT_SHAPE_INVALID");
   if (input.schema !== ADAPTER_CONTRACT_SCHEMA) fail("ADAPTER_CONTRACT_SCHEMA_UNSUPPORTED");
-  if (typeof input.contractVersion !== "string" || !SEMVER.test(input.contractVersion)) {
+  if (!isSemver(input.contractVersion)) {
     fail("ADAPTER_CONTRACT_VERSION_INVALID");
   }
   if (typeof input.adapterId !== "string" || !IDENTIFIER.test(input.adapterId)) fail("ADAPTER_ID_INVALID");
@@ -256,6 +265,33 @@ export function validateAdapterContract(input) {
   }
 }
 
+/**
+ * Resolve one declared operation into the existing capability-policy input shape.
+ * This is declaration resolution only: it grants no trust, approval or authority.
+ */
+export function resolveAdapterOperation(contractInput, operationId) {
+  const validation = validateAdapterContract(contractInput);
+  if (!validation.ok) {
+    return Object.freeze({ ok: false, code: "ADAPTER_CONTRACT_INVALID", reason: validation.code });
+  }
+  if (typeof operationId !== "string" || !IDENTIFIER.test(operationId)) {
+    return Object.freeze({ ok: false, code: "OPERATION_ID_INVALID" });
+  }
+  const declared = validation.value.operations.find((operation) => operation.operationId === operationId);
+  if (!declared) return Object.freeze({ ok: false, code: "OPERATION_NOT_DECLARED" });
+  return Object.freeze({
+    ok: true,
+    operation: Object.freeze({
+      operationId: declared.operationId,
+      class: declared.class,
+      requiredScopes: declared.requiredCapabilities,
+      idempotency: declared.idempotency,
+      timeoutMs: declared.timeoutMs,
+      maxAttempts: declared.maxAttempts,
+    }),
+  });
+}
+
 function normalizeHostCompatibility(input) {
   const keys = [
     "contractVersions", "eventSchemas", "protocols", "providerApis",
@@ -265,6 +301,7 @@ function normalizeHostCompatibility(input) {
   const contractVersions = readStringArray(input.contractVersions, {
     min: 1, max: 16, label: "HOST_CONTRACT_VERSIONS", pattern: SEMVER,
   });
+  if (contractVersions.some((version) => !isSemver(version))) fail("HOST_CONTRACT_VERSION_INVALID");
   return Object.freeze({
     contractVersions: Object.freeze(contractVersions),
     eventSchemas: Object.freeze(readPairArray(input.eventSchemas, { label: "HOST_EVENT_SCHEMAS" })),

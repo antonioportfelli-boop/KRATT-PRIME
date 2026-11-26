@@ -40,6 +40,7 @@ READ must declare IDEMPOTENT semantics. AT_MOST_ONCE_ATTEMPT and UNKNOWN_EXTERNA
 
 adapter-contract.mjs provides:
 
+- resolveAdapterOperation — resolves a declared operation into the existing capability-policy input shape (`requiredCapabilities` to `requiredScopes`); this creates no authorization decision and must be followed by the existing policy evaluator.
 - normalizeAdapterContract — strict closed-shape validation, safe source path validation, uniqueness checks, capability reference checks, semantic retry bounds and immutable normalized output;
 - validateAdapterContract — a stable result with safe error codes and no rejected payload reflection;
 - negotiateAdapterContract — exact matching of contract, event schema, protocol, provider API, configuration schema and capability versions.
@@ -47,6 +48,8 @@ adapter-contract.mjs provides:
 Unknown or unmatched critical versions fail closed. v1 does not perform coercion, field stripping, implicit mapping, automatic downgrade or semantic version range evaluation.
 
 ## Explicit non-authority guarantees
+
+A resolved operation is still only a declaration. The caller must pass it to the existing capability/policy evaluator together with trusted server-derived identity, effective scopes, current policy and a verified request-bound approval.
 
 A validated or compatible contract does not:
 

@@ -4,7 +4,9 @@ import {
   normalizeAdapterContract,
   validateAdapterContract,
   negotiateAdapterContract,
+  resolveAdapterOperation,
 } from "../src/adapter-contract.mjs";
+import { evaluateIntegrationOperation } from "../src/integration-capability-registry.mjs";
 
 const makeContract = (overrides = {}) => ({
   schema: "3XT-ADAPTER",
@@ -199,4 +201,75 @@ test("validation failures expose stable codes, not the rejected payload", () => 
   const result = validateAdapterContract({ secret: "do-not-reflect" });
   assert.equal(result.ok, false);
   assert.equal(JSON.stringify(result).includes("do-not-reflect"), false);
+});
+
+
+test("SemVer validation rejects malformed prerelease identifiers and leading zeroes", () => {
+  for (const invalid of ["01.2.3", "1.2.3-.-", "1.2.3-01", "1.2.3-alpha..1", "1.2.3+build..7"]) {
+    const contract = makeContract({ contractVersion: invalid });
+    assert.equal(validateAdapterContract(contract).ok, false, invalid);
+  }
+  const valid = makeContract({
+    contractVersion: "1.2.3-alpha.1+build.7",
+    implementation: { ...makeContract().implementation, version: "2.0.0-rc.2" },
+  });
+  assert.equal(validateAdapterContract(valid).ok, true);
+});
+
+test("host compatibility rejects malformed SemVer contract versions", () => {
+  const result = negotiateAdapterContract(makeContract(), hostCompatibility({
+    contractVersions: ["1.0.0-01"],
+  }));
+  assert.equal(result.supported, false);
+  assert.equal(result.code, "HOST_COMPATIBILITY_INVALID");
+  assert.equal(result.reason, "HOST_CONTRACT_VERSION_INVALID");
+});
+
+test("resolves a declared operation into the existing capability policy without authorizing it", () => {
+  const resolved = resolveAdapterOperation(makeContract(), "repo.contents.write");
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.operation.class, "EXTERNAL_WRITE");
+  assert.deepEqual(resolved.operation.requiredScopes, ["repository.write"]);
+  assert.equal("allowed" in resolved, false);
+  assert.equal("authorized" in resolved, false);
+
+  const policyContext = {
+    integration: {
+      integrationId: "github.primary",
+      provider: "github",
+      accountRef: "acct:primary",
+      state: "WRITE_ENABLED",
+      capabilities: { read: [], write: ["repository.write"] },
+      resourceScopes: { allow: ["owner/repo"], deny: [] },
+    },
+    operation: resolved.operation,
+    request: { requestId: "req:adapter-contract:01", provider: "github", target: "owner/repo" },
+    effectiveScopes: { read: [], write: ["repository.write"] },
+    now: Date.parse("2026-11-27T00:00:00.000Z"),
+  };
+  assert.equal(evaluateIntegrationOperation(policyContext).code, "APPROVAL_NOT_VERIFIED");
+
+  const allowed = evaluateIntegrationOperation({
+    ...policyContext,
+    approval: {
+      verified: true,
+      provider: "github",
+      operationId: "repo.contents.write",
+      target: "owner/repo",
+      requestId: "req:adapter-contract:01",
+      expiresAt: "2026-11-27T01:00:00.000Z",
+      approvalRef: "approval:adapter-contract:01",
+    },
+  });
+  assert.equal(allowed.allowed, true);
+  assert.equal(allowed.sideEffect, "EXTERNAL_WRITE");
+});
+
+test("operation resolution rejects undeclared operations and invalid contracts", () => {
+  assert.deepEqual(resolveAdapterOperation(makeContract(), "repo.contents.delete"), {
+    ok: false, code: "OPERATION_NOT_DECLARED",
+  });
+  assert.deepEqual(resolveAdapterOperation({ invalid: true }, "repo.contents.read"), {
+    ok: false, code: "ADAPTER_CONTRACT_INVALID", reason: "ADAPTER_CONTRACT_SHAPE_INVALID",
+  });
 });
