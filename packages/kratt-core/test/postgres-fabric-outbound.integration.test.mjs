@@ -51,6 +51,7 @@ test("PostgreSQL outbound Fabric reservations are idempotent and commit signed e
     const taskDigest = canonicalTaskDigest(task);
     const idempotencyKey = `kratt:${task.task_id}:${taskDigest.slice(7)}`;
     const approval = {
+      schema_version: "kratt-prime/v0.1", approved_by: "approver-01",
       approval_id: "approval-fabric-pg-01", task_id: task.task_id, actor: task.actor,
       provider: "fabric", operation: task.action, target: task.target, request_digest: taskDigest,
       key_id: "approval-key-01", nonce: "approval-nonce-pg-01",
