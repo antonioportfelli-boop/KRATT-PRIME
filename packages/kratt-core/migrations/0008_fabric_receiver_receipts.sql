@@ -38,7 +38,86 @@ CREATE TABLE IF NOT EXISTS kratt_fabric_inbound_acknowledgements (
     ack_json->>'delivery_attempt' IS NOT DISTINCT FROM delivery_attempt::text AND
     ack_json->>'content_digest' IS NOT DISTINCT FROM content_digest AND
     ack_json->>'policy_revision' IS NOT NULL AND
-    ack_json->>'policy_revision' ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' AND
+    ack_json->>'policy_revision' ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}
+  )
+);
+
+CREATE INDEX IF NOT EXISTS kratt_fabric_inbound_ack_created_idx
+  ON kratt_fabric_inbound_acknowledgements(created_at DESC);
+
+CREATE OR REPLACE FUNCTION kratt_reject_fabric_receiver_receipt_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'KRATT_FABRIC_RECEIVER_RECEIPT_APPEND_ONLY';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS kratt_fabric_receiver_receipt_immutable ON kratt_fabric_receiver_receipts;
+CREATE TRIGGER kratt_fabric_receiver_receipt_immutable
+  BEFORE UPDATE OR DELETE ON kratt_fabric_receiver_receipts
+  FOR EACH ROW EXECUTE FUNCTION kratt_reject_fabric_receiver_receipt_mutation();
+
+CREATE OR REPLACE FUNCTION kratt_reject_fabric_inbound_ack_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'KRATT_FABRIC_INBOUND_ACK_APPEND_ONLY';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS kratt_fabric_inbound_ack_immutable ON kratt_fabric_inbound_acknowledgements;
+CREATE TRIGGER kratt_fabric_inbound_ack_immutable
+  BEFORE UPDATE OR DELETE ON kratt_fabric_inbound_acknowledgements
+  FOR EACH ROW EXECUTE FUNCTION kratt_reject_fabric_inbound_ack_mutation();
+
+CREATE OR REPLACE FUNCTION kratt_guard_fabric_receiver_receipt_identity()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE inbox_row kratt_fabric_event_inbox%ROWTYPE;
+BEGIN
+  SELECT * INTO inbox_row FROM kratt_fabric_event_inbox WHERE event_id = NEW.event_id;
+  IF NOT FOUND OR inbox_row.source_node IS DISTINCT FROM NEW.source_node OR
+     inbox_row.destination_node IS DISTINCT FROM NEW.destination_node OR
+     inbox_row.source_sequence IS DISTINCT FROM NEW.source_sequence OR
+     inbox_row.content_digest IS DISTINCT FROM NEW.content_digest OR
+     inbox_row.event_json->>'event_type' IS DISTINCT FROM NEW.event_type OR
+     inbox_row.event_json->>'source_revision' IS DISTINCT FROM NEW.source_revision OR
+     inbox_row.event_json->>'key_id' IS DISTINCT FROM NEW.key_id THEN
+    RAISE EXCEPTION 'KRATT_FABRIC_RECEIVER_RECEIPT_IDENTITY_MISMATCH';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS kratt_fabric_receiver_receipt_identity_guard ON kratt_fabric_receiver_receipts;
+CREATE TRIGGER kratt_fabric_receiver_receipt_identity_guard
+  BEFORE INSERT ON kratt_fabric_receiver_receipts
+  FOR EACH ROW EXECUTE FUNCTION kratt_guard_fabric_receiver_receipt_identity();
+
+CREATE OR REPLACE FUNCTION kratt_guard_fabric_inbound_ack_binding()
+RETURNS trigger LANGUAGE plpgsql AS $wp03_8$
+DECLARE receipt_row kratt_fabric_receiver_receipts%ROWTYPE;
+BEGIN
+  SELECT * INTO receipt_row FROM kratt_fabric_receiver_receipts WHERE event_id = NEW.event_id;
+  IF NOT FOUND OR NEW.ack_json->>'event_id' IS DISTINCT FROM NEW.event_id OR
+     NEW.ack_json->>'source_node' IS DISTINCT FROM receipt_row.source_node OR
+     NEW.ack_json->>'receiver_node' IS DISTINCT FROM receipt_row.destination_node OR
+     NEW.ack_json->>'source_sequence' IS DISTINCT FROM receipt_row.source_sequence::text OR
+     NEW.ack_json->>'event_digest' IS DISTINCT FROM receipt_row.content_digest OR
+     NEW.ack_json->>'policy_revision' IS DISTINCT FROM receipt_row.policy_revision OR
+     NEW.ack_json->>'result' IS NULL OR
+     NEW.ack_json->>'result' NOT IN ('ACCEPTED','DUPLICATE') THEN
+    RAISE EXCEPTION 'KRATT_FABRIC_INBOUND_ACK_IDENTITY_MISMATCH';
+  END IF;
+  RETURN NEW;
+END;
+$wp03_8$;
+
+DROP TRIGGER IF EXISTS kratt_fabric_inbound_ack_binding_guard ON kratt_fabric_inbound_acknowledgements;
+CREATE TRIGGER kratt_fabric_inbound_ack_binding_guard
+  BEFORE INSERT ON kratt_fabric_inbound_acknowledgements
+  FOR EACH ROW EXECUTE FUNCTION kratt_guard_fabric_inbound_ack_binding();
+
+COMMIT; AND
+    ack_json->>'result' IS NOT NULL AND
     ack_json->>'result' IN ('ACCEPTED','DUPLICATE')
   )
 );
