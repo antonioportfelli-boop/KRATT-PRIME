@@ -130,6 +130,7 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
         const item = row.rows[0];
         if (item.task_id !== taskId || item.provider !== "fabric")
           return fail("ACK_TASK_OR_PROVIDER_BINDING_INVALID");
+        if (item.intent_status === "CANCELLED") return fail("ACK_TASK_CANCELLED");
         if (item.intent_status !== "INTENT_COMMITTED") return fail("ACK_INTENT_TERMINAL");
         if (!["LEASED", "RECONCILE"].includes(item.status) || !item.delivery_started_at ||
           item.delivery_lease_token !== leaseToken || (item.status === "LEASED" && item.lease_token !== leaseToken))
