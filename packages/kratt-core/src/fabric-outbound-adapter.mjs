@@ -47,14 +47,21 @@ function snapshotReferenceList(value) {
 
 function validApprovalShape(approval) {
   if (!approval || typeof approval !== "object" || Array.isArray(approval)) return false;
-  const fields = ["approval_id","task_id","actor","provider","operation","target","request_digest","key_id","nonce","issued_at","expires_at","decision","authority","signature"];
+  const fields = ["schema_version","approval_id","task_id","actor","provider","operation","target","request_digest","key_id","nonce","issued_at","expires_at","decision","approved_by","authority","signature"];
   const keys = Reflect.ownKeys(approval);
   if (keys.some(key => typeof key !== "string" || !fields.includes(key))) return false;
   if (fields.some(key => !Object.hasOwn(approval,key))) return false;
-  return keys.every(key => {
+  const dataOnly = keys.every(key => {
     const descriptor = Object.getOwnPropertyDescriptor(approval,key);
     return descriptor && Object.hasOwn(descriptor,"value") && descriptor.enumerable;
   });
+  return dataOnly && approval.schema_version === "kratt-prime/v0.1" && PRINCIPAL_ID.test(approval.approved_by ?? "") &&
+    approval.target && typeof approval.target === "object" && !Array.isArray(approval.target) &&
+    Reflect.ownKeys(approval.target).length === 2 &&
+    ["resource_type","resource_id"].every(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(approval.target,key);
+      return descriptor && Object.hasOwn(descriptor,"value") && descriptor.enumerable;
+    });
 }
 
 function existingReservation(existing, expectedEventId, sourceNode) {
