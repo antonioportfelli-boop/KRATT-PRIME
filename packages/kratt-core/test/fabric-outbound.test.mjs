@@ -259,3 +259,29 @@ test("database sequence reservation binds an idempotency key to one immutable re
   assert.equal(conflict.ok, false);
   assert.equal(conflict.reason, "FABRIC_SEQUENCE_REQUEST_CONFLICT");
 });
+
+
+test("outbound instrumentation emits only fixed counter names and amounts", async () => {
+  const { store } = makeStore();
+  const calls = [];
+  const metrics = { increment: (...args) => calls.push(args), gauge() { throw new Error("unused"); } };
+  const result = await makeAdapter(store, { metrics }).publish({
+    task, principal, approval, idempotencyKey, eventType: "factory.task.requested"
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(calls, [["fabric_outbound_events_total", 1]]);
+});
+
+test("outbound sequence conflicts are counted without weakening fail-closed behavior", async () => {
+  const { store } = makeStore({
+    sequence: async () => ({ ok: false, reason: "FABRIC_SEQUENCE_REQUEST_CONFLICT" })
+  });
+  const calls = [];
+  const metrics = { increment: (...args) => calls.push(args), gauge() {} };
+  const result = await makeAdapter(store, { metrics }).publish({
+    task, principal, approval, idempotencyKey, eventType: "factory.task.requested"
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "FABRIC_SEQUENCE_REQUEST_CONFLICT");
+  assert.deepEqual(calls, [["fabric_idempotency_conflicts", 1]]);
+});
