@@ -336,6 +336,12 @@ export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date
         [event.source_node,event.destination_node,event.key_id,event.source_revision,event.event_type]
       );
       if (q.rowCount !== 1) return fail("TRUST_INGRESS_POLICY_OR_NODE_CHANGED");
+      // Hold receiver-side public keys through this transaction so ACK creation/replay
+      // cannot race an ACTIVE -> VERIFY_ONLY/REVOKED transition.
+      const receiverKeys = await client.query(
+        "SELECT key_id FROM kratt_fabric_trusted_keys WHERE node_id=$1 AND status = ANY($2::text[]) FOR SHARE",
+        [event.destination_node, ["ACTIVE", "VERIFY_ONLY"]]
+      );
       const row = q.rows[0];
       if (row.key_status === "REVOKED" || row.key_status === "PENDING" ||
           !["ACTIVE", "VERIFY_ONLY"].includes(row.key_status)) return fail("TRUST_INGRESS_KEY_NOT_USABLE");
@@ -356,7 +362,7 @@ export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date
         source_node: event.source_node, status: "ACTIVE", destinations: [event.destination_node],
         allowed_event_types: [event.event_type], allowed_scope: row.allowed_scope,
         key_id: event.key_id, revision, max_ttl_ms: Number(row.max_ttl_ms)
-      }, key_status: row.key_status, policy_revision: revision });
+      }, key_status: row.key_status, policy_revision: revision, receiver_key_locks: receiverKeys.rowCount });
     } catch {
       return fail("TRUST_INGRESS_REVALIDATION_UNAVAILABLE");
     }
