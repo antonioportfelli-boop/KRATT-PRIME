@@ -38,9 +38,11 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     const receiverKeyPair = generateKeyPairSync("ed25519");
     const receiverPublicKeyPem = receiverKeyPair.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const trustMetricCalls = [];
+    const trustMetrics = { increment: (name, amount = 1) => trustMetricCalls.push([name, amount]), gauge() {} };
     const registry = createPostgresFabricTrustRegistry(pool, {
       clock: () => new Date(NOW), localNodeId: "kratt-node",
-      authorizeAdmin: async ({ actorId }) => actorId === "security-admin"
+      authorizeAdmin: async ({ actorId }) => actorId === "security-admin", metrics: trustMetrics
     });
     assert.equal((await registry.registerNode({
       nodeId: "steel-node", repositoryFullName: "3XTRINITY-CORPORATION-AND-SOFTWARE/STEEL-3XTRINITY-CORPORATION-OFFICIAL-APP-",
@@ -251,6 +253,12 @@ test("PostgreSQL trust registry governs pinned nodes, public-key lifecycle, exac
     const audit = await registry.verifyAuditChain();
     assert.equal(audit.ok, true, JSON.stringify(audit));
     assert.ok(audit.value.events >= 9);
+    await pool.query("ALTER TABLE kratt_fabric_trust_audit DISABLE TRIGGER kratt_fabric_trust_audit_immutable");
+    await pool.query("UPDATE kratt_fabric_trust_audit SET action='FORGED' WHERE sequence=1");
+    await pool.query("ALTER TABLE kratt_fabric_trust_audit ENABLE TRIGGER kratt_fabric_trust_audit_immutable");
+    const tamperedAudit = await registry.verifyAuditChain();
+    assert.equal(tamperedAudit.ok, false);
+    assert.ok(trustMetricCalls.some(([name, amount]) => name === "fabric_audit_integrity_failures" && amount === 1));
     await assert.rejects(
       pool.query("UPDATE kratt_fabric_trust_audit SET action='FORGED' WHERE sequence=1"),
       /KRATT_FABRIC_TRUST_AUDIT_APPEND_ONLY/
