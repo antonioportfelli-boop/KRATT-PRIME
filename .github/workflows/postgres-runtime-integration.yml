@@ -11,6 +11,8 @@ on:
       - "packages/kratt-core/src/fabric-interoperability.mjs"
       - "packages/kratt-core/src/fabric-outbound-adapter.mjs"
       - "packages/kratt-core/src/postgres-outbox-store.mjs"
+      - "packages/kratt-core/src/outbox-worker.mjs"
+      - "packages/kratt-core/test/outbox-worker.test.mjs"
       - "packages/kratt-core/migrations/0003_fabric_interoperability.sql"
       - "packages/kratt-core/migrations/0004_fabric_outbound.sql"
       - "packages/kratt-core/migrations/0005_fabric_trust_registry.sql"
@@ -34,6 +36,7 @@ on:
       - feature/wave2-runtime-reconciliation-2026-11-26
       - feature/wave3-fabric-interoperability-2026-11-26
       - feature/wp-03-8-receiver-dedup-2026-11-26
+      - feature/wp-03-9-provider-worker-security-2026-11-26
   workflow_dispatch:
 
 permissions:
