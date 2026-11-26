@@ -339,9 +339,11 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   }
   if (taskEvent && !validTaskId(taskId)) return fail("TASK_SCOPE_REQUIRED");
 
+  let ackFailureStage = "ACK_NOT_STARTED";
   const ackKeys = ["protocol", "ack_id", "event_id", "source_node", "receiver_node", "source_sequence",
     "event_digest", "delivery_attempt", "result", "policy_revision", "issued_at", "key_id", "content_digest", "signature"];
   const makeOrLoadAck = async (client, authorization, result, ackResult = "ACCEPTED") => {
+    ackFailureStage = "ACK_LEDGER_LOOKUP";
     if (!ackEnabled) return null;
     const found = await client.query(
       "SELECT ack_json FROM kratt_fabric_inbound_acknowledgements WHERE event_id=$1 AND delivery_attempt=$2 FOR UPDATE",
@@ -352,6 +354,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       acknowledgement = found.rows[0].ack_json;
     } else {
       let supplied;
+      ackFailureStage = "ACK_BUILDER_CALLBACK";
       try {
         supplied = await deps.createAcknowledgement({
           event, authenticatedKey: authenticated.value, authorization, result,
@@ -364,6 +367,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       if (supplied?.ok === false) throw new Error(supplied.code ?? "RECEIVER_ACK_CREATION_FAILED");
       acknowledgement = supplied?.ok === true ? supplied.value : supplied;
     }
+    ackFailureStage = "ACK_DOCUMENT_VALIDATION";
     if (!acknowledgement || typeof acknowledgement !== "object" || Array.isArray(acknowledgement) ||
         Object.keys(acknowledgement).length !== ackKeys.length || ackKeys.some(key => !Object.hasOwn(acknowledgement, key)) ||
         acknowledgement.protocol !== "3XT-FABRIC-ACK/1" ||
@@ -377,16 +381,19 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
         strictUtcMillis(acknowledgement.issued_at) === null || !validHash(acknowledgement.content_digest) ||
         typeof acknowledgement.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(acknowledgement.signature))
       throw new Error("RECEIVER_ACK_INVALID");
+    ackFailureStage = "ACK_DIGEST_VALIDATION";
     const unsigned = { ...acknowledgement };
     delete unsigned.content_digest;
     delete unsigned.signature;
     const expectedDigest = createHash("sha256").update(canonicalizeFabricJcs(unsigned), "utf8").digest("hex");
     if (expectedDigest !== acknowledgement.content_digest) throw new Error("RECEIVER_ACK_INVALID");
+    ackFailureStage = "ACK_SIGNER_RESOLUTION";
     let signerResult;
     try { signerResult = await deps.lockReceiverSigningIdentity(client, event.destination_node, acknowledgement.key_id, acknowledgement, now); }
     catch { throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE"); }
     if (signerResult?.ok === false) throw new Error(signerResult.code ?? "RECEIVER_ACK_SIGNER_UNAVAILABLE");
     const signer = signerResult?.ok === true ? signerResult.value : signerResult;
+    ackFailureStage = "ACK_SIGNER_LIFECYCLE";
     const ackIssuedAt = strictUtcMillis(acknowledgement.issued_at);
     const trustedNow = Number((deps.now ?? Date.now)());
     const keyValidFrom = signer?.valid_from ? strictUtcMillis(signer.valid_from) : null;
@@ -402,11 +409,13 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
         (signer.node_status !== undefined && signer.node_status !== "ACTIVE") ||
         signer.key_id !== acknowledgement.key_id || !signer.public_key || !signerUsableForAck)
       throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE");
+    ackFailureStage = "ACK_PUBLIC_KEY_IMPORT";
     let publicKey, signatureBytes;
     try {
       publicKey = signer.public_key?.type === "public" ? signer.public_key : createPublicKey(signer.public_key);
       signatureBytes = Buffer.from(acknowledgement.signature, "base64");
     } catch { throw new Error("RECEIVER_ACK_INVALID"); }
+    ackFailureStage = "ACK_SIGNATURE_VERIFY";
     const signingInput = ["3XT-FABRIC-ACK/1", acknowledgement.receiver_node, acknowledgement.key_id, acknowledgement.content_digest].join("\n");
     let signatureValid = false;
     try {
@@ -415,11 +424,13 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     } catch { signatureValid = false; }
     if (!signatureValid) throw new Error("RECEIVER_ACK_INVALID");
     if (found.rowCount === 0) {
+      ackFailureStage = "ACK_LEDGER_INSERT";
       await client.query(
         "INSERT INTO kratt_fabric_inbound_acknowledgements(event_id,delivery_attempt,ack_id,content_digest,ack_json,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
         [event.event_id, deliveryAttempt, acknowledgement.ack_id, acknowledgement.content_digest, JSON.stringify(acknowledgement), new Date(now).toISOString()]
       );
     }
+    ackFailureStage = "ACK_COMPLETE";
     return acknowledgement;
   };
   const duplicateResult = async (client, row) => {
@@ -627,10 +638,12 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
         ? "SQLSTATE_" + error.code : null;
       const isTrustReceiverError = /^TRUST_RECEIVER_(KEY|ACK)_/.test(message);
+      const safeException = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(error.name)
+        ? error.name.toUpperCase() : "UNKNOWN_EXCEPTION";
       const reason = ["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(message) || isTrustReceiverError
         ? message
         : /^ACK_[A-Z0-9_]{1,96}$/.test(message) ? message
-          : sqlState ?? "ACK_INTERNAL_ERROR";
+          : ackFailureStage + ":" + (sqlState ?? safeException);
       if (reason === "RECEIVER_ACK_INVALID" || reason === "RECEIVER_ACK_SIGNER_UNAVAILABLE" || isTrustReceiverError) return fail(reason);
       return fail("RECEIVER_ACK_CREATION_FAILED", reason);
     }
