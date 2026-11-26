@@ -1,4 +1,5 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import {
   claimExecution, createExecutionRecord, renewExecutionClaim,
@@ -8,6 +9,12 @@ import {
 const taskDigest = "sha256:" + "a".repeat(64);
 const resultDigest = "sha256:" + "b".repeat(64);
 const initialTime = "2026-11-26T12:00:00.000Z";
+const canonical = value => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") return JSON.stringify(Object.is(value, -0) ? 0 : value);
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
+};
 const claim = Object.freeze({
   worker_id: "worker-a",
   lease_id: "lease-a",
@@ -78,4 +85,27 @@ test("same-state heartbeat history remains fenced against a lower subsequent tok
   assert.equal(again.ok, true);
   assert.equal(again.record.last_fencing_token, 1);
   assert.equal(validateExecutionRecord(again.record).ok, true);
+});
+
+
+test("legacy v1 claimed records without historical lease-expiry fields remain readable", () => {
+  const created = createExecutionRecord({
+    task_id: "task-renewal-legacy",
+    task_revision: 1,
+    task_digest: taskDigest,
+    operation: "build",
+    now: () => initialTime
+  });
+  const claimed = claimExecution(created.record, {
+    ...claim,
+    expires_at: "2026-11-26T12:00:30.000Z"
+  }, { now: () => "2026-11-26T12:00:01.000Z" });
+  assert.equal(claimed.ok, true);
+  const { record_digest: ignored, ...unsigned } = claimed.record;
+  delete unsigned.history[0].lease_expires_at;
+  const legacy = {
+    ...unsigned,
+    record_digest: "sha256:" + createHash("sha256").update(canonical(unsigned), "utf8").digest("hex")
+  };
+  assert.equal(validateExecutionRecord(legacy).ok, true);
 });
