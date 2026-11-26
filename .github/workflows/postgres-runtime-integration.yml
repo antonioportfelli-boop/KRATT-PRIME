@@ -14,8 +14,10 @@ on:
       - "packages/kratt-core/migrations/0003_fabric_interoperability.sql"
       - "packages/kratt-core/migrations/0004_fabric_outbound.sql"
       - "packages/kratt-core/migrations/0005_fabric_trust_registry.sql"
+      - "packages/kratt-core/migrations/0006_outbox_delivery_reliability.sql"
+      - "packages/kratt-core/test/postgres-outbox-reliability.integration.test.mjs"
       - "packages/kratt-core/src/postgres-fabric-trust-registry.mjs"
-      - "packages/kratt-core/test/postgres-fabric-trust.integration.test.mjs"
+      - "packages/kratt-core/test/postgres-fabric-trust.integration.test.mjs packages/kratt-core/test/postgres-outbox-reliability.integration.test.mjs"
       - "packages/kratt-core/test/fabric-steel-contract.test.mjs"
       - "packages/kratt-core/test/fixtures/steel/fabric-v1.ts"
       - "packages/kratt-core/test/postgres-fabric.integration.test.mjs"
@@ -63,7 +65,7 @@ jobs:
         run: npm test && npm run typecheck && npm run build
       - name: Install PostgreSQL driver for isolated integration suite
         run: npm install --no-save --package-lock=false pg@8.16.3
-      - name: Run live PostgreSQL journal, leases, Fabric inbox, outbox and trust registry tests
+      - name: Run live PostgreSQL journal, leases, Fabric inbox/outbox, trust registry and delivery reliability tests
         env:
           KRATT_TEST_DATABASE_URL: postgres://kratt_test:kratt_test_password@127.0.0.1:5432/kratt_runtime_test
         run: node --test packages/kratt-core/test/postgres-runtime.integration.test.mjs packages/kratt-core/test/postgres-fabric.integration.test.mjs packages/kratt-core/test/postgres-fabric-outbound.integration.test.mjs packages/kratt-core/test/postgres-fabric-trust.integration.test.mjs

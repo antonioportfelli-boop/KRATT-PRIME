@@ -227,3 +227,27 @@ The Node 22 workflow completed the contract/syntax checks, typecheck and build. 
 - `resolveNodePolicy(sourceNode, authenticatedKey, event)` receives the verified event to select one exact source/destination/event-type rule. Existing two-argument callbacks remain compatible.
 - `max_ttl_ms` is enforced by the local policy authorizer when present.
 - No staging/production migration, worker, network sender, external effect, private-key provisioning or live KRATT↔STEEL transport has been enabled.
+
+
+## WP-03.6 — Delivery reliability without activating transport
+
+### Lease and pre-delivery fence
+- \`claimOutbox\` leases only committed intents whose task has no durable cancellation marker. Expired leases that never crossed the delivery-start fence can be safely reclaimed with a new token.
+- A worker must call \`beginOutboxDelivery\` after claim and before any future external I/O. It takes the same task-scoped PostgreSQL advisory lock as cancellation, checks current lease token, lease expiry, intent status and cancellation guard, then records \`delivery_started_at\` plus \`delivery_lease_token\`.
+- Cancellation before begin wins and marks PENDING/LEASED-unstarted rows CANCELLED. Once delivery is durably marked started, cancellation is refused with an explicit reason; the API does not claim an already-started external effect was cancelled.
+- \`finishOutbox\` requires the exact delivery-start token and binds the supplied task ID to the task ID persisted in the intent.
+
+### Retry and ambiguous outcomes
+- Retry requires a typed safety decision. \`SAFE_TO_RETRY\` applies bounded exponential backoff (maximum delay 1 hour) and transitions to PENDING or DEAD after the configured attempt limit.
+- If the outcome is UNKNOWN after delivery started, the row moves to RECONCILE; it is never automatically resent.
+- If a lease expires after delivery started, a sweeper invoked by the next claim moves it to RECONCILE, rather than claiming it under a new worker and risking a blind duplicate.
+
+### Dead-letter reconciliation
+- DEAD and RECONCILE records can be reconciled only through the injected \`authorizeReconciliation\` host gate and a unique evidence digest.
+- Supported decisions are SAFE_TO_RETRY, CONFIRMED_DELIVERED and CANCELLED. Every decision is persisted in an append-only reconciliation ledger and in the existing hash-chained audit stream.
+- Manual reconciliation is capped at 16 decisions per outbox record. Safe retry resets the current attempt counter but retains the immutable reconciliation history.
+- Cancellation markers and reconciliation records are append-only at the database trigger layer.
+
+### Verification and safety
+- PostgreSQL 16 integration covers migration reapplication, cancellation-before-start, begin-before-cancel, stale lease fencing, bounded backoff, max-attempt dead-letter, denied/admin-authorized reconciliation, unknown network outcome, lease expiry before/after start and append-only ledgers.
+- No HTTP sender/provider worker is registered or invoked. The delivery-start API is only a gate contract for future transport; all external effects remain disabled.
