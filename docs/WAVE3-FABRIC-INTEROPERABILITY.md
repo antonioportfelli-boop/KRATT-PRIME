@@ -158,7 +158,7 @@ The outbound adapter is a server-side composition boundary, not a network sender
 
 The publish request accepts a validated KRATT task, authenticated principal, request-bound approval, task-bound idempotency key and an event type. It does not accept caller-supplied destination node, scope, key id, source revision, payload or evidence references. Those values come from the server-owned resolvers. The signed `scope` is taken only from the trusted per-event policy.
 
-The adapter checks that approval task/actor/operation/target/request digest/provider/authority and validity period bind to the exact task. The injected `verifyApproval` callback must perform cryptographic signature and request-binding verification without consuming the nonce; the PostgreSQL outbox transaction performs the durable one-time nonce consumption. This separation prevents an in-memory or second database nonce consume from racing the outbox commit.
+The adapter checks that approval task/actor/operation/target/request digest/provider/authority and validity period bind to the exact task. The approval's provider is the task's own `task.constraints.provider`; it is not overwritten by the Fabric transport. The outbox provider is separately fixed to `fabric` for message delivery. The injected `verifyApproval` callback must perform cryptographic signature and request-binding verification without consuming the nonce; the PostgreSQL outbox transaction performs the durable one-time nonce consumption. This separation prevents an in-memory or second database nonce consume from racing the outbox commit.
 
 ### Sequence reservation and retry behaviour
 
