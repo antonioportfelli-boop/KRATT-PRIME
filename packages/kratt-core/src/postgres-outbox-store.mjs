@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { incrementFabricMetric, setFabricGauge } from "./fabric-metrics.mjs";
 const SCHEMA="kratt-audit/v1", ID=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/, HEX=/^[a-f0-9]{64}$/, ZERO="0".repeat(64);
 const digest=v=>createHash("sha256").update(v,"utf8").digest("hex");
 const validId=v=>typeof v==="string"&&ID.test(v);
@@ -22,9 +23,18 @@ async function tx(pool,work){
  }catch(e){try{await c.query("ROLLBACK");}catch{}throw e;}
  finally{c.release();}
 }
-export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeReconciliation}={}){
+export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeReconciliation,metrics=null}={}){
  if(!pool||typeof pool.connect!=="function"||typeof pool.query!=="function")throw new TypeError("POSTGRES_POOL_REQUIRED");
  if(typeof clock!=="function")throw new TypeError("TRUSTED_CLOCK_REQUIRED");
+ async function refreshOutboxGauges(){
+  if(!metrics)return;
+  try{
+   const q=await pool.query("SELECT count(*) FILTER (WHERE status='PENDING')::bigint AS pending, "+
+    "count(*) FILTER (WHERE status='RECONCILE')::bigint AS reconcile FROM kratt_dispatch_outbox");
+   setFabricGauge(metrics,"fabric_outbox_pending",Number(q.rows[0]?.pending??0));
+   setFabricGauge(metrics,"fabric_outbox_reconcile_required",Number(q.rows[0]?.reconcile??0));
+  }catch{}
+ }
  function nowIso(){
   const v=clock(),d=v instanceof Date?new Date(v.getTime()):new Date(v);
   if(!Number.isFinite(d.getTime()))throw new TypeError("TRUSTED_CLOCK_INVALID");
