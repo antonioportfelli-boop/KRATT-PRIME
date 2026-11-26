@@ -271,12 +271,13 @@ export function validateFabricReceiverAcknowledgement(input) {
 }
 
 export async function authenticateFabricReceiverAcknowledgement(input, {
-  expectedReceiverNode, resolveTrustedKey, now = () => Date.now()
+  expectedReceiverNode, expectedPolicyRevision, resolveTrustedKey, now = () => Date.now()
 } = {}) {
   const parsed = validateFabricReceiverAcknowledgement(input);
   if (!parsed.ok) return parsed;
   const ack = parsed.value;
   if (!validId(expectedReceiverNode) || ack.receiver_node !== expectedReceiverNode) return fail("ACK_WRONG_RECEIVER");
+  if (!validId(expectedPolicyRevision) || ack.policy_revision !== expectedPolicyRevision) return fail("ACK_POLICY_REVISION_MISMATCH");
   if (typeof resolveTrustedKey !== "function") return fail("ACK_TRUST_RESOLVER_REQUIRED");
   const nowMs = Number(now()), issued = strictUtc(ack.issued_at);
   if (!Number.isFinite(nowMs) || issued > nowMs + 5 * 60 * 1000 || issued < nowMs - 24 * 60 * 60 * 1000)
@@ -293,7 +294,7 @@ export async function authenticateFabricReceiverAcknowledgement(input, {
 }
 
 export async function processFabricReceiverAcknowledgement({
-  acknowledgement, expectedReceiverNode, resolveTrustedKey, acknowledgementStore,
+  acknowledgement, expectedReceiverNode, expectedPolicyRevision, resolveTrustedKey, acknowledgementStore,
   outboxId, leaseToken, now = () => Date.now()
 } = {}) {
   if (!acknowledgementStore || typeof acknowledgementStore.applyReceiverAcknowledgement !== "function")
@@ -301,7 +302,7 @@ export async function processFabricReceiverAcknowledgement({
   if (!validId(outboxId) || typeof leaseToken !== "string" || leaseToken.length < 16 || leaseToken.length > 128)
     return fail("ACK_DELIVERY_CONTEXT_INVALID");
   const authenticated = await authenticateFabricReceiverAcknowledgement(acknowledgement, {
-    expectedReceiverNode, resolveTrustedKey, now
+    expectedReceiverNode, expectedPolicyRevision, resolveTrustedKey, now
   });
   if (!authenticated.ok) return authenticated;
   try {
