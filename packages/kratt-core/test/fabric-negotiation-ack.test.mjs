@@ -7,6 +7,7 @@ import {
   FABRIC_RECEIVER_ACK_PROTOCOL,
   fabricSchemaNegotiationRequestDigest,
   fabricSchemaNegotiationRequestSigningInput,
+  fabricSchemaNegotiationResponseDigest,
   fabricSchemaNegotiationResponseSigningInput,
   fabricReceiverAcknowledgementDigest,
   fabricReceiverAcknowledgementSigningInput,
@@ -152,6 +153,36 @@ test("sender authenticates the receiver's signed negotiation response and reques
     now: () => NOW
   });
   assert.equal(untrusted.code, "NEGOTIATION_RESPONSE_ACK_KEY_UNTRUSTED");
+});
+
+test("sender rejects a validly signed receiver response below the offered minimum version", async () => {
+  const request = makeNegotiationRequest({ minimum_version: "2.0.0" });
+  const negotiated = await negotiateFabricSchema(request, negotiationDependencies());
+  assert.equal(negotiated.ok, true, JSON.stringify(negotiated));
+  assert.equal(negotiated.value.selected_version, "2.0.0");
+
+  const downgrade = {
+    ...negotiated.value,
+    selected_version: "1.0.0",
+    schema_digest: HASH_A,
+    content_digest: "",
+    signature: ""
+  };
+  downgrade.content_digest = fabricSchemaNegotiationResponseDigest(downgrade);
+  downgrade.signature = sign(null, Buffer.from(fabricSchemaNegotiationResponseSigningInput(downgrade)), receiver.privateKey).toString("base64");
+  assert.equal(verify(null, Buffer.from(fabricSchemaNegotiationResponseSigningInput(downgrade)),
+    receiver.publicKey, Buffer.from(downgrade.signature, "base64")), true);
+
+  const rejected = await authenticateFabricSchemaNegotiationResponse(downgrade, {
+    request,
+    expectedReceiverNode: "steel-node",
+    expectedSenderNode: "kratt-node",
+    expectedNegotiationId: request.negotiation_id,
+    expectedRequestDigest: request.content_digest,
+    resolveTrustedKey: async () => receiverIdentity,
+    now: () => NOW
+  });
+  assert.equal(rejected.code, "NEGOTIATION_RESPONSE_VERSION_DOWNGRADE");
 });
 
 test("does not downgrade below the sender floor or the receiver policy floor", async () => {
