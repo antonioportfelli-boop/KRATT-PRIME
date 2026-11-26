@@ -115,6 +115,15 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    await c.query("UPDATE kratt_dispatch_outbox SET status='RECONCILE',lease_owner=NULL,lease_token=NULL,lease_until=NULL,"+
     "last_error_code='DELIVERY_LEASE_EXPIRED_AFTER_START',updated_at=$1 "+
     "WHERE status='LEASED' AND lease_until<=$1 AND delivery_started_at IS NOT NULL",[at]);
+   const attemptColumn = await c.query(
+    "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() " +
+    "AND table_name='kratt_dispatch_outbox' AND column_name='delivery_attempt_sequence') AS available"
+   );
+   const hasAttemptSequence = attemptColumn.rows[0]?.available === true;
+   const attemptSequenceUpdate = hasAttemptSequence ? ",delivery_attempt_sequence=o.delivery_attempt_sequence+1" : "";
+   const attemptSequenceReturn = hasAttemptSequence
+    ? "o.delivery_attempt_sequence AS delivery_attempt_sequence"
+    : "o.attempts AS delivery_attempt_sequence";
    const r=await c.query(
     "WITH picked AS ("+
     " SELECT o.outbox_id FROM kratt_dispatch_outbox o "+
@@ -126,10 +135,10 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     " ORDER BY o.available_at,o.outbox_id FOR UPDATE SKIP LOCKED LIMIT $2"+
     ") "+
     "UPDATE kratt_dispatch_outbox o SET status='LEASED',lease_owner=$3,lease_token=$4,lease_until=$5,"+
-    "attempts=o.attempts+1,delivery_started_at=NULL,delivery_lease_token=NULL,updated_at=$1 "+
+    "attempts=o.attempts+1"+attemptSequenceUpdate+",delivery_started_at=NULL,delivery_lease_token=NULL,updated_at=$1 "+
     "FROM picked, kratt_dispatch_intents i "+
     "WHERE o.outbox_id=picked.outbox_id AND i.idempotency_key=o.idempotency_key "+
-    "RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token,o.lease_until,i.task_id",
+    "RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token,o.lease_until,i.task_id,"+attemptSequenceReturn,
     [at,limit,workerId,token,until]);
    return r.rows;
   });
