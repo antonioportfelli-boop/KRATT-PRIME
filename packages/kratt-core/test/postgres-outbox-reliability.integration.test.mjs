@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createPostgresOutboxStore } from "../src/postgres-outbox-store.mjs";
+import { createOutboxWorker } from "../src/outbox-worker.mjs";
 
 const connectionString=process.env.KRATT_TEST_DATABASE_URL;
 const here=dirname(fileURLToPath(import.meta.url));
@@ -56,6 +57,33 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const cancelRow=await pool.query("SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1",[cancelFirst.outboxId]);
   assert.equal(cancelRow.rows[0].status,"CANCELLED");
   assert.deepEqual(await claimOne(),[]);
+
+  // Exercise the real worker composition: cancellation wins after claim but before the delivery-start fence.
+  const workerCancelled = await seed("task-worker-cancel-after-claim","h");
+  let providerCalls = 0;
+  const workerStore = {
+   ...store,
+   async claimOutbox(options) {
+    const rows = await store.claimOutbox({ ...options, limit: 1 });
+    if (rows.length) {
+     const cancelled = await store.cancelTaskWithReason({ taskId: rows[0].task_id, actorId: "operator-01" });
+     assert.equal(cancelled.ok, true, JSON.stringify(cancelled));
+    }
+    return rows;
+   }
+  };
+  const worker = createOutboxWorker({
+   store: workerStore, workerId: "worker-security-test", actorId: "worker-security-test",
+   adapters: { fabric: { async dispatch() { providerCalls += 1; return { status: "accepted" }; } } }
+  });
+  const workerRun = await worker.runOnce({ limit: 1, leaseSeconds: 5 });
+  assert.equal(workerRun.claimed, 1);
+  assert.equal(providerCalls, 0);
+  assert.equal(workerRun.results[0].status, "LEASE_LOST");
+  assert.equal(workerRun.results[0].dispatched, false);
+  const workerCancelledRow = await pool.query("SELECT status,delivery_started_at FROM kratt_dispatch_outbox WHERE outbox_id=$1", [workerCancelled.outboxId]);
+  assert.equal(workerCancelledRow.rows[0].status, "CANCELLED");
+  assert.equal(workerCancelledRow.rows[0].delivery_started_at, null);
 
   // Once a delivery has durably begun, cancellation is refused rather than falsely acknowledged.
   const started=await seed("task-delivery-started","b");
