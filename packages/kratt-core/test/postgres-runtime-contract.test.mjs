@@ -10,8 +10,8 @@ import { createPostgresTrustedAuthorizationRuntime } from "../src/postgres-trust
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const migration = readFileSync(join(root, "migrations/0002_postgres_runtime_and_leases.sql"), "utf8");
 const journal = readFileSync(join(root, "src/postgres-runtime-store.mjs"), "utf8");
-const leases = readFileSync(join(root, "../../kratt-runtime/src/postgres-worker-lease-coordinator.mjs"), "utf8");
-const composition = readFileSync(join(root, "../../kratt-runtime/src/postgres-governed-execution.mjs"), "utf8");
+const leases = readFileSync(join(root, "../kratt-runtime/src/postgres-worker-lease-coordinator.mjs"), "utf8");
+const composition = readFileSync(join(root, "../kratt-runtime/src/postgres-governed-execution.mjs"), "utf8");
 
 test("PostgreSQL migration creates shared journal and fenced lease tables", () => {
   for (const name of [
