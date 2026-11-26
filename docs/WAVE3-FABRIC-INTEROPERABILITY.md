@@ -306,4 +306,11 @@ The append-only receipt and hash-chained audit record are committed in the same 
 - The PostgreSQL test applies migrations 0001, 0004, 0006 and 0007 in an isolated schema, reapplies 0007, signs acknowledgements with a test Ed25519 key, verifies exact duplicate versus conflicting acknowledgement handling, checks ACCEPTED/REJECTED/UNKNOWN transitions, wrong-event-ID and wrong-digest binding, cancellation-before-start, late ACK resolution after a started lease expires into RECONCILE, ACK-versus-cancellation serialization, append-only triggers and monotonic BIGINT attempt IDs across evidence-backed manual retry. The sequence advances at each outbox claim and is never reset with the retry budget.
 - The STEEL source snapshot remains test-only. The new unit/DB tests exercise the KRATT implementation; they do not run STEEL CI or a live receiver.
 
-**Evidence status:** CI results for the WP-03.7 commit must be attached after GitHub Actions completes. No staging/production migration or delivery was run.
+### CI evidence — implementation HEAD `56bddbfece14ee06145952b2ce0c7d5695369a33`
+
+All three GitHub Actions workflows reached successful test/build steps on this exact implementation HEAD:
+- [Node 22 syntax, KRATT contract tests, typecheck and build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45851195899) — SUCCESS. Contract test command: **238 total, 232 passed, 0 failed, 6 database-dependent skipped**; typecheck and build passed.
+- [KRATT PRIME core contract tests and application typecheck/build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45851195756) — SUCCESS. Contract test command: **238 total, 232 passed, 0 failed, 6 database-dependent skipped**; app typecheck/build passed.
+- [PostgreSQL 16 runtime integration](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45851195985) — SUCCESS. The general KRATT core command reported **212 total, 206 passed, 0 failed, 6 database-dependent skipped**; the dedicated PostgreSQL 16 command then reported **6 passed, 0 failed, 0 skipped**, including the new receiver-ACK integration test.
+
+The six database-dependent core tests skipped in the no-database unit runs are exercised in the dedicated PostgreSQL 16 workflow. These results are CI-only verification on an isolated workflow database; no staging/production migration, live network delivery, live STEEL receiver or STEEL CI run was performed.
