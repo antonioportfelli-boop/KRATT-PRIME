@@ -170,6 +170,18 @@ test("ingress persists inbox and source watermark before acknowledging", async (
   assert.equal(queries.at(-2).sql, "COMMIT");
 });
 
+test("task-scoped Fabric ingress requires an explicit signed task identity before opening a transaction", async () => {
+  const { pool, queries } = mockPool();
+  const missingTask = makeEvent({ payload: { state: "accepted" } });
+  const result = await receiveSteelFabricEventV1(pool, JSON.stringify(missingTask), {
+    localNodeId: "kratt-node", resolveTrustedKey: trustedKeyResolver, resolveNodePolicy: async () => policy,
+    now: () => NOW, handler: async () => assert.fail("task-scoped event must fail before the handler")
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "TASK_SCOPE_REQUIRED");
+  assert.equal(queries.length, 0);
+});
+
 test("ingress refuses wrong destination, missing parent and stale sequence", async () => {
   const deps = { localNodeId: "kratt-node", resolveTrustedKey: trustedKeyResolver, resolveNodePolicy: async () => policy, now: () => NOW, handler: async () => assert.fail("handler must not run") };
   const wrongDestination = mockPool();
