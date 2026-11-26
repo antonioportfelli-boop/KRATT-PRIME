@@ -390,9 +390,12 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       signatureBytes = Buffer.from(acknowledgement.signature, "base64");
     } catch { throw new Error("RECEIVER_ACK_INVALID"); }
     const signingInput = ["3XT-FABRIC-ACK/1", acknowledgement.receiver_node, acknowledgement.key_id, acknowledgement.content_digest].join("\n");
-    if (signatureBytes.length !== 64 || signatureBytes.toString("base64") !== acknowledgement.signature ||
-        !cryptoVerify(null, Buffer.from(signingInput, "utf8"), publicKey, signatureBytes))
-      throw new Error("RECEIVER_ACK_INVALID");
+    let signatureValid = false;
+    try {
+      signatureValid = signatureBytes.length === 64 && signatureBytes.toString("base64") === acknowledgement.signature &&
+        cryptoVerify(null, Buffer.from(signingInput, "utf8"), publicKey, signatureBytes);
+    } catch { signatureValid = false; }
+    if (!signatureValid) throw new Error("RECEIVER_ACK_INVALID");
     if (found.rowCount === 0) {
       await client.query(
         "INSERT INTO kratt_fabric_inbound_acknowledgements(event_id,delivery_attempt,ack_id,content_digest,ack_json,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
@@ -582,8 +585,8 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       result: storedResult, acknowledgement });
   } catch (error) {
     if (transactionOpen) await client.query("ROLLBACK").catch(() => undefined);
-    if (phase === "ACK") return fail(error instanceof Error && error.message === "RECEIVER_ACK_INVALID"
-      ? "RECEIVER_ACK_INVALID" : "RECEIVER_ACK_CREATION_FAILED");
+    if (phase === "ACK") return fail(error instanceof Error && ["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(error.message)
+      ? error.message : "RECEIVER_ACK_CREATION_FAILED");
     if (phase === "HANDLER") return fail(error instanceof Error && error.message === "EVENT_RESULT_NOT_SERIALIZABLE"
       ? "EVENT_RESULT_NOT_SERIALIZABLE" : "EVENT_HANDLER_FAILED");
     if (phase === "RECEIPT" || phase === "COMMIT") return fail("EVENT_RECEIPT_STORE_FAILED");
