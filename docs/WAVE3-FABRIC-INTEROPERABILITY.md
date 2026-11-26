@@ -122,7 +122,7 @@ The adapter returns stable result codes for malformed envelope/snapshot, unsuppo
 
 ## 8. Validation evidence and current limits
 
-Local unit suite: `node --test packages/kratt-core/test/fabric-interoperability.test.mjs` — 14 passed, 0 failed.
+Local unit suite: `node --test packages/kratt-core/test/fabric-interoperability.test.mjs` — 15 passed, 0 failed.
 
 The PostgreSQL integration test is separate and uses `KRATT_TEST_DATABASE_URL` plus the workflow's ephemeral PostgreSQL 16 service. It checks idempotency, concurrent duplicate delivery through two pools, monotonic ordering, sequence gaps, causal-parent requirements, transactional handler rollback/retry, and append-only database guards. A local run without a database URL skips this test; that skip is not PostgreSQL verification.
 
