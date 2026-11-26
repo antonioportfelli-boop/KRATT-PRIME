@@ -21,6 +21,7 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
 
   try {
     await admin.query(
+      "DROP TABLE IF EXISTS kratt_governed_approval_nonces CASCADE;" +
       "DROP TABLE IF EXISTS kratt_worker_lease_operations CASCADE;" +
       "DROP TABLE IF EXISTS kratt_worker_lease_reservations CASCADE;" +
       "DROP TABLE IF EXISTS kratt_runtime_journal_entries CASCADE;" +
