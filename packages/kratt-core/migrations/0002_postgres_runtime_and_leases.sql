@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS kratt_worker_lease_operations_reservation_idx
   ON kratt_worker_lease_operations(reservation_key, created_at);
 
 CREATE OR REPLACE FUNCTION kratt_guard_worker_lease_reservation()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger LANGUAGE plpgsql AS $
 BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'KRATT_WORKER_LEASE_RESERVATIONS_APPEND_ONLY_IDENTITY';
@@ -107,9 +107,39 @@ BEGIN
      NEW.fence < OLD.fence OR NEW.fence > OLD.fence + 1 THEN
     RAISE EXCEPTION 'KRATT_WORKER_LEASE_FENCE_OR_IDENTITY_INVALID';
   END IF;
+
+  IF OLD.status = 'AVAILABLE' AND NEW.status = 'LEASED' THEN
+    IF NEW.fence <> OLD.fence + 1 OR NEW.expires_at <= clock_timestamp() THEN
+      RAISE EXCEPTION 'KRATT_WORKER_LEASE_ACQUIRE_TRANSITION_INVALID';
+    END IF;
+  ELSIF OLD.status = 'LEASED' AND NEW.status = 'LEASED' THEN
+    IF NEW.fence = OLD.fence THEN
+      IF NEW.owner_id IS DISTINCT FROM OLD.owner_id OR
+         NEW.expires_at <= OLD.expires_at OR
+         NEW.expires_at <= clock_timestamp() THEN
+        RAISE EXCEPTION 'KRATT_WORKER_LEASE_RENEW_TRANSITION_INVALID';
+      END IF;
+    ELSIF NEW.fence = OLD.fence + 1 THEN
+      IF OLD.expires_at > clock_timestamp() OR NEW.expires_at <= clock_timestamp() THEN
+        RAISE EXCEPTION 'KRATT_WORKER_LEASE_REACQUIRE_BEFORE_EXPIRY';
+      END IF;
+    ELSE
+      RAISE EXCEPTION 'KRATT_WORKER_LEASE_FENCE_STEP_INVALID';
+    END IF;
+  ELSIF OLD.status = 'LEASED' AND NEW.status = 'AVAILABLE' THEN
+    IF NEW.fence <> OLD.fence OR NEW.owner_id IS NOT NULL OR NEW.expires_at IS NOT NULL THEN
+      RAISE EXCEPTION 'KRATT_WORKER_LEASE_RELEASE_TRANSITION_INVALID';
+    END IF;
+  ELSIF OLD.status = 'AVAILABLE' AND NEW.status = 'AVAILABLE' THEN
+    IF NEW.fence <> OLD.fence OR NEW.owner_id IS NOT NULL OR NEW.expires_at IS NOT NULL THEN
+      RAISE EXCEPTION 'KRATT_WORKER_LEASE_AVAILABLE_TRANSITION_INVALID';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'KRATT_WORKER_LEASE_STATUS_TRANSITION_INVALID';
+  END IF;
   RETURN NEW;
 END;
-$$;
+$;
 
 DROP TRIGGER IF EXISTS kratt_worker_lease_reservation_guard
   ON kratt_worker_lease_reservations;
