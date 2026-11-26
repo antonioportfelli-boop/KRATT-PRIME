@@ -158,6 +158,24 @@ test("rejects approval mismatch, expired approval and wrong principal before out
   assert.equal(state.sequenceCalls.length, 0);
 });
 
+test("rejects impossible UTC approval timestamps", async () => {
+  const { store, state } = makeStore();
+  const invalid = { ...approval, issued_at: "2026-02-30T11:59:00.000Z" };
+  const result = await makeAdapter(store).publish({ task, principal, approval: invalid, idempotencyKey, eventType: "factory.task.requested" });
+  assert.equal(result.code, "APPROVAL_TIME_INVALID");
+  assert.equal(state.sequenceCalls.length, 0);
+});
+
+test("rejects outbound signing keys outside their validity window", async () => {
+  const { store, state } = makeStore();
+  const adapter = makeAdapter(store, {
+    resolveSigningIdentity: async () => ({ ...identity, sign_until: "2026-11-26T11:59:59.000Z" })
+  });
+  const result = await adapter.publish({ task, principal, approval, idempotencyKey, eventType: "factory.task.requested" });
+  assert.equal(result.code, "OUTBOUND_SIGNING_KEY_WINDOW_CLOSED");
+  assert.equal(state.sequenceCalls.length, 0);
+});
+
 test("fails closed when signing identity and signature do not match", async () => {
   const { store, state } = makeStore();
   const wrongPair = generateKeyPairSync("ed25519");
