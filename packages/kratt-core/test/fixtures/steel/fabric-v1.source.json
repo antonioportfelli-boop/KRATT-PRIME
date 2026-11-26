@@ -1,0 +1,8 @@
+{
+  "protocol": "3XT-FABRIC/1",
+  "source_repository": "3XTRINITY-CORPORATION-AND-SOFTWARE/STEEL-3XTRINITY-CORPORATION-OFFICIAL-APP-",
+  "source_commit": "1978fa37d5df7bfa6cb2a3ba64480307492893d5",
+  "source_path": "factory/protocol/fabric-v1.ts",
+  "github_blob_sha": "79f08585da61a390cd59cbe44f069e8a821481da",
+  "role": "test-only pinned source snapshot; no STEEL repository write"
+}

@@ -6,6 +6,7 @@ on:
       - main
       - feature/kratt-governed-execution-bridge-v1
       - feature/wave2-runtime-reconciliation-2026-11-26
+      - feature/wave3-fabric-interoperability-2026-11-26
   pull_request:
     branches: [main]
 
