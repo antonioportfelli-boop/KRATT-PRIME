@@ -23,6 +23,8 @@ const requestDigest = canonicalTaskDigest(task);
 const digestHex = requestDigest.slice(7);
 const idempotencyKey = `kratt:${task.task_id}:${digestHex}`;
 const approval = {
+  schema_version: "kratt-prime/v0.1",
+  approved_by: "approver-01",
   approval_id: "approval-fabric-001",
   task_id: task.task_id,
   actor: principal.id,
