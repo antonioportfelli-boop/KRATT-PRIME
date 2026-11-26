@@ -24,15 +24,22 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date()}={}){
   await c.query("INSERT INTO kratt_audit_events(sequence,event_id,event_type,created_at,record_json,previous_hash,hash) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)",[sequence,record.event_id,record.event_type,record.created_at,json,previous,hash]);
   await c.query("UPDATE kratt_audit_head SET sequence=$1,hash=$2 WHERE singleton=TRUE",[sequence,hash]);return{sequence,hash};
  }
- async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload}={}){
+ async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload,provider,fabricEvent}={}){
   const now=clock(),at=(now instanceof Date?now:new Date(now)).toISOString();
   if(!task||!validId(task.task_id)||!principal||!validId(principal.id)||task.actor!==principal.id||
    !validId(approval?.key_id)||!validId(approval?.nonce)||!validId(approval?.approval_id)||!validTime(approval?.expires_at)||
    Date.parse(approval.expires_at)<=Date.parse(at)||!validIdempotencyKey(idempotencyKey)||!HEX.test(approval?.request_digest??"")||!HEX.test(approval?.signature_digest??""))
    return{ok:false,reason:"RESERVATION_INPUT_INVALID"};
+  const selectedProvider=provider??task.constraints?.provider??"unknown";
+  if(!validId(selectedProvider))return{ok:false,reason:"RESERVATION_PROVIDER_INVALID"};
+  if(fabricEvent&&(selectedProvider!=="fabric"||!validId(fabricEvent.event_id)||!validId(fabricEvent.source_node)||
+   !validId(fabricEvent.destination_node)||!validId(fabricEvent.key_id)||!HEX.test(fabricEvent.content_digest??"")||
+   !Number.isSafeInteger(fabricEvent.sequence)||fabricEvent.sequence<1))return{ok:false,reason:"FABRIC_EVENT_INVALID"};
   const intentId="intent:"+digest(idempotencyKey),outboxId="outbox:"+digest(idempotencyKey);
-  const event={schema_version:SCHEMA,event_id:intentId,event_type:"dispatch.intent_committed",created_at:at,actor_id:principal.id,task_id:task.task_id,
-   provider:task.constraints?.provider??"unknown",operation:task.action,idempotency_key:idempotencyKey,approval_key_id:approval.key_id,approval_id:approval.approval_id,request_digest:approval.request_digest};
+  const event={schema_version:SCHEMA,event_id:intentId,event_type:fabricEvent?"fabric.outbound.intent_committed":"dispatch.intent_committed",created_at:at,actor_id:principal.id,task_id:task.task_id,
+   provider:selectedProvider,operation:task.action,idempotency_key:idempotencyKey,approval_key_id:approval.key_id,approval_id:approval.approval_id,request_digest:approval.request_digest,
+   ...(fabricEvent?{fabric_event_id:fabricEvent.event_id,fabric_source_node:fabricEvent.source_node,fabric_destination_node:fabricEvent.destination_node,
+    fabric_sequence:fabricEvent.sequence,fabric_content_digest:fabricEvent.content_digest,fabric_key_id:fabricEvent.key_id}: {})};
   try{return await tx(pool,async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[task.task_id]);
    const nonce=await c.query("INSERT INTO kratt_approval_nonces(key_id,nonce,approval_id,expires_at,consumed_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(key_id,nonce) DO NOTHING RETURNING key_id",
@@ -44,9 +51,42 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date()}={}){
     [idempotencyKey,task.task_id,principal.id,event.provider,task.action,at]);
    if(intent.rowCount!==1)return{ok:false,reason:"DUPLICATE_IDEMPOTENCY_KEY"};
    await c.query("INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) VALUES($1,$2,$3,$4::jsonb,'PENDING',$5)",
-    [outboxId,idempotencyKey,event.provider,JSON.stringify(providerPayload??{task}),at]);
+    [outboxId,idempotencyKey,event.provider,JSON.stringify(providerPayload??(fabricEvent?{fabric_envelope:fabricEvent}:{task})),at]);
+   if(fabricEvent){
+    await c.query("INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)",
+     [fabricEvent.event_id,idempotencyKey,fabricEvent.source_node,fabricEvent.destination_node,fabricEvent.sequence,fabricEvent.key_id,fabricEvent.content_digest,fabricEvent.issued_at,fabricEvent.expires_at,JSON.stringify(fabricEvent)]);
+   }
    const audit=await appendAudit(c,event);return{ok:true,intent_id:intentId,outbox_id:outboxId,audit_sequence:audit.sequence};
   });}catch(e){if(e?.code==="23505")return{ok:false,reason:"DUPLICATE_OR_REPLAYED"};throw e;}
+ }
+ async function reserveFabricSequence({sourceNode,idempotencyKey,requestDigest}={}){
+  if(!validId(sourceNode)||!validIdempotencyKey(idempotencyKey)||!HEX.test(requestDigest??""))return{ok:false,reason:"FABRIC_SEQUENCE_INPUT_INVALID"};
+  return tx(pool,async c=>{
+   await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",["fabric-outbound:"+sourceNode]);
+   const existing=await c.query("SELECT source_sequence,request_digest FROM kratt_fabric_outbound_sequences WHERE source_node=$1 AND idempotency_key=$2 FOR UPDATE",[sourceNode,idempotencyKey]);
+   if(existing.rowCount===1){
+    if(existing.rows[0].request_digest!==requestDigest)return{ok:false,reason:"FABRIC_SEQUENCE_REQUEST_CONFLICT"};
+    return{ok:true,sequence:Number(existing.rows[0].source_sequence),duplicate:true};
+   }
+   await c.query("INSERT INTO kratt_fabric_outbound_heads(source_node,last_sequence) VALUES($1,0) ON CONFLICT(source_node) DO NOTHING",[sourceNode]);
+   const head=await c.query("SELECT last_sequence FROM kratt_fabric_outbound_heads WHERE source_node=$1 FOR UPDATE",[sourceNode]);
+   if(head.rowCount!==1)throw new Error("FABRIC_OUTBOUND_HEAD_UNAVAILABLE");
+   const sequence=Number(head.rows[0].last_sequence)+1;
+   if(!Number.isSafeInteger(sequence)||sequence<1)throw new Error("FABRIC_OUTBOUND_SEQUENCE_INVALID");
+   await c.query("UPDATE kratt_fabric_outbound_heads SET last_sequence=$2,updated_at=clock_timestamp() WHERE source_node=$1",[sourceNode,sequence]);
+   await c.query("INSERT INTO kratt_fabric_outbound_sequences(source_node,idempotency_key,request_digest,source_sequence) VALUES($1,$2,$3,$4)",[sourceNode,idempotencyKey,requestDigest,sequence]);
+   return{ok:true,sequence,duplicate:false};
+  });
+ }
+ async function findOutboxByIdempotencyKey(idempotencyKey){
+  if(!validIdempotencyKey(idempotencyKey))return{ok:false,reason:"IDEMPOTENCY_KEY_INVALID"};
+  const q=await pool.query(`SELECT o.provider,o.status,o.payload,o.attempts,o.available_at,e.event_json,e.content_digest
+   FROM kratt_dispatch_outbox o LEFT JOIN kratt_fabric_outbound_events e ON e.idempotency_key=o.idempotency_key
+   WHERE o.idempotency_key=$1`,[idempotencyKey]);
+  if(q.rowCount!==1)return{ok:true,found:false};
+  const row=q.rows[0];
+  if(row.provider!=="fabric"||!row.event_json)return{ok:false,reason:"IDEMPOTENCY_KEY_USED_BY_OTHER_PROVIDER"};
+  return{ok:true,found:true,status:row.status,attempts:Number(row.attempts),available_at:row.available_at,event:row.event_json,content_digest:row.content_digest};
  }
  async function claimOutbox({workerId,limit=10,leaseSeconds=60}={}){
   if(!validId(workerId)||!Number.isInteger(limit)||limit<1||limit>100||!Number.isInteger(leaseSeconds)||leaseSeconds<5||leaseSeconds>900)throw new TypeError("OUTBOX_CLAIM_OPTIONS_INVALID");
@@ -85,5 +125,5 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date()}={}){
    if(r.rowCount!==1)return false;await appendAudit(c,{schema_version:SCHEMA,event_id:"cancel:"+digest(taskId),event_type:"task.cancelled",created_at:at,actor_id:actorId,task_id:taskId});return true;
   });
  }
- return Object.freeze({reserveAuthorizedIntent,claimOutbox,finishOutbox,retryOutbox,cancelTask});
+ return Object.freeze({reserveAuthorizedIntent,reserveFabricSequence,findOutboxByIdempotencyKey,claimOutbox,finishOutbox,retryOutbox,cancelTask});
 }
