@@ -3,6 +3,36 @@
 -- Append-only records are bound to one immutable outbound event and one delivery attempt.
 BEGIN;
 
+-- Retry budget counters may reset during manual reconciliation. This independent
+-- sequence is the identity of each actual delivery attempt.
+ALTER TABLE kratt_dispatch_outbox
+  ADD COLUMN IF NOT EXISTS delivery_attempt_sequence BIGINT NOT NULL DEFAULT 0;
+
+UPDATE kratt_dispatch_outbox
+SET delivery_attempt_sequence = attempts
+WHERE delivery_attempt_sequence = 0 AND attempts > 0;
+
+ALTER TABLE kratt_dispatch_outbox
+  DROP CONSTRAINT IF EXISTS kratt_dispatch_outbox_delivery_attempt_sequence_check;
+ALTER TABLE kratt_dispatch_outbox
+  ADD CONSTRAINT kratt_dispatch_outbox_delivery_attempt_sequence_check
+  CHECK (delivery_attempt_sequence >= 0);
+
+CREATE OR REPLACE FUNCTION kratt_guard_delivery_attempt_sequence()
+RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+  IF NEW.delivery_attempt_sequence < OLD.delivery_attempt_sequence THEN
+    RAISE EXCEPTION 'KRATT_OUTBOX_DELIVERY_ATTEMPT_SEQUENCE_ROLLBACK';
+  END IF;
+  RETURN NEW;
+END;
+$;
+
+DROP TRIGGER IF EXISTS kratt_delivery_attempt_sequence_guard ON kratt_dispatch_outbox;
+CREATE TRIGGER kratt_delivery_attempt_sequence_guard
+  BEFORE UPDATE ON kratt_dispatch_outbox
+  FOR EACH ROW EXECUTE FUNCTION kratt_guard_delivery_attempt_sequence();
+
 CREATE TABLE IF NOT EXISTS kratt_fabric_receiver_acknowledgements (
   ack_id TEXT PRIMARY KEY CHECK (ack_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   outbox_id TEXT NOT NULL REFERENCES kratt_dispatch_outbox(outbox_id),
