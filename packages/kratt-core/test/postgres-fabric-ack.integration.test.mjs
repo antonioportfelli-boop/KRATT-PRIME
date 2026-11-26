@@ -323,14 +323,81 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       /KRATT_FABRIC_ACK_LEDGER_TRUNCATE_FORBIDDEN/
     );
 
+    // The server commits the ACK but the client loses the COMMIT response. A fresh
+    // pool must discover the durable receipt without a second terminal transition.
+    const ambiguous = await seed("commit-response-lost");
+    const ambiguousLease = await begin(ambiguous);
+    const ambiguousAck = makeAck(ambiguous.event, ambiguousLease.delivery_attempt_sequence, "ACCEPTED", "commit-response-lost");
+    const ambiguousPool = {
+      query: (...args) => pool.query(...args),
+      async connect() {
+        const client = await pool.connect();
+        let commitResponseLost = false;
+        return {
+          query: async (sql, ...args) => {
+            const result = await client.query(sql, ...args);
+            if (sql === "COMMIT" && !commitResponseLost) {
+              commitResponseLost = true;
+              throw new Error("simulated client disconnect after server commit");
+            }
+            return result;
+          },
+          release: () => client.release()
+        };
+      }
+    };
+    const ambiguousStore = createPostgresFabricAcknowledgementStore(ambiguousPool, {
+      clock: () => new Date(clock),
+      lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
+        trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
+    });
+    const lostReply = await process(ambiguous, ambiguousLease, ambiguousAck, ambiguousStore);
+    assert.equal(lostReply.ok, false);
+    assert.equal(lostReply.code, "ACK_STORE_UNAVAILABLE");
+    const recoveredReply = await process(ambiguous, ambiguousLease, ambiguousAck, acknowledgementsB);
+    assert.equal(recoveredReply.ok, true);
+    assert.equal(recoveredReply.value.duplicate, true);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [ambiguous.outboxId]
+    )).rows[0].n, 1);
+
+    // Once the exact trusted key is locked FOR SHARE, concurrent revocation must wait
+    // until the ACK ledger and terminal intent/outbox transition commit.
+    const keyRace = await seed("key-revocation-race");
+    const keyRaceLease = await begin(keyRace);
+    const keyRaceAck = makeAck(keyRace.event, keyRaceLease.delivery_attempt_sequence, "ACCEPTED", "key-revocation-race");
+    let releaseKeyLock;
+    let signalKeyLock;
+    const keyLockHeld = new Promise(resolve => { signalKeyLock = resolve; });
+    const keyLockGate = new Promise(resolve => { releaseKeyLock = resolve; });
+    const lockingStore = createPostgresFabricAcknowledgementStore(pool, {
+      clock: () => new Date(clock),
+      lockTrustedReceiverKey: async (client, nodeId, keyId, ack, nowMs) => {
+        const locked = await trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs);
+        signalKeyLock();
+        await keyLockGate;
+        return locked;
+      }
+    });
+    const keyRacePending = process(keyRace, keyRaceLease, keyRaceAck, lockingStore);
+    await keyLockHeld;
+    let revocationFinished = false;
+    const revocationPending = trust.transitionKey({
+      nodeId: "steel-node", keyId: receiverIdentity.key_id, nextStatus: "REVOKED",
+      actorId: "operator-01", reason: "serialize receiver key revocation after ACK commit"
+    }).then(result => { revocationFinished = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(revocationFinished, false, "key revocation must wait for the ACK FOR SHARE lock");
+    releaseKeyLock();
+    const keyRaceResult = await keyRacePending;
+    assert.equal(keyRaceResult.ok, true, JSON.stringify(keyRaceResult));
+    assert.equal(keyRaceResult.value.outbox_status, "DONE");
+    assert.equal((await revocationPending).ok, true);
+
     const revoked = await seed("receiver-key-revoked");
     const revokedLease = await begin(revoked);
     const revokedAck = makeAck(revoked.event, revokedLease.delivery_attempt_sequence, "ACCEPTED", "revoked-key");
-    assert.equal((await trust.transitionKey({
-      nodeId: "steel-node", keyId: receiverIdentity.key_id, nextStatus: "REVOKED",
-      actorId: "operator-01", reason: "revoke isolated test receiver key"
-    })).ok, true);
-    const revokedResult = await process(revoked, revokedLease, revokedAck);
+    const revokedResult = await process(revoked, revokedLease, revokedAck, acknowledgementsB);
     assert.equal(revokedResult.ok, false);
     assert.equal(revokedResult.code, "ACK_KEY_UNTRUSTED");
     assert.equal((await pool.query(
