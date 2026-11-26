@@ -170,7 +170,7 @@ test("PostgreSQL 16 completes an authorized Fabric outbound intent through fence
     })).find(item => item.outbox_id === record.outbox_id);
     assert.ok(claimed, "the committed outbound intent should be claimable");
     const deliveryStarted = await outbox.beginOutboxDelivery({
-      outboxId: record.outbox_id, leaseToken: claimed.lease_token
+      outboxId: record.outbox_id, leaseToken: claimed.lease_token, workerId: "worker-fabric-e2e"
     });
     assert.equal(deliveryStarted.ok, true, JSON.stringify(deliveryStarted));
     assert.equal(deliveryStarted.duplicate, false);
