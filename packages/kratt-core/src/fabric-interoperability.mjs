@@ -319,7 +319,6 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   const issuedAt = strictUtcMillis(event.issued_at);
   const expiresAt = strictUtcMillis(event.expires_at);
   if (issuedAt > now + MAX_FABRIC_FUTURE_SKEW_MS) return fail("EVENT_NOT_YET_VALID");
-  if (expiresAt <= now) return fail("EVENT_EXPIRED");
 
   const authenticated = await authenticateSteelFabricEventV1(event, { resolveTrustedKey: deps.resolveTrustedKey, now: () => now });
   if (!authenticated.ok) return authenticated;
@@ -415,6 +414,12 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       }
       await client.query("COMMIT"); transactionOpen = false;
       return ok(duplicate.value);
+    }
+    // A committed event may need its saved ACK replayed after its original TTL expires.
+    // Expiry therefore blocks only first-time processing, not an exact persisted replay.
+    if (expiresAt <= now) {
+      await client.query("ROLLBACK"); transactionOpen = false;
+      return fail("EVENT_EXPIRED");
     }
 
     await client.query(
