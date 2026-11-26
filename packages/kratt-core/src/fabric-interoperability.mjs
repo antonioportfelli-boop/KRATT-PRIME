@@ -641,10 +641,12 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       const isTrustReceiverError = /^TRUST_RECEIVER_(KEY|ACK)_/.test(message);
       const safeException = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(error.name)
         ? error.name.toUpperCase() : "UNKNOWN_EXCEPTION";
+      const safeReference = error instanceof ReferenceError && /^[A-Za-z_$][A-Za-z0-9_$ ]{0,95}$/.test(error.message)
+        ? ":" + error.message : "";
       const reason = ["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(message) || isTrustReceiverError
         ? message
         : /^ACK_[A-Z0-9_]{1,96}$/.test(message) ? message
-          : ackFailureStage + ":" + (sqlState ?? safeException);
+          : ackFailureStage + ":" + (sqlState ?? safeException) + safeReference;
       if (reason === "RECEIVER_ACK_INVALID" || reason === "RECEIVER_ACK_SIGNER_UNAVAILABLE" || isTrustReceiverError) return fail(reason);
       return fail("RECEIVER_ACK_CREATION_FAILED", reason);
     }
