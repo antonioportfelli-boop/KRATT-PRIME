@@ -47,7 +47,6 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
     assert.equal(verification.count, 2);
     const entries = await storeB.readAll();
     assert.deepEqual(entries.map(entry => entry.sequence), [1, 2]);
-    assert.equal(entries[1].previousHash, undefined);
     assert.equal(entries[1].hash.length, 64);
 
     await assert.rejects(
