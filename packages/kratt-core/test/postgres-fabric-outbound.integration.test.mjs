@@ -28,11 +28,16 @@ test("PostgreSQL outbound Fabric reservations are idempotent and commit signed e
     const baseMigration = await readFile(join(migrationDir, "0001_postgres_outbox.sql"), "utf8");
     const outboundMigration = await readFile(join(migrationDir, "0004_fabric_outbound.sql"), "utf8");
     const reliabilityMigration = await readFile(join(migrationDir, "0006_outbox_delivery_reliability.sql"), "utf8");
+    const receiverAckMigration = await readFile(join(migrationDir, "0007_fabric_receiver_acknowledgements.sql"), "utf8");
+    const ackReconciliationMigration = await readFile(join(migrationDir, "0009_fabric_ack_outbox_reconciliation.sql"), "utf8");
     await poolA.query(baseMigration);
     await poolA.query(outboundMigration);
     await poolA.query(outboundMigration);
     await poolA.query(reliabilityMigration);
     await poolA.query(reliabilityMigration);
+    await poolA.query(receiverAckMigration);
+    await poolA.query(ackReconciliationMigration);
+    await poolA.query(ackReconciliationMigration);
 
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const identity = {
@@ -109,12 +114,14 @@ test("PostgreSQL outbound Fabric reservations are idempotent and commit signed e
       (SELECT count(*)::int FROM kratt_dispatch_outbox) AS outbox_count,
       (SELECT count(*)::int FROM kratt_fabric_outbound_events) AS fabric_count,
       (SELECT status FROM kratt_dispatch_outbox WHERE idempotency_key=$1) AS outbox_status,
-      (SELECT attempts FROM kratt_dispatch_outbox WHERE idempotency_key=$1) AS attempts`, [idempotencyKey]);
+      (SELECT attempts FROM kratt_dispatch_outbox WHERE idempotency_key=$1) AS attempts,
+      (SELECT ack_policy_revision FROM kratt_fabric_outbound_events WHERE idempotency_key=$1) AS ack_policy_revision`, [idempotencyKey]);
     assert.equal(counts.rows[0].intent_count, 1);
     assert.equal(counts.rows[0].outbox_count, 1);
     assert.equal(counts.rows[0].fabric_count, 1);
     assert.equal(counts.rows[0].outbox_status, "PENDING");
     assert.equal(counts.rows[0].attempts, 0, "no worker claimed or dispatched the message");
+    assert.equal(counts.rows[0].ack_policy_revision, "pg-policy-1");
 
     const storeA = createPostgresOutboxStore(poolA);
     const storeB = createPostgresOutboxStore(poolB);
