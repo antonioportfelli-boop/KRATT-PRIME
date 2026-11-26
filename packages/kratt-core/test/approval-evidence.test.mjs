@@ -88,3 +88,11 @@ test("approval with a missing or mismatched request digest fails closed", async 
   assert.equal(missing.code, "APPROVAL_REQUEST_DIGEST_MISMATCH");
   assert.equal(mismatch.code, "APPROVAL_REQUEST_DIGEST_MISMATCH");
 });
+
+
+test("accepts versioned capability references in approval scopes", () => {
+  const normalized = normalizeApprovalEnvelope(envelope({
+    scopes: ["repository.write@1.0.0"],
+  }));
+  assert.deepEqual(normalized.scopes, ["repository.write@1.0.0"]);
+});

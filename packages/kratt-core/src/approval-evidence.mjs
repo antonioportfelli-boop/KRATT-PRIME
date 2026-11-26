@@ -3,6 +3,7 @@
  * Signature verification and durable replay/revocation are injected production dependencies.
  */
 const SAFE_REF = /^[a-z][a-z0-9._:-]{1,127}$/;
+const SAFE_SCOPE = /^[a-z][a-z0-9._:@/-]{1,127}$/;
 const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const deny = (code, reason) => Object.freeze({ allowed: false, code, reason });
 const VERIFIED_APPROVALS = new WeakSet();
@@ -18,7 +19,7 @@ export function normalizeApprovalEnvelope(input) {
   for (const key of refs) if (typeof input[key] !== "string" || !SAFE_REF.test(input[key])) throw new TypeError("invalid " + key);
   if (typeof input.target !== "string" || input.target.length < 1 || input.target.length > 512) throw new TypeError("invalid target");
   if (typeof input.nonce !== "string" || input.nonce.length < 16 || input.nonce.length > 256) throw new TypeError("invalid nonce");
-  if (!Array.isArray(input.scopes) || input.scopes.length === 0 || input.scopes.some(x => typeof x !== "string" || !SAFE_REF.test(x)) || new Set(input.scopes).size !== input.scopes.length) throw new TypeError("scopes must be unique safe references");
+  if (!Array.isArray(input.scopes) || input.scopes.length === 0 || input.scopes.some(x => typeof x !== "string" || !SAFE_SCOPE.test(x)) || new Set(input.scopes).size !== input.scopes.length) throw new TypeError("scopes must be unique safe references");
   if (typeof input.destructive !== "boolean") throw new TypeError("destructive must be boolean");
   if (input.requestDigest !== undefined &&
       (typeof input.requestDigest !== "string" || !/^[a-f0-9]{64}$/.test(input.requestDigest))) {
@@ -42,7 +43,7 @@ export async function verifyApprovalForRequest({ envelope, verifier, request, pr
   try { approval = normalizeApprovalEnvelope(envelope); }
   catch (error) { return deny("APPROVAL_INVALID", error.message); }
   if (!verifier || typeof verifier.verify !== "function") return deny("VERIFIER_UNAVAILABLE", "trusted approval verifier is required");
-  if (!isRecord(request) || !Array.isArray(requiredScopes) || requiredScopes.some(x => typeof x !== "string")) return deny("REQUEST_INVALID", "request context is invalid");
+  if (!isRecord(request) || !Array.isArray(requiredScopes) || requiredScopes.some(x => typeof x !== "string" || !SAFE_SCOPE.test(x))) return deny("REQUEST_INVALID", "request context is invalid");
   const issued = Date.parse(approval.issuedAt), expires = Date.parse(approval.expiresAt);
   if (issued > now) return deny("APPROVAL_NOT_YET_VALID", "approval issue time is in the future");
   if (expires <= now) return deny("APPROVAL_EXPIRED", "approval has expired");
