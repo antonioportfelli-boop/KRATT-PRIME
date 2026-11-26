@@ -34,8 +34,8 @@ test("durable evidence reports a shared injected journal scope without claiming 
   const status = await repository.verify();
   assert.equal(status.ok, true);
   assert.equal(status.scope, "POSTGRES_SHARED_DATABASE");
-  assert.equal(status.encrypted, false);
-  assert.equal(status.remoteSync, false);
+  assert.equal(status.encrypted, null);
+  assert.equal(status.remoteSync, null);
 });
 
 test("durable evidence retains the local-journal default when no scope is advertised", async () => {
