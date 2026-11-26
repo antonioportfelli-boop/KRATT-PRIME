@@ -27,9 +27,12 @@ test("PostgreSQL outbound Fabric reservations are idempotent and commit signed e
     poolB = new Pool({ connectionString, max: 5, options: `-c search_path=${schema}` });
     const baseMigration = await readFile(join(migrationDir, "0001_postgres_outbox.sql"), "utf8");
     const outboundMigration = await readFile(join(migrationDir, "0004_fabric_outbound.sql"), "utf8");
+    const reliabilityMigration = await readFile(join(migrationDir, "0006_outbox_delivery_reliability.sql"), "utf8");
     await poolA.query(baseMigration);
     await poolA.query(outboundMigration);
     await poolA.query(outboundMigration);
+    await poolA.query(reliabilityMigration);
+    await poolA.query(reliabilityMigration);
 
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const identity = {
