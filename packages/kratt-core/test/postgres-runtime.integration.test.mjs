@@ -173,7 +173,15 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
       ownerId,
       ttlMs: 9_000
     });
-    assert.equal(operationReuse.reason, "WORKER_LEASE_OPERATION_ID_REUSED");
+    assert.equal(operationReuse.reason, "WORKER_LEASE_REPLAY_STALE");
+    const reusedWithDifferentInput = await restarted.acquire({
+      operationId: "lease-reacquire-after-expiry",
+      reservationKey: "integration-task-1",
+      taskDigest: digest,
+      ownerId: "worker-different-owner",
+      ttlMs: 9_000
+    });
+    assert.equal(reusedWithDifferentInput.reason, "WORKER_LEASE_OPERATION_ID_REUSED");
   } finally {
     await Promise.all([poolA.end(), poolB.end(), admin.end()]);
   }
