@@ -58,7 +58,7 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const cancelled=await store.cancelTaskWithReason({taskId:cancelFirst.taskId,actorId:"operator-01"});
   assert.equal(cancelled.ok,true,JSON.stringify(cancelled));
   assert.equal(cancelled.cancelled_outbox_count,1);
-  const afterCancel=await store.beginOutboxDelivery({outboxId:cancelFirst.outboxId,leaseToken:claimedForCancel[0].lease_token});
+  const afterCancel=await store.beginOutboxDelivery({outboxId:cancelFirst.outboxId,leaseToken:claimedForCancel[0].lease_token,workerId:"worker-01"});
   assert.equal(afterCancel.reason,"LEASE_LOST");
   const cancelRow=await pool.query("SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1",[cancelFirst.outboxId]);
   assert.equal(cancelRow.rows[0].status,"CANCELLED");
@@ -95,13 +95,13 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const started=await seed("task-delivery-started","b");
   const claimed=await claimOne();
   assert.equal(claimed.length,1);
-  const begun=await store.beginOutboxDelivery({outboxId:started.outboxId,leaseToken:claimed[0].lease_token});
+  const begun=await store.beginOutboxDelivery({outboxId:started.outboxId,leaseToken:claimed[0].lease_token,workerId:"worker-01"});
   assert.equal(begun.ok,true,JSON.stringify(begun));
-  const duplicateBegin=await store.beginOutboxDelivery({outboxId:started.outboxId,leaseToken:claimed[0].lease_token});
+  const duplicateBegin=await store.beginOutboxDelivery({outboxId:started.outboxId,leaseToken:claimed[0].lease_token,workerId:"worker-01"});
   assert.equal(duplicateBegin.ok,true);assert.equal(duplicateBegin.duplicate,true);
   const refusedCancel=await store.cancelTaskWithReason({taskId:started.taskId,actorId:"operator-01"});
   assert.equal(refusedCancel.reason,"DELIVERY_ALREADY_STARTED");
-  const finished=await store.finishOutbox({
+  const finished=await store.finishOutbox({workerId:"worker-01",
    outboxId:started.outboxId,leaseToken:claimed[0].lease_token,outcome:{status:"COMPLETED"},
    actorId:"worker-01",taskId:started.taskId
   });
@@ -112,8 +112,8 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const retry=await seed("task-retry-dead-letter","c");
   let claim=await claimOne();
   assert.equal(claim.length,1);
-  assert.equal((await store.beginOutboxDelivery({outboxId:retry.outboxId,leaseToken:claim[0].lease_token})).ok,true);
-  const retryOne=await store.retryOutbox({
+  assert.equal((await store.beginOutboxDelivery({outboxId:retry.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01"})).ok,true);
+  const retryOne=await store.retryOutbox({workerId:"worker-01",
    outboxId:retry.outboxId,leaseToken:claim[0].lease_token,errorCode:"PROVIDER_TEMPORARY",
    maxAttempts:2,retrySafety:"SAFE_TO_RETRY"
   });
@@ -121,8 +121,8 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   assert.deepEqual(await claimOne(),[]);
   now+=2000;
   claim=await claimOne();assert.equal(claim.length,1);assert.equal(claim[0].attempts,2);
-  assert.equal((await store.beginOutboxDelivery({outboxId:retry.outboxId,leaseToken:claim[0].lease_token})).ok,true);
-  const dead=await store.retryOutbox({
+  assert.equal((await store.beginOutboxDelivery({outboxId:retry.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01"})).ok,true);
+  const dead=await store.retryOutbox({workerId:"worker-01",
    outboxId:retry.outboxId,leaseToken:claim[0].lease_token,errorCode:"PROVIDER_TEMPORARY",
    maxAttempts:2,retrySafety:"SAFE_TO_RETRY"
   });
@@ -140,8 +140,8 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const reset=await pool.query("SELECT status,attempts,manual_reconciliation_count FROM kratt_dispatch_outbox WHERE outbox_id=$1",[retry.outboxId]);
   assert.equal(reset.rows[0].status,"PENDING");assert.equal(reset.rows[0].attempts,0);assert.equal(reset.rows[0].manual_reconciliation_count,1);
   claim=await claimOne();assert.equal(claim.length,1);
-  assert.equal((await store.beginOutboxDelivery({outboxId:retry.outboxId,leaseToken:claim[0].lease_token})).ok,true);
-  assert.equal((await store.finishOutbox({
+  assert.equal((await store.beginOutboxDelivery({outboxId:retry.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01"})).ok,true);
+  assert.equal((await store.finishOutbox({workerId:"worker-01",
    outboxId:retry.outboxId,leaseToken:claim[0].lease_token,outcome:{status:"COMPLETED"},
    actorId:"worker-01",taskId:retry.taskId
   })).ok,true);
@@ -149,8 +149,8 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   // Unknown delivery outcome is never automatically retried; it goes to RECONCILE.
   const unknown=await seed("task-unknown-delivery","d");
   claim=await claimOne();assert.equal(claim.length,1);
-  assert.equal((await store.beginOutboxDelivery({outboxId:unknown.outboxId,leaseToken:claim[0].lease_token})).ok,true);
-  const uncertain=await store.retryOutbox({
+  assert.equal((await store.beginOutboxDelivery({outboxId:unknown.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01"})).ok,true);
+  const uncertain=await store.retryOutbox({workerId:"worker-01",
    outboxId:unknown.outboxId,leaseToken:claim[0].lease_token,errorCode:"NETWORK_TIMEOUT",
    retrySafety:"UNKNOWN"
   });
@@ -175,9 +175,9 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const reclaimed=await claimOne();
   assert.equal(reclaimed.length,1);assert.equal(reclaimed[0].task_id,expiredBefore.taskId);
   assert.notEqual(reclaimed[0].lease_token,staleToken);
-  assert.equal((await store.beginOutboxDelivery({outboxId:expiredBefore.outboxId,leaseToken:staleToken})).reason,"LEASE_LOST");
-  assert.equal((await store.beginOutboxDelivery({outboxId:expiredBefore.outboxId,leaseToken:reclaimed[0].lease_token})).ok,true);
-  assert.equal((await store.finishOutbox({
+  assert.equal((await store.beginOutboxDelivery({outboxId:expiredBefore.outboxId,leaseToken:staleToken,workerId:"worker-01"})).reason,"LEASE_LOST");
+  assert.equal((await store.beginOutboxDelivery({outboxId:expiredBefore.outboxId,leaseToken:reclaimed[0].lease_token,workerId:"worker-01"})).ok,true);
+  assert.equal((await store.finishOutbox({workerId:"worker-01",
    outboxId:expiredBefore.outboxId,leaseToken:reclaimed[0].lease_token,outcome:{status:"COMPLETED"},
    actorId:"worker-01",taskId:expiredBefore.taskId
   })).ok,true);
@@ -185,7 +185,7 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   // Expired lease after delivery started is ambiguous and becomes RECONCILE, never a blind resend.
   const expiredAfter=await seed("task-expired-after-delivery-start","g");
   claim=await claimOne();assert.equal(claim.length,1);
-  assert.equal((await store.beginOutboxDelivery({outboxId:expiredAfter.outboxId,leaseToken:claim[0].lease_token})).ok,true);
+  assert.equal((await store.beginOutboxDelivery({outboxId:expiredAfter.outboxId,leaseToken:claim[0].lease_token,workerId:"worker-01"})).ok,true);
   now+=6000;
   const afterLeaseExpiry=await claimOne();
   assert.deepEqual(afterLeaseExpiry,[]);
