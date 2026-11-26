@@ -144,12 +144,27 @@ export function validateFabricSchemaNegotiationResponse(input) {
 
 
 export async function authenticateFabricSchemaNegotiationResponse(input, {
-  expectedReceiverNode, expectedSenderNode, expectedNegotiationId, expectedRequestDigest,
+  request, expectedReceiverNode, expectedSenderNode, expectedNegotiationId, expectedRequestDigest,
   resolveTrustedKey, now = () => Date.now()
 } = {}) {
   const parsed = validateFabricSchemaNegotiationResponse(input);
   if (!parsed.ok) return parsed;
   const response = parsed.value;
+  const requestResult = validateFabricSchemaNegotiationRequest(request);
+  if (!requestResult.ok) return fail("NEGOTIATION_RESPONSE_REQUEST_INVALID");
+  const boundRequest = requestResult.value;
+  if (response.schema_id !== boundRequest.schema_id ||
+      response.negotiation_id !== boundRequest.negotiation_id ||
+      response.request_digest !== boundRequest.content_digest ||
+      response.sender_node !== boundRequest.receiver_node ||
+      response.receiver_node !== boundRequest.sender_node)
+    return fail("NEGOTIATION_RESPONSE_REQUEST_BINDING_MISMATCH");
+  if (response.status === "SUPPORTED") {
+    const offered = boundRequest.offered_versions.find(item =>
+      item.version === response.selected_version && item.schema_digest === response.schema_digest);
+    if (!offered || compareVersions(response.selected_version, boundRequest.minimum_version) < 0)
+      return fail("NEGOTIATION_RESPONSE_VERSION_DOWNGRADE");
+  }
   if (!validId(expectedReceiverNode) || response.sender_node !== expectedReceiverNode ||
       !validId(expectedSenderNode) || response.receiver_node !== expectedSenderNode)
     return fail("NEGOTIATION_RESPONSE_IDENTITY_MISMATCH");
