@@ -27,6 +27,15 @@ test("PostgreSQL runtime adapters remain marked as branch work until CI and data
   }
 });
 
+test("shared PostgreSQL journal, nonce and lease layers are explicitly pending staging evidence", () => {
+  for (const id of [
+    "postgres-runtime-journal",
+    "postgres-approval-nonces",
+    "postgres-worker-leases",
+    "postgres-governed-runtime"
+  ]) assert.equal(byId(id).evidence, "WAVE2_BRANCH_PENDING_CI");
+});
+
 test("detects unknown dependencies, cycles and duplicate layer IDs", () => {
   const invalid = [
     { id: "a", evidence: "MAIN", source: [], dependsOn: ["missing"] },
