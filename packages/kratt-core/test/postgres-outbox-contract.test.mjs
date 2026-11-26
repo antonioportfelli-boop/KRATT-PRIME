@@ -28,7 +28,7 @@ test("nonce, cancellation, intent, outbox and audit reservation share one transa
 test("worker cannot dispatch unless the PostgreSQL delivery-start fence is available and succeeds",()=>{
  assert.match(worker,/typeof store\.beginOutboxDelivery !== "function"/);
  assert.ok(worker.indexOf("store.beginOutboxDelivery")<worker.indexOf("adapter.dispatch"));
- assert.match(worker,/started\?\.duplicate === true/);
+ assert.match(worker,/started\.duplicate === true/);
  assert.match(worker,/retrySafety: "UNKNOWN"/);
 });
 test("synchronous authorized dispatch requires a durable delivery-start token before provider dispatch",()=>{
