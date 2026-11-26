@@ -119,6 +119,7 @@ test("sender authenticates the receiver's signed negotiation response and reques
   const response = await negotiateFabricSchema(request, negotiationDependencies());
   assert.equal(response.ok, true, JSON.stringify(response));
   const authenticated = await authenticateFabricSchemaNegotiationResponse(response.value, {
+    request,
     expectedReceiverNode: "steel-node",
     expectedSenderNode: "kratt-node",
     expectedNegotiationId: request.negotiation_id,
@@ -131,6 +132,7 @@ test("sender authenticates the receiver's signed negotiation response and reques
   assert.equal(authenticated.value.response.selected_version, "2.0.0");
 
   const wrongBinding = await authenticateFabricSchemaNegotiationResponse(response.value, {
+    request,
     expectedReceiverNode: "steel-node",
     expectedSenderNode: "kratt-node",
     expectedNegotiationId: request.negotiation_id,
@@ -141,6 +143,7 @@ test("sender authenticates the receiver's signed negotiation response and reques
   assert.equal(wrongBinding.code, "NEGOTIATION_RESPONSE_REQUEST_BINDING_MISMATCH");
 
   const untrusted = await authenticateFabricSchemaNegotiationResponse(response.value, {
+    request,
     expectedReceiverNode: "steel-node",
     expectedSenderNode: "kratt-node",
     expectedNegotiationId: request.negotiation_id,
