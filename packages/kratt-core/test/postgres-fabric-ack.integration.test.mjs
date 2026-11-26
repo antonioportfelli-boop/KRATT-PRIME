@@ -101,7 +101,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
         evidence_references: [],
         key_id: "kratt-fabric-key",
         payload: { task_id: taskId },
-        content_digest: tag.padEnd(64, "b").slice(0, 64),
+        content_digest: createHash("sha256").update("fabric-event:" + tag, "utf8").digest("hex"),
         signature: "test-fixture-only"
       };
       await pool.query(
