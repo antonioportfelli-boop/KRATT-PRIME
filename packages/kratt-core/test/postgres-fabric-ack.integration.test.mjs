@@ -190,6 +190,28 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       });
     }
 
+    function acknowledgementStoreFailingOn(sqlFragment) {
+      const faultPool = {
+        query: (...args) => pool.query(...args),
+        async connect() {
+          const client = await pool.connect();
+          return {
+            query: async (sql, ...args) => {
+              if (typeof sql === "string" && sql.includes(sqlFragment))
+                throw new Error("injected ACK transaction failure");
+              return client.query(sql, ...args);
+            },
+            release: () => client.release()
+          };
+        }
+      };
+      return createPostgresFabricAcknowledgementStore(faultPool, {
+        clock: () => new Date(clock),
+        lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
+          trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
+      });
+    }
+
     const accepted = await seed("accepted");
     const acceptedLease = await begin(accepted);
     const acceptedAck = makeAck(accepted.event, acceptedLease.delivery_attempt_sequence, "ACCEPTED", "accepted");
@@ -332,6 +354,50 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       pool.query("TRUNCATE TABLE kratt_fabric_late_acknowledgements"),
       /KRATT_FABRIC_ACK_LEDGER_TRUNCATE_FORBIDDEN/
     );
+
+    // Audit insertion failure rolls back the ACK ledger and leaves the intent/outbox retryable.
+    const auditFault = await seed("audit-insert-fails");
+    const auditFaultLease = await begin(auditFault);
+    const auditFaultAck = makeAck(auditFault.event, auditFaultLease.delivery_attempt_sequence, "ACCEPTED", "audit-insert-fails");
+    const auditFaultResult = await process(
+      auditFault, auditFaultLease, auditFaultAck,
+      acknowledgementStoreFailingOn("INSERT INTO kratt_audit_events")
+    );
+    assert.equal(auditFaultResult.ok, false);
+    assert.equal(auditFaultResult.code, "ACK_STORE_UNAVAILABLE");
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [auditFault.outboxId]
+    )).rows[0].n, 0);
+    assert.equal((await pool.query(
+      "SELECT status FROM kratt_dispatch_intents WHERE task_id=$1", [auditFault.taskId]
+    )).rows[0].status, "INTENT_COMMITTED");
+    const auditFaultOutbox = await pool.query(
+      "SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1", [auditFault.outboxId]
+    );
+    assert.equal(auditFaultOutbox.rows[0].status, "LEASED");
+    assert.equal((await process(auditFault, auditFaultLease, auditFaultAck)).value.outbox_status, "DONE");
+
+    // If the outbox terminal update fails after the intent update, the same transaction
+    // must roll back the intent, ACK ledger and audit record together.
+    const outboxFault = await seed("outbox-terminal-update-fails");
+    const outboxFaultLease = await begin(outboxFault);
+    const outboxFaultAck = makeAck(outboxFault.event, outboxFaultLease.delivery_attempt_sequence, "ACCEPTED", "outbox-terminal-update-fails");
+    const outboxFaultResult = await process(
+      outboxFault, outboxFaultLease, outboxFaultAck,
+      acknowledgementStoreFailingOn("UPDATE kratt_dispatch_outbox SET status='DONE'")
+    );
+    assert.equal(outboxFaultResult.ok, false);
+    assert.equal(outboxFaultResult.code, "ACK_STORE_UNAVAILABLE");
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [outboxFault.outboxId]
+    )).rows[0].n, 0);
+    assert.equal((await pool.query(
+      "SELECT status FROM kratt_dispatch_intents WHERE task_id=$1", [outboxFault.taskId]
+    )).rows[0].status, "INTENT_COMMITTED");
+    assert.equal((await pool.query(
+      "SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1", [outboxFault.outboxId]
+    )).rows[0].status, "LEASED");
+    assert.equal((await process(outboxFault, outboxFaultLease, outboxFaultAck)).value.outbox_status, "DONE");
 
     // The server commits the ACK but the client loses the COMMIT response. A fresh
     // pool must discover the durable receipt without a second terminal transition.
