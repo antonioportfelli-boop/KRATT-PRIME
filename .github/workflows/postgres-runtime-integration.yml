@@ -26,7 +26,8 @@ on:
       - "packages/kratt-core/migrations/0008_fabric_receiver_receipts.sql"
       - "packages/kratt-core/migrations/0009_fabric_ack_outbox_reconciliation.sql"
       - "packages/kratt-core/test/fabric-negotiation-ack.test.mjs"
-      - "packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs packages/kratt-core/test/postgres-fabric-delivery-e2e.integration.test.mjs"
+      - "packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs"
+      - "packages/kratt-core/test/postgres-fabric-delivery-e2e.integration.test.mjs"
       - "packages/kratt-core/src/postgres-fabric-trust-registry.mjs"
       - "packages/kratt-core/test/fabric-steel-contract.test.mjs"
       - "packages/kratt-core/test/fixtures/steel/fabric-v1.ts"
@@ -82,4 +83,4 @@ jobs:
       - name: Run live PostgreSQL journal, leases, Fabric inbox/outbox, trust registry and delivery reliability tests
         env:
           KRATT_TEST_DATABASE_URL: postgres://kratt_test:kratt_test_password@127.0.0.1:5432/kratt_runtime_test
-        run: node --test packages/kratt-core/test/postgres-runtime.integration.test.mjs packages/kratt-core/test/postgres-fabric.integration.test.mjs packages/kratt-core/test/postgres-fabric-outbound.integration.test.mjs packages/kratt-core/test/postgres-fabric-trust.integration.test.mjs packages/kratt-core/test/postgres-outbox-reliability.integration.test.mjs packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs
+        run: node --test packages/kratt-core/test/postgres-runtime.integration.test.mjs packages/kratt-core/test/postgres-fabric.integration.test.mjs packages/kratt-core/test/postgres-fabric-outbound.integration.test.mjs packages/kratt-core/test/postgres-fabric-trust.integration.test.mjs packages/kratt-core/test/postgres-outbox-reliability.integration.test.mjs packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs packages/kratt-core/test/postgres-fabric-delivery-e2e.integration.test.mjs
