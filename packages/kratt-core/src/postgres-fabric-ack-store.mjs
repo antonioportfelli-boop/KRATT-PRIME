@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { authenticateFabricReceiverAcknowledgement } from "./fabric-negotiation-ack.mjs";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -42,10 +43,12 @@ async function transaction(pool, work) {
   }
 }
 
-export function createPostgresFabricAcknowledgementStore(pool, { clock = () => new Date() } = {}) {
+export function createPostgresFabricAcknowledgementStore(pool, { clock = () => new Date(), expectedReceiverNode, expectedPolicyRevision, resolveTrustedKey } = {}) {
   if (!pool || typeof pool.connect !== "function" || typeof pool.query !== "function")
     throw new TypeError("POSTGRES_POOL_REQUIRED");
   if (typeof clock !== "function") throw new TypeError("TRUSTED_CLOCK_REQUIRED");
+  if (typeof expectedReceiverNode !== "string" || typeof expectedPolicyRevision !== "string" || typeof resolveTrustedKey !== "function")
+    throw new TypeError("ACK_TRUST_CONFIGURATION_REQUIRED");
 
   function nowIso() {
     const value = clock();
@@ -72,20 +75,20 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
   async function applyReceiverAcknowledgement({
     outboxId, leaseToken, acknowledgement, authenticatedReceiver, receivedAt
   } = {}) {
-    const ack = acknowledgement;
-    if (!validId(outboxId) || typeof leaseToken !== "string" || leaseToken.length < 16 || leaseToken.length > 128 ||
-      !ack || !validId(ack.ack_id) || !validId(ack.event_id) || !validId(ack.source_node) ||
-      !validId(ack.receiver_node) || !validId(ack.key_id) || !validId(ack.policy_revision) ||
-      !Number.isSafeInteger(ack.source_sequence) || ack.source_sequence < 1 ||
-      !Number.isSafeInteger(ack.delivery_attempt) || ack.delivery_attempt < 1 ||
+    if (!validId(outboxId) || typeof leaseToken !== "string" || leaseToken.length < 16 || leaseToken.length > 128)
+      return fail("ACK_STORE_INPUT_INVALID");
+    const authenticated = await authenticateFabricReceiverAcknowledgement(acknowledgement, {
+      expectedReceiverNode, expectedPolicyRevision, resolveTrustedKey,
+      now: () => Date.parse(nowIso())
+    });
+    if (!authenticated.ok) return fail(authenticated.code);
+    const ack = authenticated.value.acknowledgement;
+    const authenticatedReceiver = authenticated.value.authenticatedReceiver;
+    const at = authenticated.value.receivedAt;
+    if (!validId(ack.ack_id) || !validId(ack.event_id) || !validId(ack.source_node) ||
       !validHash(ack.event_digest) || !validHash(ack.content_digest) ||
-      !["ACCEPTED", "REJECTED", "DUPLICATE", "UNKNOWN"].includes(ack.result) ||
-      !authenticatedReceiver || authenticatedReceiver.key_id !== ack.key_id ||
-      authenticatedReceiver.node_id !== ack.receiver_node || authenticatedReceiver.content_digest !== ack.content_digest ||
-      !["ACTIVE", "VERIFY_ONLY"].includes(authenticatedReceiver.status)) return fail("ACK_STORE_INPUT_INVALID");
-
-    const at = receivedAt ?? nowIso();
-    if (typeof at !== "string" || !Number.isFinite(Date.parse(at))) return fail("ACK_RECEIVED_TIME_INVALID");
+      authenticatedReceiver.key_id !== ack.key_id || authenticatedReceiver.node_id !== ack.receiver_node ||
+      authenticatedReceiver.content_digest !== ack.content_digest) return fail("ACK_STORE_INPUT_INVALID");
 
     try {
       return await transaction(pool, async client => {
@@ -98,8 +101,9 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [taskId]);
 
         const existing = await client.query(
-          "SELECT ack_id,outbox_id,delivery_attempt,content_digest,result FROM kratt_fabric_receiver_acknowledgements " +
-          "WHERE ack_id=$1 OR (outbox_id=$2 AND delivery_attempt=$3) FOR UPDATE",
+          "SELECT a.ack_id,a.outbox_id,a.delivery_attempt,a.content_digest,a.result,o.status AS outbox_status " +
+          "FROM kratt_fabric_receiver_acknowledgements a JOIN kratt_dispatch_outbox o ON o.outbox_id=a.outbox_id " +
+          "WHERE a.ack_id=$1 OR (a.outbox_id=$2 AND a.delivery_attempt=$3) FOR UPDATE OF a,o",
           [ack.ack_id, outboxId, ack.delivery_attempt]
         );
         if (existing.rowCount) {
@@ -108,7 +112,7 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
             Number(existing.rows[0].delivery_attempt) === ack.delivery_attempt &&
             existing.rows[0].content_digest === ack.content_digest &&
             existing.rows[0].result === ack.result;
-          if (same) return { ok: true, duplicate: true, status: existing.rows[0].result, outbox_status: null };
+          if (same) return { ok: true, duplicate: true, status: existing.rows[0].result, outbox_status: existing.rows[0].outbox_status };
           return fail("ACK_REPLAY_CONFLICT");
         }
 
