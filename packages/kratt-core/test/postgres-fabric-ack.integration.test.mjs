@@ -68,7 +68,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     }
 
     let clock = NOW;
-    const outbox = createPostgresOutboxStore(pool, { clock: () => new Date(clock) });
+    const outbox = createPostgresOutboxStore(pool, {\n      clock: () => new Date(clock),\n      authorizeReconciliation: async request => request.actorId === "operator-01" && request.evidenceDigest === "d".repeat(64)\n    });
     const acknowledgements = createPostgresFabricAcknowledgementStore(pool, { clock: () => new Date(clock) });
 
     async function seed(tag) {
@@ -148,7 +148,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
 
     const accepted = await seed("accepted");
     const acceptedLease = await begin(accepted);
-    const acceptedAck = makeAck(accepted.event, acceptedLease.attempts, "ACCEPTED", "accepted");
+    const acceptedAck = makeAck(accepted.event, acceptedLease.delivery_attempt_sequence, "ACCEPTED", "accepted");
     const acceptedResult = await process(accepted, acceptedLease, acceptedAck);
     assert.equal(acceptedResult.ok, true, JSON.stringify(acceptedResult));
     assert.equal(acceptedResult.value.outbox_status, "DONE");
@@ -159,30 +159,54 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.equal(exactDuplicate.ok, true);
     assert.equal(exactDuplicate.value.duplicate, true);
     const conflictingDuplicate = await process(accepted, acceptedLease,
-      makeAck(accepted.event, acceptedLease.attempts, "ACCEPTED", "accepted-conflict"));
+      makeAck(accepted.event, acceptedLease.delivery_attempt_sequence, "ACCEPTED", "accepted-conflict"));
     assert.equal(conflictingDuplicate.code, "ACK_REPLAY_CONFLICT");
 
     const rejected = await seed("rejected");
     const rejectedLease = await begin(rejected);
     const rejectedResult = await process(rejected, rejectedLease,
-      makeAck(rejected.event, rejectedLease.attempts, "REJECTED", "rejected"));
+      makeAck(rejected.event, rejectedLease.delivery_attempt_sequence, "REJECTED", "rejected"));
     assert.equal(rejectedResult.ok, true);
     assert.equal(rejectedResult.value.outbox_status, "RECONCILE");
     const rejectedRow = await pool.query("SELECT status,last_error_code FROM kratt_dispatch_outbox WHERE outbox_id=$1", [rejected.outboxId]);
     assert.equal(rejectedRow.rows[0].status, "RECONCILE");
     assert.equal(rejectedRow.rows[0].last_error_code, "RECEIVER_REJECTED");
 
+    // A manual, evidence-backed retry resets the retry budget but never reuses an attempt identity.
+    const manuallyRequeued = await outbox.reconcileOutbox({
+      outboxId: rejected.outboxId,
+      actorId: "operator-01",
+      decision: "SAFE_TO_RETRY",
+      evidenceDigest: "d".repeat(64),
+      reason: "operator verified the receiver rejection and approved a bounded retry"
+    });
+    assert.equal(manuallyRequeued.ok, true, JSON.stringify(manuallyRequeued));
+    const retryClaim = (await outbox.claimOutbox({ workerId: "worker-ack", limit: 10, leaseSeconds: 60 }))
+      .find(row => row.outbox_id === rejected.outboxId);
+    assert.ok(retryClaim);
+    assert.equal(Number(retryClaim.delivery_attempt_sequence), Number(rejectedLease.delivery_attempt_sequence) + 1);
+    assert.equal(Number(retryClaim.attempts), 1);
+    assert.equal((await outbox.beginOutboxDelivery({ outboxId: rejected.outboxId, leaseToken: retryClaim.lease_token })).ok, true);
+    const acceptedAfterRetry = await process(rejected, retryClaim,
+      makeAck(rejected.event, retryClaim.delivery_attempt_sequence, "ACCEPTED", "accepted-after-retry"));
+    assert.equal(acceptedAfterRetry.ok, true, JSON.stringify(acceptedAfterRetry));
+    assert.equal(acceptedAfterRetry.value.outbox_status, "DONE");
+    assert.equal((await pool.query(
+      "SELECT delivery_attempt,result FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1 ORDER BY delivery_attempt",
+      [rejected.outboxId]
+    )).rows.map(row => [Number(row.delivery_attempt), row.result]), [[1, "REJECTED"], [2, "ACCEPTED"]]);
+
     const unknown = await seed("unknown");
     const unknownLease = await begin(unknown);
     const unknownResult = await process(unknown, unknownLease,
-      makeAck(unknown.event, unknownLease.attempts, "UNKNOWN", "unknown"));
+      makeAck(unknown.event, unknownLease.delivery_attempt_sequence, "UNKNOWN", "unknown"));
     assert.equal(unknownResult.ok, true);
     assert.equal(unknownResult.value.outbox_status, "RECONCILE");
     assert.equal((await pool.query("SELECT status FROM kratt_dispatch_outbox WHERE outbox_id=$1", [unknown.outboxId])).rows[0].status, "RECONCILE");
 
     const mismatch = await seed("mismatch");
     const mismatchLease = await begin(mismatch);
-    const wrongDigest = makeAck(mismatch.event, mismatchLease.attempts, "ACCEPTED", "mismatch", { event_digest: "f".repeat(64) });
+    const wrongDigest = makeAck(mismatch.event, mismatchLease.delivery_attempt_sequence, "ACCEPTED", "mismatch", { event_digest: "f".repeat(64) });
     // Recompute/sign after the event digest is changed, so this is an authenticated but wrongly bound ACK.
     wrongDigest.content_digest = fabricReceiverAcknowledgementDigest(wrongDigest);
     wrongDigest.signature = sign(null, Buffer.from(fabricReceiverAcknowledgementSigningInput(wrongDigest)), receiverKeys.privateKey).toString("base64");
@@ -197,7 +221,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.equal(cancelResult.ok, true);
     const startAfterCancel = await outbox.beginOutboxDelivery({ outboxId: cancelled.outboxId, leaseToken: cancelClaim.lease_token });
     assert.equal(startAfterCancel.reason, "LEASE_LOST");
-    const cancelledAck = makeAck(cancelled.event, cancelClaim.attempts, "ACCEPTED", "cancelled");
+    const cancelledAck = makeAck(cancelled.event, cancelled.delivery_attempt_sequence, "ACCEPTED", "cancelled");
     const cancelledAckResult = await process(cancelled, cancelClaim, cancelledAck);
     assert.equal(cancelledAckResult.code, "ACK_DELIVERY_FENCE_MISMATCH");
 
