@@ -130,31 +130,41 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
         content_digest: createHash("sha256").update("fabric-event:" + tag, "utf8").digest("hex"),
         signature: "test-fixture-only"
       };
-      await pool.query(
-        "INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,actor_id,provider,operation,status,created_at) " +
-        "VALUES($1,$2,'operator-01','fabric','fabric.publish','INTENT_COMMITTED',$3)",
-        [idempotencyKey, taskId, new Date(clock).toISOString()]
-      );
-      await pool.query(
-        "INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) " +
-        "VALUES($1,$2,'fabric',$3::jsonb,'PENDING',$4)",
-        [outboxId, idempotencyKey, JSON.stringify({ fabric_envelope: event }), new Date(clock).toISOString()]
-      );
-      await pool.query(
-        "INSERT INTO kratt_fabric_outbound_heads(source_node,last_sequence) VALUES('kratt-node',$1) " +
-        "ON CONFLICT(source_node) DO UPDATE SET last_sequence=EXCLUDED.last_sequence,updated_at=clock_timestamp()",
-        [event.sequence]
-      );
-      await pool.query(
-        "INSERT INTO kratt_fabric_outbound_sequences(source_node,idempotency_key,request_digest,source_sequence) VALUES('kratt-node',$1,$2,$3)",
-        [idempotencyKey, "c".repeat(64), event.sequence]
-      );
-      await pool.query(
-        "INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json,ack_policy_revision) " +
-        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)",
-        [event.event_id,idempotencyKey,event.source_node,event.destination_node,event.sequence,event.key_id,
-          event.content_digest,event.issued_at,event.expires_at,JSON.stringify(event),ackPolicyRevision]
-      );
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,actor_id,provider,operation,status,created_at) " +
+          "VALUES($1,$2,'operator-01','fabric','fabric.publish','INTENT_COMMITTED',$3)",
+          [idempotencyKey, taskId, new Date(clock).toISOString()]
+        );
+        await client.query(
+          "INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) " +
+          "VALUES($1,$2,'fabric',$3::jsonb,'PENDING',$4)",
+          [outboxId, idempotencyKey, JSON.stringify({ fabric_envelope: event }), new Date(clock).toISOString()]
+        );
+        await client.query(
+          "INSERT INTO kratt_fabric_outbound_heads(source_node,last_sequence) VALUES('kratt-node',$1) " +
+          "ON CONFLICT(source_node) DO UPDATE SET last_sequence=EXCLUDED.last_sequence,updated_at=clock_timestamp()",
+          [event.sequence]
+        );
+        await client.query(
+          "INSERT INTO kratt_fabric_outbound_sequences(source_node,idempotency_key,request_digest,source_sequence) VALUES('kratt-node',$1,$2,$3)",
+          [idempotencyKey, "c".repeat(64), event.sequence]
+        );
+        await client.query(
+          "INSERT INTO kratt_fabric_outbound_events(event_id,idempotency_key,source_node,destination_node,source_sequence,key_id,content_digest,issued_at,expires_at,event_json,ack_policy_revision) " +
+          "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)",
+          [event.event_id,idempotencyKey,event.source_node,event.destination_node,event.sequence,event.key_id,
+            event.content_digest,event.issued_at,event.expires_at,JSON.stringify(event),ackPolicyRevision]
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
       return { taskId, idempotencyKey, outboxId, event: { ...event, ackPolicyRevision }, ackPolicyRevision };
     }
 
