@@ -21,6 +21,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
   const admin = new Pool({ connectionString, max: 2 });
   let poolA;
   let poolB;
+  let poolRestart;
   try {
     await admin.query(`CREATE SCHEMA ${schema}`);
     poolA = new Pool({ connectionString, max: 4, options: `-c search_path=${schema}` });
@@ -32,6 +33,15 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     await poolA.query(receiptMigration);
     await poolA.query(receiptMigration);
     await poolA.query("CREATE TABLE handler_receipts(event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL)");
+    await poolA.query("CREATE TABLE kratt_cancelled_tasks(task_id TEXT PRIMARY KEY, cancelled_at TIMESTAMPTZ NOT NULL, actor_id TEXT NOT NULL)");
+    async function waitForAdvisoryLockWait() {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const waiting = await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type=$1 AND query ILIKE $2", ["Lock", "%pg_advisory_xact_lock%"]);
+        if (waiting.rows[0].count > 0) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error("EXPECTED_ADVISORY_LOCK_WAIT_NOT_OBSERVED");
+    }
 
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const trustedKey = {
@@ -193,11 +203,66 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(expiredResult.code, "EVENT_EXPIRED");
     const expiredNotStored = await poolA.query("SELECT count(*)::int AS count FROM kratt_fabric_event_inbox WHERE event_id=$1", [expiredUnprocessed.event_id]);
     assert.equal(expiredNotStored.rows[0].count, 0);
+    // Cancellation owns the shared task lock first: ingress waits, then observes cancellation and never runs the handler.
+    const cancellationWins = makeEvent({ id: "fabric-db-cancel-wins", sequence: 10 });
+    const cancelFirstClient = await poolA.connect();
+    await cancelFirstClient.query("BEGIN");
+    await cancelFirstClient.query("SELECT pg_advisory_xact_lock(hashtext($1))", [cancellationWins.payload.task_id]);
+    await cancelFirstClient.query("INSERT INTO kratt_cancelled_tasks(task_id,cancelled_at,actor_id) VALUES($1,$2,$3)", [cancellationWins.payload.task_id,new Date(NOW).toISOString(),"operator-cancel-first"]);
+    const cancelWinsPending = receiveSteelFabricEventV1(poolB, JSON.stringify(cancellationWins), deps());
+    await waitForAdvisoryLockWait();
+    await cancelFirstClient.query("COMMIT");
+    cancelFirstClient.release();
+    const cancelWinsResult = await cancelWinsPending;
+    assert.equal(cancelWinsResult.ok, false);
+    assert.equal(cancelWinsResult.code, "TASK_CANCELLED");
+    const cancelWinsStored = await poolA.query("SELECT count(*)::int AS count FROM kratt_fabric_event_inbox WHERE event_id=$1", [cancellationWins.event_id]);
+    assert.equal(cancelWinsStored.rows[0].count, 0);
+
+    // Ingress owns the task lock first: cancellation is serialized behind its handler/receipt/ACK commit.
+    const ingressWins = makeEvent({ id: "fabric-db-ingress-wins", sequence: 10 });
+    let releaseHandler;
+    let handlerEnteredResolve;
+    const handlerEntered = new Promise(resolve => { handlerEnteredResolve = resolve; });
+    const handlerGate = new Promise(resolve => { releaseHandler = resolve; });
+    const ingressPending = receiveSteelFabricEventV1(poolA, JSON.stringify(ingressWins), deps(async (canonical, tx) => {
+      await tx.client.query("INSERT INTO handler_receipts(event_id,event_type) VALUES($1,$2)", [canonical.identity.event_id,canonical.identity.event_type]);
+      handlerEnteredResolve();
+      await handlerGate;
+      return "accepted-before-cancellation";
+    }));
+    await handlerEntered;
+    const cancelAfterClient = await poolB.connect();
+    await cancelAfterClient.query("BEGIN");
+    const cancelAfterPending = cancelAfterClient.query("SELECT pg_advisory_xact_lock(hashtext($1))", [ingressWins.payload.task_id]);
+    await waitForAdvisoryLockWait();
+    releaseHandler();
+    const ingressWinsResult = await ingressPending;
+    assert.equal(ingressWinsResult.ok, true, JSON.stringify(ingressWinsResult));
+    await cancelAfterPending;
+    await cancelAfterClient.query("INSERT INTO kratt_cancelled_tasks(task_id,cancelled_at,actor_id) VALUES($1,$2,$3)", [ingressWins.payload.task_id,new Date(NOW).toISOString(),"operator-cancel-after"]);
+    await cancelAfterClient.query("COMMIT");
+    cancelAfterClient.release();
+    const replayAfterCancel = await receiveSteelFabricEventV1(poolB, JSON.stringify(ingressWins), deps());
+    assert.equal(replayAfterCancel.ok, true, JSON.stringify(replayAfterCancel));
+    assert.equal(replayAfterCancel.value.duplicate, true);
+    assert.deepEqual(replayAfterCancel.value.acknowledgement, ingressWinsResult.value.acknowledgement);
+
+    // A fresh connection pool has no in-memory receiver state; the database alone restores the ACK and result.
+    poolRestart = new Pool({ connectionString, max: 2, options: "-c search_path=" + schema });
+    const beforeRestartReplay = await poolRestart.query("SELECT count(*)::int AS count FROM handler_receipts");
+    const restartReplay = await receiveSteelFabricEventV1(poolRestart, JSON.stringify(first), deps());
+    assert.equal(restartReplay.ok, true, JSON.stringify(restartReplay));
+    assert.equal(restartReplay.value.duplicate, true);
+    assert.deepEqual(restartReplay.value.acknowledgement, accepted.value.acknowledgement);
+    const afterRestartReplay = await poolRestart.query("SELECT count(*)::int AS count FROM handler_receipts");
+    assert.equal(afterRestartReplay.rows[0].count, beforeRestartReplay.rows[0].count);
+
     const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count, (SELECT count(*)::int FROM kratt_fabric_receiver_receipts) AS receipt_count, (SELECT count(*)::int FROM kratt_fabric_inbound_acknowledgements) AS ack_count");
-    assert.equal(counts.rows[0].inbox_count, 8);
-    assert.equal(counts.rows[0].handler_count, 8);
-    assert.equal(counts.rows[0].receipt_count, 8);
-    assert.equal(counts.rows[0].ack_count, 9);
+    assert.equal(counts.rows[0].inbox_count, 9);
+    assert.equal(counts.rows[0].handler_count, 9);
+    assert.equal(counts.rows[0].receipt_count, 9);
+    assert.equal(counts.rows[0].ack_count, 10);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_receiver_receipts SET processed_at=processed_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_RECEIVER_RECEIPT_APPEND_ONLY/);
     await assert.rejects(poolA.query("TRUNCATE TABLE kratt_fabric_inbound_acknowledgements"), /KRATT_FABRIC_LEDGER_TRUNCATE_FORBIDDEN/);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_inbound_acknowledgements SET created_at=created_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_INBOUND_ACK_APPEND_ONLY/);
@@ -207,6 +272,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
   } finally {
     await poolA?.end();
     await poolB?.end();
+    await poolRestart?.end();
     await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => undefined);
     await admin.end();
   }
