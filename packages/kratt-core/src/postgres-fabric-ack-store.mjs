@@ -117,7 +117,7 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
         }
 
         const row = await client.query(
-          "SELECT o.status,o.provider,o.attempts,o.lease_token,o.delivery_started_at,o.delivery_lease_token," +
+          "SELECT o.status,o.provider,o.attempts,o.delivery_attempt_sequence,o.lease_token,o.delivery_started_at,o.delivery_lease_token," +
           "o.idempotency_key,i.task_id,i.status AS intent_status," +
           "e.event_id,e.source_node,e.destination_node,e.source_sequence,e.content_digest " +
           "FROM kratt_dispatch_outbox o " +
