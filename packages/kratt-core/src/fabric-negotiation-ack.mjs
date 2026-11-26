@@ -139,6 +139,36 @@ export function validateFabricSchemaNegotiationResponse(input) {
   }
 }
 
+
+export async function authenticateFabricSchemaNegotiationResponse(input, {
+  expectedReceiverNode, expectedSenderNode, expectedNegotiationId, expectedRequestDigest,
+  resolveTrustedKey, now = () => Date.now()
+} = {}) {
+  const parsed = validateFabricSchemaNegotiationResponse(input);
+  if (!parsed.ok) return parsed;
+  const response = parsed.value;
+  if (!validId(expectedReceiverNode) || response.sender_node !== expectedReceiverNode ||
+      !validId(expectedSenderNode) || response.receiver_node !== expectedSenderNode)
+    return fail("NEGOTIATION_RESPONSE_IDENTITY_MISMATCH");
+  if (!validId(expectedNegotiationId) || response.negotiation_id !== expectedNegotiationId ||
+      !validHash(expectedRequestDigest) || response.request_digest !== expectedRequestDigest)
+    return fail("NEGOTIATION_RESPONSE_REQUEST_BINDING_MISMATCH");
+  if (typeof resolveTrustedKey !== "function") return fail("NEGOTIATION_RESPONSE_TRUST_RESOLVER_REQUIRED");
+  const nowMs = Number(now()), issued = strictUtc(response.issued_at);
+  if (!Number.isFinite(nowMs) || issued > nowMs + 5 * 60 * 1000 || issued < nowMs - 24 * 60 * 60 * 1000)
+    return fail("NEGOTIATION_RESPONSE_TIME_INVALID");
+  let identity;
+  try { identity = await resolveTrustedKey(response.sender_node, response.key_id); }
+  catch { return fail("NEGOTIATION_RESPONSE_KEY_UNAVAILABLE"); }
+  const authenticated = verifyTrustedSignature({
+    identity, keyId: response.key_id, issuedAt: response.issued_at,
+    content: response.content_digest, signature: response.signature,
+    domainInput: fabricSchemaNegotiationResponseSigningInput(response), nowMs
+  });
+  if (!authenticated.ok) return fail("NEGOTIATION_RESPONSE_" + authenticated.code);
+  return ok({ response, authenticatedReceiver: authenticated.value });
+}
+
 function publicKeyOf(value) {
   try {
     if (value && typeof value === "object" && value.type === "public") return value;
