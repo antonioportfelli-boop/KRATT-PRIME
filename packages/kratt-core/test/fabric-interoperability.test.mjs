@@ -62,6 +62,12 @@ test("accepts a valid 3XT-FABRIC/1 event as a detached immutable snapshot", () =
   assert.equal(result.value.payload.status, "accepted");
 });
 
+test("rejects primitive and null wire values without throwing", () => {
+  for (const value of [null, undefined, "event", 7, true, []]) {
+    assert.equal(validateSteelFabricEventV1(value).ok, false);
+  }
+});
+
 test("rejects missing, extra, incompatible and malformed wire fields", () => {
   const event = makeEvent();
   const { event_id: _eventId, ...missing } = event;
@@ -91,7 +97,7 @@ test("rejects cycles, sparse arrays, unsafe keys and invalid Unicode", () => {
   assert.equal(validateSteelFabricEventV1(sparseEvent).ok, false);
   const unsafeEvent = makeEvent(); unsafeEvent.payload = JSON.parse('{"constructor":{"prototype":{"admin":true}}}');
   assert.equal(validateSteelFabricEventV1(unsafeEvent).ok, false);
-  const unicodeEvent = makeEvent(); unicodeEvent.payload = { bad: "\\ud800" };
+  const unicodeEvent = makeEvent(); unicodeEvent.payload = { bad: "\ud800" };
   assert.equal(validateSteelFabricEventV1(unicodeEvent).ok, false);
 });
 
