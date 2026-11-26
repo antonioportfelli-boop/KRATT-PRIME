@@ -33,6 +33,7 @@ on:
       - "packages/kratt-core/test/postgres-fabric.integration.test.mjs"
       - "packages/kratt-core/test/postgres-fabric-trust.integration.test.mjs"
       - "packages/kratt-core/test/postgres-fabric-outbound.integration.test.mjs"
+      - "packages/kratt-core/test/postgres-fabric-delivery-e2e.integration.test.mjs"
       - ".github/workflows/postgres-runtime-integration.yml"
   push:
     branches:
