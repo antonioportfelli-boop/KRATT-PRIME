@@ -134,7 +134,7 @@ test("invalid provider result after dispatch is reconciled rather than marked co
   assert.equal(retry.retrySafety, "UNKNOWN");
   assert.equal(retry.errorCode, "PROVIDER_RESULT_INVALID");
   assert.equal(f.calls.some(call => call[0] === "finish"), false);
-  assert.equal(result.results[0].status, "RETRY_SCHEDULED");
+  assert.equal(result.results[0].status, "RECONCILE_REQUIRED");
 });
 
 test("provider accepted but outcome persistence failed is never reported as recorded", async () => {
@@ -157,5 +157,5 @@ test("missing adapter is retried before the delivery fence and causes no side ef
   const retry = f.calls.find(call => call[0] === "retry")[1];
   assert.equal(retry.errorCode, "PROVIDER_ADAPTER_UNAVAILABLE");
   assert.equal(retry.retrySafety, "UNKNOWN");
-  assert.equal(result.results[0].status, "RECONCILE_REQUIRED");
+  assert.equal(result.results[0].status, "RETRY_SCHEDULED");
 });
