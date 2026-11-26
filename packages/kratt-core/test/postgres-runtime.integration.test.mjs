@@ -265,6 +265,16 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
     assert.equal(released.ok, true);
     assert.equal(released.state, "RELEASED");
 
+    // The database trigger rejects a forged fence jump even if a caller bypasses the coordinator.
+    await assert.rejects(
+      admin.query(
+        "UPDATE kratt_worker_lease_reservations SET fence = fence + 2 " +
+        "WHERE reservation_key = $1",
+        ["integration-task-1"]
+      ),
+      /KRATT_WORKER_LEASE_FENCE_OR_IDENTITY_INVALID/
+    );
+
     // A distinct coordinator and pool see the durable state after restart-style recreation.
     const restarted = createPostgresWorkerLeaseCoordinator(poolB);
     const snapshot = await restarted.inspect("integration-task-1");
