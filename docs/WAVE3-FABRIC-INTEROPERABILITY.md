@@ -135,3 +135,52 @@ Remaining Wave 3 work:
 - live staging deployment, database privilege test, encryption verification and restore drill.
 
 **This work package is an implemented KRATT ingress candidate. It is not yet a live KRATT ↔ STEEL integration, staging-verified system or production-ready transport.**
+
+
+## 9. Outbound Fabric adapter and transactional outbox (WP-03.4)
+
+The outbound adapter is a server-side composition boundary, not a network sender. It creates a signed STEEL-compatible `3XT-FABRIC/1` envelope and persists it into the existing KRATT PostgreSQL outbox. It does not invoke `claimOutbox`, instantiate `createOutboxWorker`, or perform HTTP, Telegram, repository, deployment or other external effects.
+
+### Server-owned inputs
+
+`createSteelFabricOutboundAdapter` requires injected dependencies:
+- a trusted outbound policy resolver (source node, destination node, permitted event types, per-event scope, approval authority, key binding and TTL);
+- a source revision resolver;
+- an ACTIVE signing identity resolver and a signer callback;
+- an approval signature verifier;
+- server-side payload, evidence-reference, correlation, causal-parent and payload-reference resolvers;
+- the existing PostgreSQL outbox store.
+
+The publish request accepts a validated KRATT task, authenticated principal, request-bound approval, task-bound idempotency key and an event type. It does not accept caller-supplied destination node, scope, key id, source revision, payload or evidence references. Those values come from the server-owned resolvers. The signed `scope` is taken only from the trusted per-event policy.
+
+The adapter checks that approval task/actor/operation/target/request digest/provider/authority and validity period bind to the exact task. The injected `verifyApproval` callback must perform cryptographic signature and request-binding verification without consuming the nonce; the PostgreSQL outbox transaction performs the durable one-time nonce consumption. This separation prevents an in-memory or second database nonce consume from racing the outbox commit.
+
+### Sequence reservation and retry behaviour
+
+Migration `0004_fabric_outbound.sql` adds:
+- `kratt_fabric_outbound_heads`: monotonic sequence head per source node;
+- `kratt_fabric_outbound_sequences`: immutable reservation tying a source node, idempotency key, request digest and source sequence;
+- `kratt_fabric_outbound_events`: immutable signed event snapshot and digest, linked to the authorized dispatch intent and sequence reservation.
+
+`reserveFabricSequence` serializes reservations per source node using a transaction-scoped advisory lock and row lock. Repeating the same idempotency key with the same request digest returns the same sequence. Reusing that key with a different request digest fails with `FABRIC_SEQUENCE_REQUEST_CONFLICT`. If signing or final intent persistence fails after reservation, the reservation remains and the same key can retry the same sequence; an abandoned reservation may create a visible sequence gap, which receivers already support.
+
+The adapter derives a deterministic event id from the idempotency key. It computes the JCS/SHA-256 digest, obtains an Ed25519 signature through the injected signer, and independently verifies that signature against the trusted public key before attempting persistence.
+
+The final call to `reserveAuthorizedIntent` inserts, in one PostgreSQL transaction:
+1. the one-time approval nonce;
+2. the cancellation guard and idempotency-bound intent;
+3. the outbox payload with provider `fabric`;
+4. the immutable outbound Fabric event record;
+5. the append-only audit record.
+
+An already committed idempotency key returns the stored signed event as a duplicate and does not allocate a new sequence or consume the nonce again.
+
+### Key and side-effect boundaries
+
+Only an `ACTIVE` outbound signing identity is accepted. The module never generates, stores, exports or rotates private keys; the signer is injected and the returned signature is checked against a separately resolved public key. Retired/revoked outbound key workflows and persisted trust-registry management remain follow-on work.
+
+The new outbox row is committed in `PENDING` state. It is not claimed or dispatched by this adapter. An operator must separately review worker registration, destination transport, retry semantics and external-effect authorization before any delivery can be enabled. Network delivery remains at-least-once; stable event and idempotency identities are required for receiver deduplication.
+
+### WP-03.4 verification
+
+The outbound unit suite covers signed event creation, server-derived scope/payload/evidence, disallowed event types, approval/time/principal binding, signing-key mismatch, duplicate idempotency and request-digest conflicts. The PostgreSQL 16 integration suite creates an isolated schema, reapplies migrations, races two outbox stores against one idempotency key, verifies the persisted event signature, checks immutable guards, and asserts the outbox remains `PENDING` with zero attempts. A passing GitHub Actions job is required before this work package is marked CI-verified.
