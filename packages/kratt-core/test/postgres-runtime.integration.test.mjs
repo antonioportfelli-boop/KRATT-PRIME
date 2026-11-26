@@ -94,11 +94,11 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
     const [first, competing] = await Promise.all([
       leasesA.acquire({
         operationId: "lease-race-a", reservationKey: "integration-task-1",
-        taskDigest: digest, ownerId: "worker-integration-a", ttlMs: 5_000
+        taskDigest: digest, ownerId: "worker-integration-a", ttlMs: 1_000
       }),
       leasesB.acquire({
         operationId: "lease-race-b", reservationKey: "integration-task-1",
-        taskDigest: digest, ownerId: "worker-integration-b", ttlMs: 5_000
+        taskDigest: digest, ownerId: "worker-integration-b", ttlMs: 1_000
       })
     ]);
     assert.equal([first, competing].filter(result => result.ok).length, 1);
@@ -107,18 +107,14 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
     const ownerId = original.ownerId;
     assert.equal(original.fencingToken, 1);
 
-    // Simulate lease expiry using the database clock in an isolated test database.
-    await admin.query(
-      "UPDATE kratt_worker_lease_reservations SET expires_at = clock_timestamp() - interval '1 second' " +
-      "WHERE reservation_key = $1",
-      ["integration-task-1"]
-    );
+    // Let the actual database-clock lease expire; do not mutate lease state out of band.
+    await new Promise(resolve => setTimeout(resolve, 1_150));
     const recovered = await leasesB.acquire({
       operationId: "lease-reacquire-after-expiry",
       reservationKey: "integration-task-1",
       taskDigest: digest,
       ownerId,
-      ttlMs: 5_000
+      ttlMs: 1_000
     });
     assert.equal(recovered.ok, true);
     assert.equal(recovered.fencingToken, 2);
@@ -129,7 +125,7 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
       taskDigest: digest,
       ownerId,
       fencingToken: original.fencingToken,
-      ttlMs: 5_000
+      ttlMs: 1_000
     });
     assert.equal(stale.reason, "WORKER_FENCING_TOKEN_STALE");
 
