@@ -88,6 +88,11 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       nodeId: "steel-node", keyId: receiverIdentity.key_id, nextStatus: "ACTIVE",
       actorId: "operator-01", reason: "activate isolated test receiver key"
     })).ok, true);
+    const metricCalls = [];
+    const metrics = {
+      increment: (name, amount = 1) => metricCalls.push(["counter", name, amount]),
+      gauge: (name, value) => metricCalls.push(["gauge", name, value])
+    };
     const outbox = createPostgresOutboxStore(pool, {
       clock: () => new Date(clock),
       authorizeReconciliation: async request => request.actorId === "operator-01" && request.evidenceDigest === "d".repeat(64)
@@ -95,7 +100,8 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     const acknowledgements = createPostgresFabricAcknowledgementStore(pool, {
       clock: () => new Date(clock),
       lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
-        trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
+        trust.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs),
+      metrics
     });
     const trustB = createPostgresFabricTrustRegistry(poolB, {
       clock: () => new Date(clock), authorizeAdmin: async () => true
@@ -103,7 +109,8 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     const acknowledgementsB = createPostgresFabricAcknowledgementStore(poolB, {
       clock: () => new Date(clock),
       lockTrustedReceiverKey: (client, nodeId, keyId, ack, nowMs) =>
-        trustB.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs)
+        trustB.lockTrustedReceiverAcknowledgementIdentity(client, nodeId, keyId, ack, nowMs),
+      metrics
     });
 
     async function seed(tag, ackPolicyRevision = "steel-policy-7") {
@@ -476,6 +483,17 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     const revokedResult = await process(revoked, revokedLease, revokedAck, acknowledgementsB);
     assert.equal(revokedResult.ok, false);
     assert.equal(revokedResult.code, "ACK_KEY_UNTRUSTED");
+
+    const counters = Object.fromEntries(metricCalls.filter(call => call[0] === "counter")
+      .map(([, name, amount]) => [name, (metricCalls.filter(x => x[0] === "counter" && x[1] === name)
+        .reduce((total, x) => total + x[2], 0))]));
+    assert.ok((counters.fabric_ack_verified_total ?? 0) >= 5, JSON.stringify(counters));
+    assert.ok((counters.fabric_ack_replayed_total ?? 0) >= 2, JSON.stringify(counters));
+    assert.ok((counters.fabric_ack_rejected_total ?? 0) >= 1, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_accepted_total ?? 0) >= 2, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_duplicate_total ?? 0) >= 1, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_rejected_total ?? 0) >= 1, JSON.stringify(counters));
+    assert.ok((counters.fabric_receiver_unknown_total ?? 0) >= 1, JSON.stringify(counters));
     assert.equal((await pool.query(
       "SELECT count(*)::int AS n FROM kratt_fabric_receiver_acknowledgements WHERE outbox_id=$1", [revoked.outboxId]
     )).rows[0].n, 0);
