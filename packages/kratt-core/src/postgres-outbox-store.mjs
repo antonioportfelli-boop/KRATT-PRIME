@@ -80,10 +80,10 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
      [approval.key_id,approval.nonce,approval.approval_id,approval.expires_at,at]);
     if(nonce.rowCount!==1)return{ok:false,reason:"APPROVAL_REPLAYED"};
     const cancelled=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE",[task.task_id]);
-    if(cancelled.rowCount)return{ok:false,reason:"TASK_CANCELLED"};
+    if(cancelled.rowCount){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"TASK_CANCELLED"};}
     const intent=await c.query("INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,actor_id,provider,operation,status,created_at) VALUES($1,$2,$3,$4,$5,'INTENT_COMMITTED',$6) ON CONFLICT(idempotency_key) DO NOTHING RETURNING idempotency_key",
      [idempotencyKey,task.task_id,principal.id,event.provider,task.action,at]);
-    if(intent.rowCount!==1)return{ok:false,reason:"DUPLICATE_IDEMPOTENCY_KEY"};
+    if(intent.rowCount!==1){incrementFabricMetric(metrics,"fabric_idempotency_conflicts");return{ok:false,reason:"DUPLICATE_IDEMPOTENCY_KEY"};}
     await c.query("INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) VALUES($1,$2,$3,$4::jsonb,'PENDING',$5)",
      [outboxId,idempotencyKey,event.provider,JSON.stringify(providerPayload??(fabricEvent?{fabric_envelope:fabricEvent}:{task})),at]);
     if(fabricEvent){
@@ -179,13 +179,16 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    if(q.rowCount!==1)return{ok:false,reason:"OUTBOX_NOT_FOUND"};
    const r=q.rows[0];
    if(r.task_id!==taskId)return{ok:false,reason:"TASK_BINDING_CONFLICT"};
-   if(r.status!=="LEASED"||r.lease_token!==leaseToken||!r.lease_until||Date.parse(new Date(r.lease_until).toISOString())<=Date.parse(at))
+   if(r.status!=="LEASED"||r.lease_token!==leaseToken||!r.lease_until||Date.parse(new Date(r.lease_until).toISOString())<=Date.parse(at)){
+    incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");
     return{ok:false,reason:"LEASE_LOST"};
-   if(r.intent_status!=="INTENT_COMMITTED")return{ok:false,reason:"INTENT_TERMINAL"};
+   }
+   if(r.intent_status!=="INTENT_COMMITTED"){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"INTENT_TERMINAL"};}
    const cancelled=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1",[taskId]);
    if(cancelled.rowCount)return{ok:false,reason:"TASK_CANCELLED"};
    if(r.delivery_started_at){
     if(r.delivery_lease_token===leaseToken)return{ok:true,duplicate:true,task_id:taskId,delivery_started_at:r.delivery_started_at};
+    incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");
     return{ok:false,reason:"DELIVERY_RECONCILIATION_REQUIRED"};
    }
    await c.query("UPDATE kratt_dispatch_outbox SET delivery_started_at=$2,delivery_lease_token=$3,updated_at=$2 WHERE outbox_id=$1",
@@ -271,6 +274,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    const inserted=await c.query("INSERT INTO kratt_cancelled_tasks(task_id,cancelled_at,actor_id) VALUES($1,$2,$3) ON CONFLICT(task_id) DO NOTHING RETURNING task_id",
     [taskId,at,actorId]);
    if(inserted.rowCount!==1)return{ok:true,duplicate:true,task_id:taskId,cancelled_outbox_count:0};
+   incrementFabricMetric(metrics,"fabric_task_cancelled");
    const cancelled=await c.query("UPDATE kratt_dispatch_outbox o SET status='CANCELLED',lease_owner=NULL,lease_token=NULL,lease_until=NULL,updated_at=$2 "+
     "FROM kratt_dispatch_intents i WHERE i.idempotency_key=o.idempotency_key AND i.task_id=$1 "+
     "AND o.status IN ('PENDING','LEASED') AND o.delivery_started_at IS NULL RETURNING o.outbox_id",[taskId,at]);
