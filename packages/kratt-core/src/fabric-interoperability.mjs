@@ -1,4 +1,4 @@
-import { createHash, verify as cryptoVerify } from "node:crypto";
+import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { types as utilTypes } from "node:util";
 
 export const FABRIC_WIRE_PROTOCOL = "3XT-FABRIC/1";
@@ -310,6 +310,8 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   const ackEnabled = typeof deps.createAcknowledgement === "function";
   const deliveryAttempt = deps.deliveryAttempt;
   if (ackEnabled && (!Number.isSafeInteger(deliveryAttempt) || deliveryAttempt < 1)) return fail("DELIVERY_ATTEMPT_REQUIRED");
+  if (ackEnabled && typeof deps.resolveReceiverSigningIdentity !== "function") return fail("RECEIVER_SIGNING_IDENTITY_RESOLVER_REQUIRED");
+  if (ackEnabled && typeof deps.revalidateAuthorization !== "function") return fail("INGRESS_AUTHORIZATION_REVALIDATOR_REQUIRED");
   const parsed = parseSteelFabricEventV1(raw);
   if (!parsed.ok) return parsed;
   const event = parsed.value;
@@ -343,16 +345,20 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       "SELECT ack_json FROM kratt_fabric_inbound_acknowledgements WHERE event_id=$1 AND delivery_attempt=$2 FOR UPDATE",
       [event.event_id, deliveryAttempt]
     );
-    if (found.rowCount === 1) return found.rows[0].ack_json;
-    let supplied;
-    try {
-      supplied = await deps.createAcknowledgement({
-        event, authenticatedKey: authenticated.value, authorization, result,
-        outcome: "ACCEPTED", ackResult, deliveryAttempt, receivedAt: new Date(now).toISOString()
-      });
-    } catch { throw new Error("RECEIVER_ACK_CREATION_FAILED"); }
-    if (supplied?.ok === false) throw new Error(supplied.code ?? "RECEIVER_ACK_CREATION_FAILED");
-    const acknowledgement = supplied?.ok === true ? supplied.value : supplied;
+    let acknowledgement;
+    if (found.rowCount === 1) {
+      acknowledgement = found.rows[0].ack_json;
+    } else {
+      let supplied;
+      try {
+        supplied = await deps.createAcknowledgement({
+          event, authenticatedKey: authenticated.value, authorization, result,
+          outcome: "ACCEPTED", ackResult, deliveryAttempt, receivedAt: new Date(now).toISOString()
+        });
+      } catch { throw new Error("RECEIVER_ACK_CREATION_FAILED"); }
+      if (supplied?.ok === false) throw new Error(supplied.code ?? "RECEIVER_ACK_CREATION_FAILED");
+      acknowledgement = supplied?.ok === true ? supplied.value : supplied;
+    }
     if (!acknowledgement || typeof acknowledgement !== "object" || Array.isArray(acknowledgement) ||
         Object.keys(acknowledgement).length !== ackKeys.length || ackKeys.some(key => !Object.hasOwn(acknowledgement, key)) ||
         acknowledgement.protocol !== "3XT-FABRIC-ACK/1" ||
@@ -369,10 +375,28 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     delete unsigned.signature;
     const expectedDigest = createHash("sha256").update(canonicalizeFabricJcs(unsigned), "utf8").digest("hex");
     if (expectedDigest !== acknowledgement.content_digest) throw new Error("RECEIVER_ACK_INVALID");
-    await client.query(
-      "INSERT INTO kratt_fabric_inbound_acknowledgements(event_id,delivery_attempt,ack_id,content_digest,ack_json,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
-      [event.event_id, deliveryAttempt, acknowledgement.ack_id, acknowledgement.content_digest, JSON.stringify(acknowledgement), new Date(now).toISOString()]
-    );
+    let signer;
+    try { signer = await deps.resolveReceiverSigningIdentity(event.destination_node); }
+    catch { throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE"); }
+    if (!signer || (signer.node_id ?? signer.source_node) !== event.destination_node ||
+        signer.status !== "ACTIVE" || (signer.node_status !== undefined && signer.node_status !== "ACTIVE") ||
+        signer.key_id !== acknowledgement.key_id || !signer.public_key)
+      throw new Error("RECEIVER_ACK_SIGNER_UNAVAILABLE");
+    let publicKey, signatureBytes;
+    try {
+      publicKey = signer.public_key?.type === "public" ? signer.public_key : createPublicKey(signer.public_key);
+      signatureBytes = Buffer.from(acknowledgement.signature, "base64");
+    } catch { throw new Error("RECEIVER_ACK_INVALID"); }
+    const signingInput = ["3XT-FABRIC-ACK/1", acknowledgement.receiver_node, acknowledgement.key_id, acknowledgement.content_digest].join("\n");
+    if (signatureBytes.length !== 64 || signatureBytes.toString("base64") !== acknowledgement.signature ||
+        !cryptoVerify(null, Buffer.from(signingInput, "utf8"), publicKey, signatureBytes))
+      throw new Error("RECEIVER_ACK_INVALID");
+    if (found.rowCount === 0) {
+      await client.query(
+        "INSERT INTO kratt_fabric_inbound_acknowledgements(event_id,delivery_attempt,ack_id,content_digest,ack_json,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+        [event.event_id, deliveryAttempt, acknowledgement.ack_id, acknowledgement.content_digest, JSON.stringify(acknowledgement), new Date(now).toISOString()]
+      );
+    }
     return acknowledgement;
   };
   const duplicateResult = async (client, row) => {
@@ -579,6 +603,8 @@ export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "EVENT_NOT_YET_VALID", "EVENT_EXPIRED", "EVENT_REPLAY_OR_CONFLICT", "EVENT_RECEIPT_MISSING",
   "EVENT_RECEIPT_POLICY_REVISION_CHANGED", "EVENT_RECEIPT_STORE_FAILED", "TASK_SCOPE_RESOLUTION_FAILED",
   "TASK_SCOPE_INVALID", "TASK_SCOPE_REQUIRED", "TASK_CANCELLED", "AUTHORIZATION_REVALIDATION_UNAVAILABLE",
-  "AUTHORIZATION_REVALIDATION_FAILED", "AUTHORIZATION_REVISION_CHANGED", "DELIVERY_ATTEMPT_REQUIRED", "RECEIVER_ACK_INVALID",
+  "AUTHORIZATION_REVALIDATION_FAILED", "AUTHORIZATION_REVISION_CHANGED", "DELIVERY_ATTEMPT_REQUIRED",
+  "RECEIVER_SIGNING_IDENTITY_RESOLVER_REQUIRED", "INGRESS_AUTHORIZATION_REVALIDATOR_REQUIRED",
+  "RECEIVER_ACK_SIGNER_UNAVAILABLE", "RECEIVER_ACK_INVALID",
   "RECEIVER_ACK_CREATION_FAILED", "EVENT_RESULT_NOT_SERIALIZABLE", "SEQUENCE_STALE", "CAUSAL_PARENT_MISSING", "EVENT_HANDLER_FAILED"
 ]);
