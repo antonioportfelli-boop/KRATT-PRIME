@@ -96,6 +96,39 @@ test("records an unknown post-start provider result for reconciliation without m
   assert.equal(store.verifyAuditChain().ok, true);
 }));
 
+test("a durable delivery-start fence survives store restart and prevents a second provider start", () => {
+  const directory = mkdtempSync(join(tmpdir(), "kratt-command-restart-"));
+  const path = join(directory, "commands.sqlite");
+  let firstDb;
+  let restartedDb;
+  try {
+    firstDb = new DatabaseSync(path);
+    const firstStore = createSqliteCommandStore(firstDb);
+    assert.equal(firstStore.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), true);
+    const started = firstStore.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at });
+    assert.equal(started.ok, true, JSON.stringify(started));
+    firstDb.close();
+    firstDb = null;
+
+    // A new connection/store instance models a process restart after delivery-start commit.
+    restartedDb = new DatabaseSync(path);
+    const restartedStore = createSqliteCommandStore(restartedDb);
+    const secondStart = restartedStore.beginAuthorizedDelivery({
+      idempotencyKey: key, taskId, actorId: actor, at: "2026-11-18T15:00:02.000Z"
+    });
+    assert.equal(secondStart.ok, false);
+    assert.equal(restartedStore.cancelTask({ taskId, actorId: actor, at: "2026-11-18T15:00:02.000Z" }), false);
+    assert.deepEqual(restartedStore.listAuditEvents().map(x => x.record.event_type), [
+      "dispatch.intent_committed", "dispatch.delivery_started"
+    ]);
+    assert.equal(restartedStore.verifyAuditChain().ok, true);
+  } finally {
+    firstDb?.close();
+    restartedDb?.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("delivery start and cancellation are serialized; cancellation cannot win after a start", () => withStore((store) => {
   assert.equal(store.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), true);
   const started = store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at });
