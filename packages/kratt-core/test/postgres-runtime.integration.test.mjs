@@ -34,7 +34,10 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
       "DROP FUNCTION IF EXISTS kratt_reject_runtime_journal_mutation() CASCADE;" +
       "DROP FUNCTION IF EXISTS kratt_guard_runtime_journal_head() CASCADE;"
     );
-    await admin.query(await readFile(migrationPath, "utf8"));
+    const migrationSql = await readFile(migrationPath, "utf8");
+    await admin.query(migrationSql);
+    // Reapplying the reviewed migration must be safe for a staged rollout retry.
+    await admin.query(migrationSql);
 
     const storeA = createPostgresRuntimeStore(poolA);
     const storeB = createPostgresRuntimeStore(poolB);
