@@ -281,6 +281,11 @@ export function authorizeSteelFabricEventV1(input, authenticatedKey, policy) {
   if (!Array.isArray(trustedPolicy.destinations) || !trustedPolicy.destinations.includes(event.destination_node)) return fail("DESTINATION_NOT_AUTHORIZED");
   if (!validPolicyList(trustedPolicy.allowed_event_types) || !trustedPolicy.allowed_event_types.includes(event.event_type)) return fail("EVENT_TYPE_NOT_AUTHORIZED");
   if (!validPolicyList(trustedPolicy.allowed_scope) || !event.scope.every(scope => trustedPolicy.allowed_scope.includes(scope))) return fail("SCOPE_NOT_AUTHORIZED");
+  if (Number.isSafeInteger(trustedPolicy.max_ttl_ms)) {
+    const issued = strictUtcMillis(event.issued_at);
+    const expires = strictUtcMillis(event.expires_at);
+    if (issued === null || expires === null || expires - issued > trustedPolicy.max_ttl_ms) return fail("EVENT_TTL_NOT_AUTHORIZED");
+  }
   if (trustedPolicy.key_id !== undefined && trustedPolicy.key_id !== authenticatedKey.key_id) return fail("KEY_POLICY_MISMATCH");
   return ok(Object.freeze({
     source_node: event.source_node,
@@ -315,7 +320,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   const authenticated = await authenticateSteelFabricEventV1(event, { resolveTrustedKey: deps.resolveTrustedKey, now: () => now });
   if (!authenticated.ok) return authenticated;
   let policy;
-  try { policy = await deps.resolveNodePolicy(event.source_node, authenticated.value); } catch { policy = null; }
+  try { policy = await deps.resolveNodePolicy(event.source_node, authenticated.value, event); } catch { policy = null; }
   const authorized = authorizeSteelFabricEventV1(event, authenticated.value, policy);
   if (!authorized.ok) return authorized;
 
