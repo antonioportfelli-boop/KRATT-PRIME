@@ -73,16 +73,18 @@ function validApprovalShape(approval) {
     });
 }
 
-function existingReservation(existing, expectedEventId, sourceNode) {
+function existingReservation(existing, expectedEventId, sourceNode, expectedPolicyRevision, expectedRequestDigest) {
   if (!existing?.ok || existing.found !== true || !existing.event) return null;
   const checked = validateSteelFabricEventV1(existing.event);
-  if (!checked.ok || checked.value.event_id !== expectedEventId || checked.value.source_node !== sourceNode) return null;
+  if (!checked.ok || checked.value.event_id !== expectedEventId || checked.value.source_node !== sourceNode ||
+      existing.ack_policy_revision !== expectedPolicyRevision || existing.request_digest !== expectedRequestDigest) return null;
   return {
     duplicate: true,
     queued: true,
     outbox_status: existing.status,
     attempts: existing.attempts,
-    event: checked.value
+    event: checked.value,
+    ack_policy_revision: existing.ack_policy_revision
   };
 }
 
@@ -158,6 +160,7 @@ export function createSteelFabricOutboundAdapter({
         !policy.allowed_event_types.includes(eventType) || typeof eventType !== "string" || !TOKEN.test(eventType)) {
       return fail("OUTBOUND_POLICY_DENIED");
     }
+    if (!ID.test(policy.revision ?? "")) return fail("OUTBOUND_POLICY_REVISION_INVALID");
     const scope = policy.scope_by_event_type?.[eventType];
     if (!listOfTokens(scope)) return fail("OUTBOUND_SCOPE_POLICY_INVALID");
     const taskProvider = task.constraints?.provider;
@@ -242,7 +245,7 @@ export function createSteelFabricOutboundAdapter({
     try { prior = await outboxStore.findOutboxByIdempotencyKey(idempotencyKey); } catch { return fail("OUTBOX_LOOKUP_UNAVAILABLE"); }
     if (!prior?.ok) return fail(prior?.reason ?? "OUTBOX_LOOKUP_FAILED");
     if (prior.found) {
-      const duplicate = existingReservation(prior, eventId, sourceNode);
+      const duplicate = existingReservation(prior, eventId, sourceNode, policy.revision, reservationDigest);
       return duplicate ? ok(duplicate) : fail("IDEMPOTENCY_RESERVATION_CONFLICT");
     }
 
@@ -309,14 +312,14 @@ export function createSteelFabricOutboundAdapter({
     try {
       reserved = await outboxStore.reserveAuthorizedIntent({
         task, principal, approval: storedApproval, idempotencyKey,
-        provider: "fabric", fabricEvent: checkedEvent.value,
+        provider: "fabric", fabricEvent: checkedEvent.value, ackPolicyRevision: policy.revision,
         providerPayload: { fabric_envelope: checkedEvent.value }
       });
     } catch { return fail("OUTBOX_RESERVATION_FAILED"); }
     if (!reserved?.ok) {
       let raced;
       try { raced = await outboxStore.findOutboxByIdempotencyKey(idempotencyKey); } catch { raced = null; }
-      const duplicate = existingReservation(raced, eventId, sourceNode);
+      const duplicate = existingReservation(raced, eventId, sourceNode, policy.revision, reservationDigest);
       return duplicate ? ok(duplicate) : fail(reserved?.reason ?? "OUTBOX_RESERVATION_FAILED");
     }
     return ok({
@@ -325,7 +328,7 @@ export function createSteelFabricOutboundAdapter({
       outbox_id: reserved.outbox_id,
       audit_sequence: reserved.audit_sequence,
       sequence: checkedEvent.value.sequence,
-      policy_revision: typeof policy.revision === "string" ? policy.revision : null,
+      policy_revision: policy.revision,
       event: checkedEvent.value
     });
   }
