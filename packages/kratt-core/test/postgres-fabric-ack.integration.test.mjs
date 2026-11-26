@@ -179,7 +179,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
       const claimed = await outbox.claimOutbox({ workerId: "worker-ack", limit: 10, leaseSeconds: 60 });
       const row = claimed.find(value => value.outbox_id === item.outboxId);
       assert.ok(row, "expected outbox row to be claimed");
-      const started = await outbox.beginOutboxDelivery({ outboxId: item.outboxId, leaseToken: row.lease_token });
+      const started = await outbox.beginOutboxDelivery({ outboxId: item.outboxId, leaseToken: row.lease_token, workerId: "worker-ack" });
       assert.equal(started.ok, true, JSON.stringify(started));
       return row;
     }
@@ -259,7 +259,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.ok(retryClaim);
     assert.equal(Number(retryClaim.delivery_attempt_sequence), Number(rejectedLease.delivery_attempt_sequence) + 1);
     assert.equal(Number(retryClaim.attempts), 1);
-    assert.equal((await outbox.beginOutboxDelivery({ outboxId: rejected.outboxId, leaseToken: retryClaim.lease_token })).ok, true);
+    assert.equal((await outbox.beginOutboxDelivery({ outboxId: rejected.outboxId, leaseToken: retryClaim.lease_token, workerId: "worker-ack" })).ok, true);
     const acceptedAfterRetry = await process(rejected, retryClaim,
       makeAck(rejected.event, retryClaim.delivery_attempt_sequence, "ACCEPTED", "accepted-after-retry"));
     assert.equal(acceptedAfterRetry.ok, true, JSON.stringify(acceptedAfterRetry));
@@ -335,7 +335,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.ok(cancelClaim);
     const cancelResult = await outbox.cancelTaskWithReason({ taskId: cancelled.taskId, actorId: "operator-01" });
     assert.equal(cancelResult.ok, true);
-    const startAfterCancel = await outbox.beginOutboxDelivery({ outboxId: cancelled.outboxId, leaseToken: cancelClaim.lease_token });
+    const startAfterCancel = await outbox.beginOutboxDelivery({ outboxId: cancelled.outboxId, leaseToken: cancelClaim.lease_token, workerId: "worker-ack" });
     assert.equal(startAfterCancel.reason, "LEASE_LOST");
     const cancelledAck = makeAck(cancelled.event, cancelClaim.delivery_attempt_sequence, "ACCEPTED", "cancelled");
     const cancelledAckResult = await process(cancelled, cancelClaim, cancelledAck);
