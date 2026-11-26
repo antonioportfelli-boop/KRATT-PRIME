@@ -156,6 +156,33 @@ test("sender authenticates the receiver's signed negotiation response and reques
   assert.equal(untrusted.code, "NEGOTIATION_RESPONSE_ACK_KEY_UNTRUSTED");
 });
 
+test("schema version selection preserves numeric ordering beyond JavaScript safe integers", async () => {
+  const lower = "9007199254740992.0.0";
+  const higher = "9007199254740993.0.0";
+  const digestLower = "1".repeat(64);
+  const digestHigher = "2".repeat(64);
+  const request = makeNegotiationRequest({
+    minimum_version: lower,
+    offered_versions: [
+      { version: lower, schema_digest: digestLower },
+      { version: higher, schema_digest: digestHigher }
+    ]
+  });
+  const result = await negotiateFabricSchema(request, negotiationDependencies({
+    resolveSchemaPolicy: async () => ({
+      status: "ACTIVE", revision: "receiver-policy-7", minimum_version: lower,
+      supported_versions: [
+        { version: lower, schema_digest: digestLower },
+        { version: higher, schema_digest: digestHigher }
+      ]
+    })
+  }));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.value.status, "SUPPORTED");
+  assert.equal(result.value.selected_version, higher);
+  assert.equal(result.value.schema_digest, digestHigher);
+});
+
 test("sender rejects a validly signed receiver response below the offered minimum version", async () => {
   const request = makeNegotiationRequest({ minimum_version: "2.0.0" });
   const negotiated = await negotiateFabricSchema(request, negotiationDependencies());
