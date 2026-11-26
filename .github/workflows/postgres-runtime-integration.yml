@@ -26,7 +26,7 @@ on:
       - "packages/kratt-core/migrations/0008_fabric_receiver_receipts.sql"
       - "packages/kratt-core/migrations/0009_fabric_ack_outbox_reconciliation.sql"
       - "packages/kratt-core/test/fabric-negotiation-ack.test.mjs"
-      - "packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs"
+      - "packages/kratt-core/test/postgres-fabric-ack.integration.test.mjs packages/kratt-core/test/postgres-fabric-delivery-e2e.integration.test.mjs"
       - "packages/kratt-core/src/postgres-fabric-trust-registry.mjs"
       - "packages/kratt-core/test/fabric-steel-contract.test.mjs"
       - "packages/kratt-core/test/fixtures/steel/fabric-v1.ts"
