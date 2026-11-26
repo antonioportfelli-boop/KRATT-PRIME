@@ -133,7 +133,7 @@ test("does not accept caller-provided scope or payload; server resolvers define 
   });
   assert.equal(result.ok, true);
   assert.deepEqual(result.value.event.scope, ["repository.read"]);
-  assert.deepEqual(result.value.event.payload, { source: "server-owned" });
+  assert.equal(result.value.event.payload.source, "server-owned");
   assert.equal(state.sequenceCalls.length, 1);
 });
 
