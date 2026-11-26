@@ -97,7 +97,7 @@ BEGIN
      NEW.ack_json->>'source_sequence' <> receipt_row.source_sequence::text OR
      NEW.ack_json->>'event_digest' <> receipt_row.content_digest OR
      NEW.ack_json->>'policy_revision' IS DISTINCT FROM receipt_row.policy_revision OR
-     NEW.ack_json->>'result' <> receipt_row.outcome THEN
+     NEW.ack_json->>'result' NOT IN ('ACCEPTED','DUPLICATE') THEN
     RAISE EXCEPTION 'KRATT_FABRIC_INBOUND_ACK_IDENTITY_MISMATCH';
   END IF;
   RETURN NEW;
