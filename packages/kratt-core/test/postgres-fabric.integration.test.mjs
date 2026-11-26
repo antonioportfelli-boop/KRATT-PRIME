@@ -126,6 +126,11 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     });
     assert.equal(verifiedAck.ok, true, JSON.stringify(verifiedAck));
     const wrongReceiverKey = generateKeyPairSync("ed25519");
+    const revokedSignerReplay = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, {
+      resolveReceiverSigningIdentity: async () => ({ ...receiverSigningIdentity, status: "REVOKED" })
+    }));
+    assert.equal(revokedSignerReplay.ok, false);
+    assert.equal(revokedSignerReplay.code, "RECEIVER_ACK_SIGNER_UNAVAILABLE");
     const corruptedStoredAck = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 1, {
       resolveReceiverSigningIdentity: async () => ({ ...receiverSigningIdentity, public_key: wrongReceiverKey.publicKey })
     }));
