@@ -105,6 +105,11 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       now: () => NOW
     });
     assert.equal(verifiedAck.ok, true, JSON.stringify(verifiedAck));
+    const replayAfterExpiry = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), {
+      ...deps(undefined, 2), now: () => Date.parse(first.expires_at) + 1
+    });
+    assert.equal(replayAfterExpiry.ok, true, JSON.stringify(replayAfterExpiry));
+    assert.deepEqual(replayAfterExpiry.value.acknowledgement, replayedSecondAttempt.value.acknowledgement);
     const forgedAck = { ...accepted.value.acknowledgement, ack_id: "ack:forged", delivery_attempt: 99, receiver_node: "attacker-node", content_digest: "" };
     forgedAck.content_digest = fabricReceiverAcknowledgementDigest(forgedAck);
     await assert.rejects(poolA.query(
@@ -182,6 +187,12 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     const serializationRetry = await receiveSteelFabricEventV1(poolB, JSON.stringify(serializationEvent), deps());
     assert.equal(serializationRetry.ok, true, JSON.stringify(serializationRetry));
 
+    const expiredUnprocessed = makeEvent({ id: "fabric-db-expired-new", sequence: 10, issuedAt: new Date(NOW - 120_000).toISOString() });
+    const expiredResult = await receiveSteelFabricEventV1(poolA, JSON.stringify(expiredUnprocessed), { ...deps(), now: () => NOW });
+    assert.equal(expiredResult.ok, false);
+    assert.equal(expiredResult.code, "EVENT_EXPIRED");
+    const expiredNotStored = await poolA.query("SELECT count(*)::int AS count FROM kratt_fabric_event_inbox WHERE event_id=$1", [expiredUnprocessed.event_id]);
+    assert.equal(expiredNotStored.rows[0].count, 0);
     const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count, (SELECT count(*)::int FROM kratt_fabric_receiver_receipts) AS receipt_count, (SELECT count(*)::int FROM kratt_fabric_inbound_acknowledgements) AS ack_count");
     assert.equal(counts.rows[0].inbox_count, 8);
     assert.equal(counts.rows[0].handler_count, 8);
