@@ -255,7 +255,7 @@ test("PostgreSQL 16 binds signed receiver ACKs to event identity, attempt, lease
     assert.equal(startAfterCancel.reason, "LEASE_LOST");
     const cancelledAck = makeAck(cancelled.event, cancelClaim.delivery_attempt_sequence, "ACCEPTED", "cancelled");
     const cancelledAckResult = await process(cancelled, cancelClaim, cancelledAck);
-    assert.equal(cancelledAckResult.code, "ACK_DELIVERY_FENCE_MISMATCH");
+    assert.equal(cancelledAckResult.code, "ACK_INTENT_TERMINAL");
 
     assert.deepEqual(await outbox.claimOutbox({ workerId: "worker-ack", limit: 10, leaseSeconds: 60 }), []);
     await assert.rejects(
