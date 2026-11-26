@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { incrementFabricMetric } from "./fabric-metrics.mjs";
 import {
   authenticateFabricReceiverAcknowledgement,
   validateFabricReceiverAcknowledgement
@@ -49,7 +50,8 @@ async function transaction(pool, work) {
 
 export function createPostgresFabricAcknowledgementStore(pool, {
   clock = () => new Date(),
-  lockTrustedReceiverKey
+  lockTrustedReceiverKey,
+  metrics = null
 } = {}) {
   if (!pool || typeof pool.connect !== "function" || typeof pool.query !== "function")
     throw new TypeError("POSTGRES_POOL_REQUIRED");
@@ -103,8 +105,9 @@ export function createPostgresFabricAcknowledgementStore(pool, {
     const receivedAtMs = Date.parse(at);
     if (!Number.isFinite(receivedAtMs)) return fail("ACK_TIME_INVALID");
 
+    let acknowledgementVerified = false;
     try {
-      return await transaction(pool, async client => {
+      const applied = await transaction(pool, async client => {
         // The same task-scoped lock is acquired before outbox/intent row locks by
         // cancellation, delivery-start and ACK application.
         const identity = await client.query(
@@ -160,6 +163,7 @@ export function createPostgresFabricAcknowledgementStore(pool, {
           now: () => receivedAtMs
         });
         if (!authenticated.ok) return fail(authenticated.code);
+        acknowledgementVerified = true;
         const trustedReceiver = authenticated.value.authenticatedReceiver;
 
         // Replays are resolved from the durable ledger before checking terminal
@@ -312,8 +316,29 @@ export function createPostgresFabricAcknowledgementStore(pool, {
           reconciliation_required: true
         };
       });
+      if (acknowledgementVerified) incrementFabricMetric(metrics, "fabric_ack_verified_total");
+      if (applied?.ok !== true) {
+        incrementFabricMetric(metrics, "fabric_ack_rejected_total");
+        return applied;
+      }
+      if (applied.duplicate === true) {
+        incrementFabricMetric(metrics, "fabric_ack_replayed_total");
+        return applied;
+      }
+      const receiverMetric = {
+        ACCEPTED: "fabric_receiver_accepted_total",
+        DUPLICATE: "fabric_receiver_duplicate_total",
+        REJECTED: "fabric_receiver_rejected_total",
+        UNKNOWN: "fabric_receiver_unknown_total"
+      }[ack.result];
+      if (receiverMetric) incrementFabricMetric(metrics, receiverMetric);
+      return applied;
     } catch (error) {
-      if (error?.code === "23505") return fail("ACK_REPLAY_CONFLICT");
+      if (acknowledgementVerified) incrementFabricMetric(metrics, "fabric_ack_verified_total");
+      if (error?.code === "23505") {
+        incrementFabricMetric(metrics, "fabric_ack_rejected_total");
+        return fail("ACK_REPLAY_CONFLICT");
+      }
       throw error;
     }
   }
