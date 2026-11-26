@@ -47,7 +47,7 @@ The control plane owns all trust and authorization decisions. The data plane may
 | Capability decisions | packages/kratt-core/src/integration-capability-registry.mjs | Existing policy primitive; do not create a second capability registry. |
 | Saga and execution state | packages/kratt-core/src/saga.mjs and the construction execution modules | Reuse existing state transitions and recovery semantics. |
 | Local journal / audit | packages/kratt-core/src/prime-store.mjs and evidence-ledger.mjs | Reuse; do not treat local append-only storage as multi-host persistence. |
-| Adapter manifest contract | packages/kratt-core/src/adapter-contract.mjs (WP-04.1) | New declarative validation and exact-version negotiation only. No I/O or execution. |
+| Adapter manifest contract | packages/kratt-core/src/adapter-contract.mjs (WP-04.1) | Closed declaration validation, exact-version negotiation and pure operation resolution into the existing capability-policy input shape; no trust, authorization, I/O or execution. |
 
 ### WP-03 feature-branch components — not mainline yet
 
