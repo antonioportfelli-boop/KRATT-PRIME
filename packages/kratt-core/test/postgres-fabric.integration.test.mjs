@@ -22,7 +22,6 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
   let poolA;
   let poolB;
   let poolRestart;
-  let poolRestart;
   try {
     await admin.query(`CREATE SCHEMA ${schema}`);
     poolA = new Pool({ connectionString, max: 4, options: `-c search_path=${schema}` });
@@ -56,14 +55,14 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       destinations: ["kratt-node"], allowed_event_types: ["factory.task.accepted"],
       allowed_scope: ["repository.read", "evidence.read"], revision: "wave3-test-policy"
     };
-    const makeEvent = ({ id, sequence, parent = null, scope = ["repository.read"], issuedAt = new Date(NOW - 1_000).toISOString() }) => {
+    const makeEvent = ({ id, sequence, parent = null, scope = ["repository.read"], issuedAt = new Date(NOW - 1_000).toISOString(), taskId = `task-${id}` }) => {
       const event = {
         protocol: "3XT-FABRIC/1", event_id: id, event_type: "factory.task.accepted",
         source_node: trustedKey.source_node, destination_node: "kratt-node", source_revision: "a".repeat(40),
         correlation_id: "wave3-correlation", parent_event_id: parent, sequence,
         issued_at: issuedAt, expires_at: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
         scope, payload_reference: null, evidence_references: [], key_id: trustedKey.key_id,
-        payload: { task_id: `task-${id}`, status: "accepted" }, content_digest: "0".repeat(64), signature: ""
+        payload: { task_id: taskId, status: "accepted" }, content_digest: "0".repeat(64), signature: ""
       };
       event.content_digest = fabricEventContentDigest(event);
       event.signature = sign(null, Buffer.from(fabricSigningInput(event), "utf8"), privateKey).toString("base64");
@@ -271,6 +270,12 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(replayAfterCancel.value.duplicate, true);
     assert.deepEqual(replayAfterCancel.value.acknowledgement, ingressWinsResult.value.acknowledgement);
 
+    const longTaskId = "task-" + "x".repeat(170);
+    const longTaskEvent = makeEvent({ id: "fabric-db-long-task-id", sequence: 11, taskId: longTaskId });
+    const longTaskResult = await receiveSteelFabricEventV1(poolA, JSON.stringify(longTaskEvent), deps());
+    assert.equal(longTaskResult.ok, true, JSON.stringify(longTaskResult));
+    assert.equal(longTaskResult.value.duplicate, false);
+
     // A fresh connection pool has no in-memory receiver state; the database alone restores the ACK and result.
     poolRestart = new Pool({ connectionString, max: 2, options: "-c search_path=" + schema });
     const beforeRestartReplay = await poolRestart.query("SELECT count(*)::int AS count FROM handler_receipts");
@@ -282,10 +287,10 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(afterRestartReplay.rows[0].count, beforeRestartReplay.rows[0].count);
 
     const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count, (SELECT count(*)::int FROM kratt_fabric_receiver_receipts) AS receipt_count, (SELECT count(*)::int FROM kratt_fabric_inbound_acknowledgements) AS ack_count");
-    assert.equal(counts.rows[0].inbox_count, 9);
-    assert.equal(counts.rows[0].handler_count, 9);
-    assert.equal(counts.rows[0].receipt_count, 9);
-    assert.equal(counts.rows[0].ack_count, 10);
+    assert.equal(counts.rows[0].inbox_count, 10);
+    assert.equal(counts.rows[0].handler_count, 10);
+    assert.equal(counts.rows[0].receipt_count, 10);
+    assert.equal(counts.rows[0].ack_count, 11);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_receiver_receipts SET processed_at=processed_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_RECEIVER_RECEIPT_APPEND_ONLY/);
     await assert.rejects(poolA.query("TRUNCATE TABLE kratt_fabric_inbound_acknowledgements"), /KRATT_FABRIC_LEDGER_TRUNCATE_FORBIDDEN/);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_inbound_acknowledgements SET created_at=created_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_INBOUND_ACK_APPEND_ONLY/);
