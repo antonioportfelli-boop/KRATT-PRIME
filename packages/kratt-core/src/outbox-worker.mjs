@@ -69,7 +69,8 @@ export function createOutboxWorker({ store, adapters, workerId, actorId, maxAtte
           outbox_id: item.outbox_id,
           status: started?.reason === "TASK_CANCELLED" ? "CANCELLED" :
             started?.reason === "DELIVERY_RECONCILIATION_REQUIRED" ? "RECONCILE_REQUIRED" :
-              started?.reason === "LEASE_LOST" ? "LEASE_LOST" : "DELIVERY_START_DENIED",
+              started?.reason === "LEASE_LOST" ? "LEASE_LOST" :
+                started?.reason === "LEASE_OWNER_MISMATCH" ? "LEASE_OWNER_MISMATCH" : "DELIVERY_START_DENIED",
           reason: started?.reason ?? "DELIVERY_START_DENIED",
           dispatched: false
         });
