@@ -91,6 +91,7 @@ test("cancelled task at the delivery fence never invokes the provider or retries
 test("lost lease or uncertain prior delivery fails closed without another provider call", async () => {
   for (const begin of [
     { ok: false, reason: "LEASE_LOST" },
+    { ok: false, reason: "LEASE_OWNER_MISMATCH" },
     { ok: false, reason: "DELIVERY_RECONCILIATION_REQUIRED" },
     { ok: true, duplicate: true }
   ]) {
@@ -101,6 +102,7 @@ test("lost lease or uncertain prior delivery fails closed without another provid
     assert.equal(f.calls.some(call => call[0] === "dispatch"), false);
     assert.equal(f.calls.some(call => call[0] === "finish" || call[0] === "retry"), false);
     assert.equal(result.results[0].dispatched, false);
+    if (begin.reason === "LEASE_OWNER_MISMATCH") assert.equal(result.results[0].status, "LEASE_OWNER_MISMATCH");
   }
 });
 
