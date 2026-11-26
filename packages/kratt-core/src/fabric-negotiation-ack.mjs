@@ -120,7 +120,8 @@ export function validateFabricSchemaNegotiationRequest(input) {
     if (!snapshot || !exactKeys(snapshot, REQUEST_KEYS) || snapshot.protocol !== FABRIC_NEGOTIATION_PROTOCOL)
       return fail("NEGOTIATION_SCHEMA_INVALID");
     if (![snapshot.negotiation_id, snapshot.sender_node, snapshot.receiver_node, snapshot.schema_id,
-      snapshot.key_id, snapshot.policy_revision].every(validId)) return fail("NEGOTIATION_IDENTITY_INVALID");
+      snapshot.key_id, snapshot.policy_revision].every(validId) ||
+      snapshot.sender_node === snapshot.receiver_node) return fail("NEGOTIATION_IDENTITY_INVALID");
     if (!validVersion(snapshot.minimum_version) || !Array.isArray(snapshot.offered_versions) ||
       snapshot.offered_versions.length < 1 || snapshot.offered_versions.length > 16) return fail("NEGOTIATION_VERSIONS_INVALID");
     const versions = new Set();
@@ -153,10 +154,13 @@ export function validateFabricSchemaNegotiationResponse(input) {
       snapshot.schema_id, snapshot.key_id].every(validId) ||
       !validHash(snapshot.request_digest) || !validHash(snapshot.content_digest) ||
       !["SUPPORTED", "UNSUPPORTED", "UNKNOWN"].includes(snapshot.status)) return fail("NEGOTIATION_RESPONSE_INVALID");
+    if (snapshot.policy_revision !== null && !validId(snapshot.policy_revision))
+      return fail("NEGOTIATION_RESPONSE_INVALID");
     if (snapshot.status === "SUPPORTED") {
       if (!validVersion(snapshot.selected_version) || !validHash(snapshot.schema_digest) ||
         !validId(snapshot.policy_revision) || snapshot.reason !== null) return fail("NEGOTIATION_RESPONSE_INVALID");
-    } else if (snapshot.selected_version !== null || snapshot.schema_digest !== null) {
+    } else if (snapshot.selected_version !== null || snapshot.schema_digest !== null ||
+      typeof snapshot.reason !== "string" || !/^[A-Z][A-Z0-9_:-]{0,95}$/.test(snapshot.reason)) {
       return fail("NEGOTIATION_RESPONSE_INVALID");
     }
     if (strictUtc(snapshot.issued_at) === null || typeof snapshot.signature !== "string" ||
@@ -333,7 +337,8 @@ export function validateFabricReceiverAcknowledgement(input) {
     if (!snapshot || !exactKeys(snapshot, ACK_KEYS) || snapshot.protocol !== FABRIC_RECEIVER_ACK_PROTOCOL)
       return fail("ACK_SCHEMA_INVALID");
     if (![snapshot.ack_id, snapshot.event_id, snapshot.source_node, snapshot.receiver_node,
-      snapshot.key_id, snapshot.policy_revision].every(validId)) return fail("ACK_IDENTITY_INVALID");
+      snapshot.key_id, snapshot.policy_revision].every(validId) ||
+      snapshot.source_node === snapshot.receiver_node) return fail("ACK_IDENTITY_INVALID");
     if (!Number.isSafeInteger(snapshot.source_sequence) || snapshot.source_sequence < 1 ||
       !Number.isSafeInteger(snapshot.delivery_attempt) || snapshot.delivery_attempt < 1 ||
       !validHash(snapshot.event_digest) || !ACK_RESULTS.has(snapshot.result) ||
