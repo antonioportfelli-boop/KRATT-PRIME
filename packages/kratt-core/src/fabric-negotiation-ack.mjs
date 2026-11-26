@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import { types as utilTypes } from "node:util";
 import { canonicalizeFabricJcs } from "./fabric-interoperability.mjs";
 
@@ -350,6 +350,55 @@ export function validateFabricReceiverAcknowledgement(input) {
   } catch {
     return fail("ACK_SCHEMA_INVALID");
   }
+}
+
+export async function createFabricReceiverAcknowledgement({
+  event, receiverNode, policyRevision, deliveryAttempt, resolveSigningIdentity, sign,
+  result = "ACCEPTED", now = () => Date.now(), ackId
+} = {}) {
+  if (!event || !validId(event.event_id) || !validId(event.source_node) ||
+      !validId(receiverNode) || receiverNode !== event.destination_node ||
+      !Number.isSafeInteger(event.sequence) || event.sequence < 1 || !validHash(event.content_digest) ||
+      !validId(policyRevision) || !Number.isSafeInteger(deliveryAttempt) || deliveryAttempt < 1 ||
+      !ACK_RESULTS.has(result) || typeof resolveSigningIdentity !== "function" || typeof sign !== "function")
+    return fail("ACK_BUILD_INPUT_INVALID");
+  const nowMs = Number(now());
+  if (!Number.isFinite(nowMs)) return fail("ACK_TIME_INVALID");
+  let identity;
+  try { identity = await resolveSigningIdentity(receiverNode); } catch { return fail("ACK_SIGNER_UNAVAILABLE"); }
+  const publicKey = publicKeyOf(identity?.public_key);
+  if (!identity || (identity.node_id ?? identity.source_node) !== receiverNode ||
+      identity.status !== "ACTIVE" || !validId(identity.key_id) || !publicKey)
+    return fail("ACK_SIGNER_UNAVAILABLE");
+  const acknowledgement = {
+    protocol: FABRIC_RECEIVER_ACK_PROTOCOL,
+    ack_id: ackId ?? "ack:" + randomUUID(),
+    event_id: event.event_id,
+    source_node: event.source_node,
+    receiver_node: receiverNode,
+    source_sequence: event.sequence,
+    event_digest: event.content_digest,
+    delivery_attempt: deliveryAttempt,
+    result,
+    policy_revision: policyRevision,
+    issued_at: new Date(nowMs).toISOString(),
+    key_id: identity.key_id,
+    content_digest: ""
+  };
+  if (!validId(acknowledgement.ack_id)) return fail("ACK_BUILD_INPUT_INVALID");
+  acknowledgement.content_digest = fabricReceiverAcknowledgementDigest(acknowledgement);
+  let signature;
+  try { signature = await sign({ message: fabricReceiverAcknowledgementSigningInput(acknowledgement), identity }); }
+  catch { return fail("ACK_SIGNING_FAILED"); }
+  acknowledgement.signature = Buffer.isBuffer(signature) ? signature.toString("base64") : signature;
+  const checked = validateFabricReceiverAcknowledgement(acknowledgement);
+  if (!checked.ok) return checked;
+  let signatureBytes;
+  try { signatureBytes = Buffer.from(checked.value.signature, "base64"); } catch { return fail("ACK_SIGNATURE_INVALID"); }
+  if (signatureBytes.toString("base64") !== checked.value.signature ||
+      !verify(null, Buffer.from(fabricReceiverAcknowledgementSigningInput(checked.value), "utf8"), publicKey, signatureBytes))
+    return fail("ACK_SIGNATURE_INVALID");
+  return ok(checked.value);
 }
 
 export async function authenticateFabricReceiverAcknowledgement(input, {
