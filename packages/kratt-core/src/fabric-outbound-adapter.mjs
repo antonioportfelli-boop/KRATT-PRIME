@@ -19,9 +19,18 @@ const CLOCK_SKEW_MS = 30_000;
 const fail = (code, detail) => ({ ok: false, code, ...(detail ? { detail } : {}) });
 const ok = value => ({ ok: true, value });
 const sha256 = value => createHash("sha256").update(value, "utf8").digest("hex");
-const validTime = value => typeof value === "string" &&
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) &&
-  Number.isFinite(Date.parse(value));
+const validTime = value => {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/.exec(value);
+  if (!match) return false;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return false;
+  try {
+    return new Date(milliseconds).toISOString() === `${match[1]}.${(match[2] ?? "").padEnd(3, "0")}Z`;
+  } catch {
+    return false;
+  }
+};
 
 function immutableJsonRecord(value) {
   let serialized;
@@ -176,6 +185,12 @@ export function createSteelFabricOutboundAdapter({
     try { identity = await resolveSigningIdentity(sourceNode); } catch { identity = null; }
     if (!identity || identity.source_node !== sourceNode || !ID.test(identity.key_id ?? "") ||
         identity.status !== "ACTIVE" || !identity.public_key) return fail("OUTBOUND_SIGNING_KEY_UNAVAILABLE");
+    if (identity.valid_from !== undefined && (!validTime(identity.valid_from) || current < Date.parse(identity.valid_from))) {
+      return fail("OUTBOUND_SIGNING_KEY_NOT_YET_VALID");
+    }
+    if (identity.sign_until !== undefined && (!validTime(identity.sign_until) || current > Date.parse(identity.sign_until))) {
+      return fail("OUTBOUND_SIGNING_KEY_WINDOW_CLOSED");
+    }
     if (policy.key_id !== undefined && policy.key_id !== identity.key_id) return fail("OUTBOUND_SIGNING_KEY_POLICY_MISMATCH");
 
     let payloadRaw, evidenceRaw, correlationId, parentEventId, payloadReference;
