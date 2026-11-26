@@ -129,7 +129,7 @@ export function createPostgresFabricAcknowledgementStore(pool, { clock = () => n
         if (!["LEASED", "RECONCILE"].includes(item.status) || !item.delivery_started_at ||
           item.delivery_lease_token !== leaseToken || (item.status === "LEASED" && item.lease_token !== leaseToken))
           return fail("ACK_DELIVERY_FENCE_MISMATCH");
-        if (Number(item.attempts) !== ack.delivery_attempt) return fail("ACK_ATTEMPT_MISMATCH");
+        if (Number(item.delivery_attempt_sequence) !== ack.delivery_attempt) return fail("ACK_ATTEMPT_MISMATCH");
         if (item.event_id !== ack.event_id || item.source_node !== ack.source_node ||
           item.destination_node !== ack.receiver_node || Number(item.source_sequence) !== ack.source_sequence ||
           item.content_digest !== ack.event_digest) return fail("ACK_EVENT_BINDING_MISMATCH");
