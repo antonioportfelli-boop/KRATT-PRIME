@@ -185,11 +185,14 @@ test("fails closed when the provider adapter is missing", async () => {
   assert.equal(events[0].event_type, "authorization.denied");
 });
 
-test("reports provider failure and records its outcome", async () => {
+test("provider timeout after delivery start becomes reconciliation, never a false failure", async () => {
   const { runtime, events } = setup({ dispatch: async () => { throw new Error("provider unavailable"); } });
   const result = await runtime.execute({ principal: "session", task: task() });
-  assert.equal(result.status, "FAILED");
-  assert.equal(events.at(-1)[1].event_type, "dispatch.failed");
+  assert.equal(result.status, "RECONCILE_REQUIRED");
+  assert.equal(result.reconciliation_required, true);
+  assert.equal(result.dispatched, true);
+  assert.equal(events.at(-1)[1].event_type, "dispatch.reconcile_required");
+  assert.equal(events.at(-1)[1].result.status, "unknown");
 });
 
 test("does not claim completion when outcome audit persistence fails", async () => {
@@ -199,11 +202,13 @@ test("does not claim completion when outcome audit persistence fails", async () 
   assert.equal(result.dispatched, true);
 });
 
-test("rejects malformed provider results before treating them as completed", async () => {
+test("unverifiable provider result after delivery start becomes reconciliation, not a failure claim", async () => {
   const { runtime, events } = setup({ dispatch: async () => ({ status: "completed", access_token: "secret" }) });
   const result = await runtime.execute({ principal: "session", task: task() });
-  assert.equal(result.status, "FAILED");
-  assert.equal(events.at(-1)[1].result.reason, "PROVIDER_DISPATCH_FAILED_OR_INVALID_RESULT");
+  assert.equal(result.status, "RECONCILE_REQUIRED");
+  assert.equal(result.reconciliation_required, true);
+  assert.equal(events.at(-1)[1].event_type, "dispatch.reconcile_required");
+  assert.equal(events.at(-1)[1].result.status, "unknown");
 });
 
 test("requires durable storage and trusted authentication dependencies", () => {
