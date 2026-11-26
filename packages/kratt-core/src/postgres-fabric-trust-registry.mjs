@@ -1,4 +1,5 @@
 import { createHash, createPublicKey } from "node:crypto";
+import { incrementFabricMetric } from "./fabric-metrics.mjs";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ACTOR = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
@@ -48,7 +49,7 @@ function publicKeyDescriptor(pem) {
 }
 
 /** PostgreSQL-backed trust registry. It stores public keys only, never signing secrets. */
-export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date(), authorizeAdmin, localNodeId } = {}) {
+export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date(), authorizeAdmin, localNodeId, metrics = null } = {}) {
   if (!pool || typeof pool.connect !== "function" || typeof pool.query !== "function") throw new TypeError("FABRIC_TRUST_POSTGRES_POOL_REQUIRED");
   if (typeof clock !== "function" || typeof authorizeAdmin !== "function") throw new TypeError("FABRIC_TRUST_ADMIN_GATE_AND_CLOCK_REQUIRED");
   if (localNodeId !== undefined && !ID.test(localNodeId)) throw new TypeError("FABRIC_TRUST_LOCAL_NODE_INVALID");
@@ -518,17 +519,17 @@ export function createPostgresFabricTrustRegistry(pool, { clock = () => new Date
       pool.query("SELECT sequence,record_json,previous_hash,record_hash FROM kratt_fabric_trust_audit ORDER BY sequence"),
       pool.query("SELECT last_sequence,last_hash FROM kratt_fabric_trust_audit_head WHERE singleton=TRUE")
     ]);
-    if (head.rowCount !== 1) return fail("TRUST_AUDIT_HEAD_MISSING");
+    if (head.rowCount !== 1) { incrementFabricMetric(metrics, "fabric_audit_integrity_failures"); return fail("TRUST_AUDIT_HEAD_MISSING"); }
     let previous = ZERO_HASH;
     let sequence = 0;
     for (const row of rows.rows) {
       sequence += 1;
-      if (Number(row.sequence) !== sequence || row.previous_hash !== previous) return fail("TRUST_AUDIT_CHAIN_INVALID");
+      if (Number(row.sequence) !== sequence || row.previous_hash !== previous) { incrementFabricMetric(metrics, "fabric_audit_integrity_failures"); return fail("TRUST_AUDIT_CHAIN_INVALID"); }
       const expected = createHash("sha256").update(String(sequence) + "\n" + previous + "\n" + row.record_json, "utf8").digest("hex");
-      if (expected !== row.record_hash) return fail("TRUST_AUDIT_HASH_INVALID");
+      if (expected !== row.record_hash) { incrementFabricMetric(metrics, "fabric_audit_integrity_failures"); return fail("TRUST_AUDIT_HASH_INVALID"); }
       previous = row.record_hash;
     }
-    if (Number(head.rows[0].last_sequence) !== sequence || head.rows[0].last_hash !== previous) return fail("TRUST_AUDIT_HEAD_MISMATCH");
+    if (Number(head.rows[0].last_sequence) !== sequence || head.rows[0].last_hash !== previous) { incrementFabricMetric(metrics, "fabric_audit_integrity_failures"); return fail("TRUST_AUDIT_HEAD_MISMATCH"); }
     return ok({ valid: true, events: sequence, last_hash: previous });
   }
 
