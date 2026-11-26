@@ -326,6 +326,14 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   try { policy = await deps.resolveNodePolicy(event.source_node, authenticated.value, event); } catch { policy = null; }
   const authorized = authorizeSteelFabricEventV1(event, authenticated.value, policy);
   if (!authorized.ok) return authorized;
+  let taskId = null;
+  const taskEvent = event.event_type.startsWith("factory.task.") || event.event_type.startsWith("task.");
+  if (typeof deps.resolveTaskId === "function" || taskEvent || validId(event.payload?.task_id)) {
+    try { taskId = typeof deps.resolveTaskId === "function" ? await deps.resolveTaskId(event) : event.payload?.task_id; }
+    catch { return fail("TASK_SCOPE_RESOLUTION_FAILED"); }
+    if (taskId !== null && taskId !== undefined && !validId(taskId)) return fail("TASK_SCOPE_INVALID");
+  }
+  if (taskEvent && !validId(taskId)) return fail("TASK_SCOPE_REQUIRED");
 
   const ackKeys = ["protocol", "ack_id", "event_id", "source_node", "receiver_node", "source_sequence",
     "event_digest", "delivery_attempt", "result", "policy_revision", "issued_at", "key_id", "content_digest", "signature"];
@@ -462,6 +470,41 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       return fail("SEQUENCE_STALE");
     }
     const sequenceGap = event.sequence > lastSequence + 1;
+    if (taskId) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [taskId]);
+      const cancelled = await client.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE", [taskId]);
+      if (cancelled.rowCount > 0) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail("TASK_CANCELLED");
+      }
+    }
+    let commitAuthorization = authorized.value;
+    if (typeof deps.revalidateAuthorization === "function") {
+      let live;
+      try {
+        live = await deps.revalidateAuthorization({
+          client, event, authenticatedKey: authenticated.value, authorization: authorized.value, now
+        });
+      } catch {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail("AUTHORIZATION_REVALIDATION_UNAVAILABLE");
+      }
+      if (live?.ok === false) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail(live.code ?? "AUTHORIZATION_REVALIDATION_FAILED");
+      }
+      const livePolicy = live?.ok === true ? (live.value?.policy ?? live.value) : (live?.policy ?? live);
+      const reauthorized = authorizeSteelFabricEventV1(event, authenticated.value, livePolicy);
+      if (!reauthorized.ok) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return reauthorized;
+      }
+      if (reauthorized.value.policy_revision !== authorized.value.policy_revision) {
+        await client.query("ROLLBACK"); transactionOpen = false;
+        return fail("AUTHORIZATION_REVISION_CHANGED");
+      }
+      commitAuthorization = reauthorized.value;
+    }
     if (event.parent_event_id !== null) {
       const parent = await client.query("SELECT event_id FROM kratt_fabric_event_inbox WHERE event_id=$1", [event.parent_event_id]);
       if (parent.rowCount !== 1) {
@@ -486,7 +529,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     const canonical = toCanonicalFabricEventV2(event, authenticated.value);
     if (!canonical.ok) throw new Error(canonical.code);
     phase = "HANDLER";
-    const handled = await deps.handler(canonical.value, { client, authorization: authorized.value, sequence_gap: sequenceGap });
+    const handled = await deps.handler(canonical.value, { client, authorization: commitAuthorization, sequence_gap: sequenceGap, task_id: taskId });
     let resultJson;
     try {
       const resultSnapshot = handled === undefined ? null : snapshotJson(handled);
@@ -501,11 +544,11 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
         (event_id,source_node,destination_node,source_sequence,content_digest,event_type,source_revision,key_id,policy_revision,outcome,result_json,processed_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'ACCEPTED',$10::jsonb,$11)`,
       [event.event_id,event.source_node,event.destination_node,event.sequence,event.content_digest,
-       event.event_type,event.source_revision,event.key_id,authorized.value.policy_revision,resultJson,processedAt]
+       event.event_type,event.source_revision,event.key_id,commitAuthorization.policy_revision,resultJson,processedAt]
     );
     const storedResult = JSON.parse(resultJson);
     phase = ackEnabled ? "ACK" : "COMMIT";
-    const acknowledgement = await makeOrLoadAck(client, authorized.value, storedResult);
+    const acknowledgement = await makeOrLoadAck(client, commitAuthorization, storedResult);
     phase = "COMMIT";
     await client.query("COMMIT");
     transactionOpen = false;
@@ -534,6 +577,8 @@ export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "DESTINATION_NOT_AUTHORIZED", "EVENT_TYPE_NOT_AUTHORIZED", "SCOPE_NOT_AUTHORIZED", "KEY_POLICY_MISMATCH",
   "PERSISTENCE_UNAVAILABLE", "INGRESS_DEPENDENCIES_REQUIRED", "LOCAL_NODE_ID_REQUIRED", "DESTINATION_NOT_LOCAL",
   "EVENT_NOT_YET_VALID", "EVENT_EXPIRED", "EVENT_REPLAY_OR_CONFLICT", "EVENT_RECEIPT_MISSING",
-  "EVENT_RECEIPT_POLICY_REVISION_CHANGED", "EVENT_RECEIPT_STORE_FAILED", "DELIVERY_ATTEMPT_REQUIRED", "RECEIVER_ACK_INVALID",
+  "EVENT_RECEIPT_POLICY_REVISION_CHANGED", "EVENT_RECEIPT_STORE_FAILED", "TASK_SCOPE_RESOLUTION_FAILED",
+  "TASK_SCOPE_INVALID", "TASK_SCOPE_REQUIRED", "TASK_CANCELLED", "AUTHORIZATION_REVALIDATION_UNAVAILABLE",
+  "AUTHORIZATION_REVALIDATION_FAILED", "AUTHORIZATION_REVISION_CHANGED", "DELIVERY_ATTEMPT_REQUIRED", "RECEIVER_ACK_INVALID",
   "RECEIVER_ACK_CREATION_FAILED", "EVENT_RESULT_NOT_SERIALIZABLE", "SEQUENCE_STALE", "CAUSAL_PARENT_MISSING", "EVENT_HANDLER_FAILED"
 ]);
