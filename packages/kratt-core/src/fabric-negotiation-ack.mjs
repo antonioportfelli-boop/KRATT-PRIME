@@ -66,9 +66,21 @@ function compareVersions(a, b) {
   return 0;
 }
 
+function snapshotRecord(value) {
+  try {
+    if (!isRecord(value)) return null;
+    const snapshot = JSON.parse(canonicalizeFabricJcs(value));
+    return isRecord(snapshot) ? snapshot : null;
+  } catch {
+    return null;
+  }
+}
+
 function digestObject(value, excluded) {
+  const snapshot = snapshotRecord(value);
+  if (!snapshot) throw new TypeError("FABRIC_CONTRACT_SNAPSHOT_INVALID");
   const copy = Object.create(null);
-  for (const key of Object.keys(value)) if (!excluded.includes(key)) copy[key] = value[key];
+  for (const key of Object.keys(snapshot)) if (!excluded.includes(key)) copy[key] = snapshot[key];
   return createHash("sha256").update(canonicalizeFabricJcs(copy), "utf8").digest("hex");
 }
 
@@ -98,24 +110,29 @@ export function fabricReceiverAcknowledgementSigningInput(acknowledgement) {
 
 export function validateFabricSchemaNegotiationRequest(input) {
   try {
-    if (!exactKeys(input, REQUEST_KEYS) || input.protocol !== FABRIC_NEGOTIATION_PROTOCOL) return fail("NEGOTIATION_SCHEMA_INVALID");
-    if (![input.negotiation_id, input.sender_node, input.receiver_node, input.schema_id, input.key_id, input.policy_revision].every(validId))
-      return fail("NEGOTIATION_IDENTITY_INVALID");
-    if (!VERSION.test(input.minimum_version) || !Array.isArray(input.offered_versions) ||
-      input.offered_versions.length < 1 || input.offered_versions.length > 16) return fail("NEGOTIATION_VERSIONS_INVALID");
+    const snapshot = snapshotRecord(input);
+    if (!snapshot || !exactKeys(snapshot, REQUEST_KEYS) || snapshot.protocol !== FABRIC_NEGOTIATION_PROTOCOL)
+      return fail("NEGOTIATION_SCHEMA_INVALID");
+    if (![snapshot.negotiation_id, snapshot.sender_node, snapshot.receiver_node, snapshot.schema_id,
+      snapshot.key_id, snapshot.policy_revision].every(validId)) return fail("NEGOTIATION_IDENTITY_INVALID");
+    if (!VERSION.test(snapshot.minimum_version) || !Array.isArray(snapshot.offered_versions) ||
+      snapshot.offered_versions.length < 1 || snapshot.offered_versions.length > 16) return fail("NEGOTIATION_VERSIONS_INVALID");
     const versions = new Set();
-    for (const item of input.offered_versions) {
-      if (!exactKeys(item, VERSION_KEYS) || !VERSION.test(item.version) || !validHash(item.schema_digest) || versions.has(item.version))
-        return fail("NEGOTIATION_VERSIONS_INVALID");
+    for (const item of snapshot.offered_versions) {
+      if (!exactKeys(item, VERSION_KEYS) || !VERSION.test(item.version) ||
+        !validHash(item.schema_digest) || versions.has(item.version)) return fail("NEGOTIATION_VERSIONS_INVALID");
       versions.add(item.version);
     }
-    const issued = strictUtc(input.issued_at), expires = strictUtc(input.expires_at);
+    const issued = strictUtc(snapshot.issued_at), expires = strictUtc(snapshot.expires_at);
     if (issued === null || expires === null || expires <= issued || expires - issued > 10 * 60 * 1000)
       return fail("NEGOTIATION_TIME_INVALID");
-    if (!validHash(input.content_digest) || typeof input.signature !== "string" ||
-      !/^[A-Za-z0-9+/]{86}==$/.test(input.signature)) return fail("NEGOTIATION_INTEGRITY_INVALID");
-    if (fabricSchemaNegotiationRequestDigest(input) !== input.content_digest) return fail("NEGOTIATION_DIGEST_MISMATCH");
-    return ok(Object.freeze({ ...input, offered_versions: Object.freeze(input.offered_versions.map(v => Object.freeze({ ...v }))) }));
+    if (!validHash(snapshot.content_digest) || typeof snapshot.signature !== "string" ||
+      !/^[A-Za-z0-9+/]{86}==$/.test(snapshot.signature)) return fail("NEGOTIATION_INTEGRITY_INVALID");
+    if (fabricSchemaNegotiationRequestDigest(snapshot) !== snapshot.content_digest) return fail("NEGOTIATION_DIGEST_MISMATCH");
+    return ok(Object.freeze({
+      ...snapshot,
+      offered_versions: Object.freeze(snapshot.offered_versions.map(v => Object.freeze({ ...v })))
+    }));
   } catch {
     return fail("NEGOTIATION_SCHEMA_INVALID");
   }
@@ -123,20 +140,24 @@ export function validateFabricSchemaNegotiationRequest(input) {
 
 export function validateFabricSchemaNegotiationResponse(input) {
   try {
-    if (!exactKeys(input, RESPONSE_KEYS) || input.protocol !== FABRIC_NEGOTIATION_RESPONSE_PROTOCOL) return fail("NEGOTIATION_RESPONSE_INVALID");
-    if (![input.negotiation_id, input.sender_node, input.receiver_node, input.schema_id, input.key_id].every(validId) ||
-      !validHash(input.request_digest) || !validHash(input.content_digest) ||
-      !["SUPPORTED", "UNSUPPORTED", "UNKNOWN"].includes(input.status)) return fail("NEGOTIATION_RESPONSE_INVALID");
-    if (input.status === "SUPPORTED") {
-      if (!VERSION.test(input.selected_version) || !validHash(input.schema_digest) || !validId(input.policy_revision) || input.reason !== null)
-        return fail("NEGOTIATION_RESPONSE_INVALID");
-    } else if (input.selected_version !== null || input.schema_digest !== null) {
+    const snapshot = snapshotRecord(input);
+    if (!snapshot || !exactKeys(snapshot, RESPONSE_KEYS) || snapshot.protocol !== FABRIC_NEGOTIATION_RESPONSE_PROTOCOL)
+      return fail("NEGOTIATION_RESPONSE_INVALID");
+    if (![snapshot.negotiation_id, snapshot.sender_node, snapshot.receiver_node,
+      snapshot.schema_id, snapshot.key_id].every(validId) ||
+      !validHash(snapshot.request_digest) || !validHash(snapshot.content_digest) ||
+      !["SUPPORTED", "UNSUPPORTED", "UNKNOWN"].includes(snapshot.status)) return fail("NEGOTIATION_RESPONSE_INVALID");
+    if (snapshot.status === "SUPPORTED") {
+      if (!VERSION.test(snapshot.selected_version) || !validHash(snapshot.schema_digest) ||
+        !validId(snapshot.policy_revision) || snapshot.reason !== null) return fail("NEGOTIATION_RESPONSE_INVALID");
+    } else if (snapshot.selected_version !== null || snapshot.schema_digest !== null) {
       return fail("NEGOTIATION_RESPONSE_INVALID");
     }
-    if (strictUtc(input.issued_at) === null || typeof input.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(input.signature))
-      return fail("NEGOTIATION_RESPONSE_INVALID");
-    if (fabricSchemaNegotiationResponseDigest(input) !== input.content_digest) return fail("NEGOTIATION_RESPONSE_DIGEST_MISMATCH");
-    return ok(Object.freeze({ ...input }));
+    if (strictUtc(snapshot.issued_at) === null || typeof snapshot.signature !== "string" ||
+      !/^[A-Za-z0-9+/]{86}==$/.test(snapshot.signature)) return fail("NEGOTIATION_RESPONSE_INVALID");
+    if (fabricSchemaNegotiationResponseDigest(snapshot) !== snapshot.content_digest)
+      return fail("NEGOTIATION_RESPONSE_DIGEST_MISMATCH");
+    return ok(Object.freeze({ ...snapshot }));
   } catch {
     return fail("NEGOTIATION_RESPONSE_INVALID");
   }
@@ -302,17 +323,19 @@ export async function negotiateFabricSchema(requestInput, {
 
 export function validateFabricReceiverAcknowledgement(input) {
   try {
-    if (!exactKeys(input, ACK_KEYS) || input.protocol !== FABRIC_RECEIVER_ACK_PROTOCOL) return fail("ACK_SCHEMA_INVALID");
-    if (![input.ack_id, input.event_id, input.source_node, input.receiver_node, input.key_id, input.policy_revision].every(validId))
-      return fail("ACK_IDENTITY_INVALID");
-    if (!Number.isSafeInteger(input.source_sequence) || input.source_sequence < 1 ||
-      !Number.isSafeInteger(input.delivery_attempt) || input.delivery_attempt < 1 ||
-      !validHash(input.event_digest) || !ACK_RESULTS.has(input.result) ||
-      strictUtc(input.issued_at) === null || !validHash(input.content_digest) ||
-      typeof input.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(input.signature))
+    const snapshot = snapshotRecord(input);
+    if (!snapshot || !exactKeys(snapshot, ACK_KEYS) || snapshot.protocol !== FABRIC_RECEIVER_ACK_PROTOCOL)
+      return fail("ACK_SCHEMA_INVALID");
+    if (![snapshot.ack_id, snapshot.event_id, snapshot.source_node, snapshot.receiver_node,
+      snapshot.key_id, snapshot.policy_revision].every(validId)) return fail("ACK_IDENTITY_INVALID");
+    if (!Number.isSafeInteger(snapshot.source_sequence) || snapshot.source_sequence < 1 ||
+      !Number.isSafeInteger(snapshot.delivery_attempt) || snapshot.delivery_attempt < 1 ||
+      !validHash(snapshot.event_digest) || !ACK_RESULTS.has(snapshot.result) ||
+      strictUtc(snapshot.issued_at) === null || !validHash(snapshot.content_digest) ||
+      typeof snapshot.signature !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(snapshot.signature))
       return fail("ACK_FIELDS_INVALID");
-    if (fabricReceiverAcknowledgementDigest(input) !== input.content_digest) return fail("ACK_DIGEST_MISMATCH");
-    return ok(Object.freeze({ ...input }));
+    if (fabricReceiverAcknowledgementDigest(snapshot) !== snapshot.content_digest) return fail("ACK_DIGEST_MISMATCH");
+    return ok(Object.freeze({ ...snapshot }));
   } catch {
     return fail("ACK_SCHEMA_INVALID");
   }
