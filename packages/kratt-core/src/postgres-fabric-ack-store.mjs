@@ -176,7 +176,7 @@ export function createPostgresFabricAcknowledgementStore(pool, {
             old.outbox_id === outboxId && Number(old.delivery_attempt) === ack.delivery_attempt &&
             old.content_digest === ack.content_digest && old.result === ack.result;
           if (same) return {
-            duplicate: true, status: old.result, outbox_status: item.status,
+            ok: true, duplicate: true, status: old.result, outbox_status: item.status,
             reconciliation_required: old.result === "REJECTED" || old.result === "UNKNOWN"
           };
           return fail("ACK_REPLAY_CONFLICT");
@@ -194,7 +194,7 @@ export function createPostgresFabricAcknowledgementStore(pool, {
             old.outbox_id === outboxId && Number(old.delivery_attempt) === ack.delivery_attempt &&
             old.content_digest === ack.content_digest && old.result === ack.result;
           if (same) return {
-            duplicate: true, late_ack: true, status: old.result,
+            ok: true, duplicate: true, late_ack: true, status: old.result,
             outbox_status: "CANCELLED", reconciliation_required: true
           };
           return fail("ACK_REPLAY_CONFLICT");
@@ -240,7 +240,7 @@ export function createPostgresFabricAcknowledgementStore(pool, {
           };
           await appendAudit(client, auditRecord);
           return {
-            duplicate: false, late_ack: true, status: ack.result,
+            ok: true, duplicate: false, late_ack: true, status: ack.result,
             outbox_status: "CANCELLED", reconciliation_required: true
           };
         }
@@ -297,7 +297,7 @@ export function createPostgresFabricAcknowledgementStore(pool, {
             [at,outboxId]
           );
           if (outbox.rowCount !== 1) throw new Error("ACK_OUTBOX_STATE_CONFLICT");
-          return { duplicate: false, status: ack.result, outbox_status: "DONE" };
+          return { ok: true, duplicate: false, status: ack.result, outbox_status: "DONE" };
         }
 
         const errorCode = ack.result === "REJECTED" ? "RECEIVER_REJECTED" : "RECEIVER_OUTCOME_UNKNOWN";
@@ -308,7 +308,7 @@ export function createPostgresFabricAcknowledgementStore(pool, {
         );
         if (outbox.rowCount !== 1) throw new Error("ACK_OUTBOX_STATE_CONFLICT");
         return {
-          duplicate: false, status: ack.result, outbox_status: "RECONCILE",
+          ok: true, duplicate: false, status: ack.result, outbox_status: "RECONCILE",
           reconciliation_required: true
         };
       });
