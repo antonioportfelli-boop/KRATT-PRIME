@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createPostgresRuntimeStore } from "../src/postgres-runtime-store.mjs";
 import { createPostgresWorkerLeaseCoordinator } from "../../kratt-runtime/src/postgres-worker-lease-coordinator.mjs";
+import { createPostgresTrustedAuthorizationRuntime } from "../src/postgres-trusted-authorization.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const migration = readFileSync(join(root, "migrations/0002_postgres_runtime_and_leases.sql"), "utf8");
@@ -17,10 +18,12 @@ test("PostgreSQL migration creates shared journal and fenced lease tables", () =
     "kratt_runtime_journal_head",
     "kratt_runtime_journal_entries",
     "kratt_worker_lease_reservations",
-    "kratt_worker_lease_operations"
+    "kratt_worker_lease_operations",
+    "kratt_governed_approval_nonces"
   ]) assert.ok(migration.includes(name), name);
   assert.match(migration, /BEFORE UPDATE OR DELETE ON kratt_runtime_journal_entries/);
   assert.match(migration, /BEFORE UPDATE OR DELETE ON kratt_worker_lease_operations/);
+  assert.match(migration, /BEFORE UPDATE OR DELETE ON kratt_governed_approval_nonces/);
   assert.match(migration, /NEW\.fence < OLD\.fence/);
   assert.match(migration, /ON CONFLICT \(singleton\) DO NOTHING/);
 });
@@ -50,6 +53,16 @@ test("PostgreSQL composition requires host trust dependencies and never enables 
   assert.match(composition, /dispatch: false/);
   assert.match(composition, /externalEffects: false/);
   assert.match(composition, /POSTGRES_RUNTIME_DEPENDENCY_OVERRIDE_FORBIDDEN/);
+});
+
+test("PostgreSQL trusted authorization exposes a shared one-time approval nonce contract", () => {
+  const auth = readFileSync(join(root, "src/postgres-trusted-authorization.mjs"), "utf8");
+  assert.match(auth, /canonicalApprovalPayload/);
+  assert.match(auth, /verifySignature\(null/);
+  assert.match(auth, /INSERT INTO kratt_governed_approval_nonces/);
+  assert.match(auth, /ON CONFLICT DO NOTHING RETURNING key_id/);
+  assert.match(auth, /APPROVAL_REPLAYED_OR_NONCE_STORE_UNAVAILABLE/);
+  assert.equal(typeof createPostgresTrustedAuthorizationRuntime, "function");
 });
 
 test("factories reject an incomplete pool before issuing queries", () => {
