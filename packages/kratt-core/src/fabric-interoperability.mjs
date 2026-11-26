@@ -623,10 +623,15 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   } catch (error) {
     if (transactionOpen) await client.query("ROLLBACK").catch(() => undefined);
     if (phase === "ACK") {
-      const reason = error instanceof Error ? error.message : "";
-      if (["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(reason)) return fail(reason);
-      if (/^ACK_[A-Z0-9_]{1,96}$/.test(reason)) return fail("RECEIVER_ACK_CREATION_FAILED", reason);
-      return fail("RECEIVER_ACK_CREATION_FAILED");
+      const message = error instanceof Error ? error.message : "";
+      const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
+        ? "SQLSTATE_" + error.code : null;
+      const reason = ["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(message)
+        ? message
+        : /^ACK_[A-Z0-9_]{1,96}$/.test(message) ? message
+          : sqlState ?? "ACK_INTERNAL_ERROR";
+      if (reason === "RECEIVER_ACK_INVALID" || reason === "RECEIVER_ACK_SIGNER_UNAVAILABLE") return fail(reason);
+      return fail("RECEIVER_ACK_CREATION_FAILED", reason);
     }
     if (phase === "HANDLER") return fail(error instanceof Error && error.message === "EVENT_RESULT_NOT_SERIALIZABLE"
       ? "EVENT_RESULT_NOT_SERIALIZABLE" : "EVENT_HANDLER_FAILED");
