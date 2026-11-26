@@ -175,10 +175,10 @@ export function createPostgresFabricAcknowledgementStore(pool, {
           const same = existingApplied.rowCount === 1 && old.ack_id === ack.ack_id &&
             old.outbox_id === outboxId && Number(old.delivery_attempt) === ack.delivery_attempt &&
             old.content_digest === ack.content_digest && old.result === ack.result;
-          if (same) return ok({
+          if (same) return {
             duplicate: true, status: old.result, outbox_status: item.status,
             reconciliation_required: old.result === "REJECTED" || old.result === "UNKNOWN"
-          });
+          };
           return fail("ACK_REPLAY_CONFLICT");
         }
 
@@ -193,10 +193,10 @@ export function createPostgresFabricAcknowledgementStore(pool, {
           const same = existingLate.rowCount === 1 && old.ack_id === ack.ack_id &&
             old.outbox_id === outboxId && Number(old.delivery_attempt) === ack.delivery_attempt &&
             old.content_digest === ack.content_digest && old.result === ack.result;
-          if (same) return ok({
+          if (same) return {
             duplicate: true, late_ack: true, status: old.result,
             outbox_status: "CANCELLED", reconciliation_required: true
-          });
+          };
           return fail("ACK_REPLAY_CONFLICT");
         }
 
@@ -239,10 +239,10 @@ export function createPostgresFabricAcknowledgementStore(pool, {
             disposition: "TASK_CANCELLED_LATE_ACK"
           };
           await appendAudit(client, auditRecord);
-          return ok({
+          return {
             duplicate: false, late_ack: true, status: ack.result,
             outbox_status: "CANCELLED", reconciliation_required: true
-          });
+          };
         }
 
         if (item.intent_status !== "INTENT_COMMITTED") return fail("ACK_INTENT_TERMINAL");
@@ -297,7 +297,7 @@ export function createPostgresFabricAcknowledgementStore(pool, {
             [at,outboxId]
           );
           if (outbox.rowCount !== 1) throw new Error("ACK_OUTBOX_STATE_CONFLICT");
-          return ok({ duplicate: false, status: ack.result, outbox_status: "DONE" });
+          return { duplicate: false, status: ack.result, outbox_status: "DONE" };
         }
 
         const errorCode = ack.result === "REJECTED" ? "RECEIVER_REJECTED" : "RECEIVER_OUTCOME_UNKNOWN";
@@ -307,10 +307,10 @@ export function createPostgresFabricAcknowledgementStore(pool, {
           [errorCode,at,outboxId]
         );
         if (outbox.rowCount !== 1) throw new Error("ACK_OUTBOX_STATE_CONFLICT");
-        return ok({
+        return {
           duplicate: false, status: ack.result, outbox_status: "RECONCILE",
           reconciliation_required: true
-        });
+        };
       });
     } catch (error) {
       if (error?.code === "23505") return fail("ACK_REPLAY_CONFLICT");
