@@ -5,10 +5,12 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { fabricEventContentDigest, fabricSigningInput, receiveSteelFabricEventV1 } from "../src/fabric-interoperability.mjs";
+import { authenticateFabricReceiverAcknowledgement, createFabricReceiverAcknowledgement } from "../src/fabric-negotiation-ack.mjs";
 
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationPath = join(here, "../migrations/0003_fabric_interoperability.sql");
+const receiptMigrationPath = join(here, "../migrations/0008_fabric_receiver_receipts.sql");
 
 test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequence and causal parents", {
   skip: !connectionString
@@ -23,8 +25,11 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     poolA = new Pool({ connectionString, max: 4, options: `-c search_path=${schema}` });
     poolB = new Pool({ connectionString, max: 4, options: `-c search_path=${schema}` });
     const migration = await readFile(migrationPath, "utf8");
+    const receiptMigration = await readFile(receiptMigrationPath, "utf8");
     await poolA.query(migration);
     await poolA.query(migration);
+    await poolA.query(receiptMigration);
+    await poolA.query(receiptMigration);
     await poolA.query("CREATE TABLE handler_receipts(event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL)");
 
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -32,6 +37,8 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       source_node: "steel-node", key_id: "steel-key-wave3", public_key: publicKey,
       status: "ACTIVE", valid_from: "2026-01-01T00:00:00.000Z"
     };
+    const receiverKeys = generateKeyPairSync("ed25519");
+    const receiverSigningIdentity = { node_id: "kratt-node", key_id: "kratt-ack-key-wave3", public_key: receiverKeys.publicKey, status: "ACTIVE" };
     const policy = {
       source_node: trustedKey.source_node, key_id: trustedKey.key_id, status: "ACTIVE",
       destinations: ["kratt-node"], allowed_event_types: ["factory.task.accepted"],
@@ -50,8 +57,16 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
       event.signature = sign(null, Buffer.from(fabricSigningInput(event), "utf8"), privateKey).toString("base64");
       return event;
     };
-    const deps = handler => ({
+    const deps = (handler, attempt = 1) => ({
       localNodeId: "kratt-node",
+      deliveryAttempt: attempt,
+      createAcknowledgement: context => createFabricReceiverAcknowledgement({
+        event: context.event, receiverNode: "kratt-node",
+        policyRevision: context.authorization.policy_revision, deliveryAttempt: context.deliveryAttempt,
+        resolveSigningIdentity: async nodeId => nodeId === "kratt-node" ? receiverSigningIdentity : null,
+        sign: async ({ message }) => sign(null, Buffer.from(message, "utf8"), receiverKeys.privateKey),
+        now: () => NOW
+      }),
       resolveTrustedKey: async (sourceNode, keyId) => sourceNode === trustedKey.source_node && keyId === trustedKey.key_id ? trustedKey : null,
       resolveNodePolicy: async () => policy,
       now: () => Date.now(),
@@ -65,10 +80,28 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     const accepted = await receiveSteelFabricEventV1(poolA, JSON.stringify(first), deps());
     assert.equal(accepted.ok, true, JSON.stringify(accepted));
     assert.equal(accepted.value.duplicate, false);
+    assert.equal(accepted.value.outcome, "ACCEPTED");
+    assert.equal(accepted.value.acknowledgement.delivery_attempt, 1);
 
     const duplicate = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps());
     assert.equal(duplicate.ok, true, JSON.stringify(duplicate));
     assert.equal(duplicate.value.duplicate, true);
+    assert.deepEqual(duplicate.value.acknowledgement, accepted.value.acknowledgement);
+    assert.equal(duplicate.value.result, "stored");
+
+    const secondAttempt = await receiveSteelFabricEventV1(poolB, JSON.stringify(first), deps(undefined, 2));
+    assert.equal(secondAttempt.ok, true, JSON.stringify(secondAttempt));
+    assert.equal(secondAttempt.value.duplicate, true);
+    assert.equal(secondAttempt.value.acknowledgement.delivery_attempt, 2);
+    assert.notEqual(secondAttempt.value.acknowledgement.ack_id, accepted.value.acknowledgement.ack_id);
+    const replayedSecondAttempt = await receiveSteelFabricEventV1(poolA, JSON.stringify(first), deps(undefined, 2));
+    assert.deepEqual(replayedSecondAttempt.value.acknowledgement, secondAttempt.value.acknowledgement);
+    const verifiedAck = await authenticateFabricReceiverAcknowledgement(replayedSecondAttempt.value.acknowledgement, {
+      expectedReceiverNode: "kratt-node", expectedPolicyRevision: "wave3-test-policy",
+      resolveTrustedKey: async (nodeId, keyId) => nodeId === "kratt-node" && keyId === receiverSigningIdentity.key_id ? receiverSigningIdentity : null,
+      now: () => NOW
+    });
+    assert.equal(verifiedAck.ok, true, JSON.stringify(verifiedAck));
 
     const parent = makeEvent({ id: "fabric-db-parent", sequence: 2 });
     const parentResult = await receiveSteelFabricEventV1(poolB, JSON.stringify(parent), deps());
@@ -99,6 +132,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.ok(race.every(result => result.ok), JSON.stringify(race));
     assert.equal(race.filter(result => result.value.duplicate === false).length, 1, JSON.stringify(race));
     assert.equal(race.filter(result => result.value.duplicate === true).length, 1, JSON.stringify(race));
+    assert.deepEqual(race[0].value.acknowledgement, race[1].value.acknowledgement);
 
     const retryAfterHandlerFault = makeEvent({ id: "fabric-db-retry", sequence: 7, parent: concurrent.event_id });
     const failed = await receiveSteelFabricEventV1(poolA, JSON.stringify(retryAfterHandlerFault), deps(async () => { throw new Error("simulated handler fault"); }));
@@ -106,9 +140,11 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     const retried = await receiveSteelFabricEventV1(poolB, JSON.stringify(retryAfterHandlerFault), deps());
     assert.equal(retried.ok, true, JSON.stringify(retried));
 
-    const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count");
+    const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count, (SELECT count(*)::int FROM kratt_fabric_receiver_receipts) AS receipt_count, (SELECT count(*)::int FROM kratt_fabric_inbound_acknowledgements) AS ack_count");
     assert.equal(counts.rows[0].inbox_count, 6);
     assert.equal(counts.rows[0].handler_count, 6);
+    assert.equal(counts.rows[0].receipt_count, 6);
+    assert.equal(counts.rows[0].ack_count, 7);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_event_inbox SET destination_node='elsewhere' WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_EVENT_INBOX_APPEND_ONLY/);
     await assert.rejects(poolA.query("DELETE FROM kratt_fabric_event_inbox WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_EVENT_INBOX_APPEND_ONLY/);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_source_heads SET last_sequence=1 WHERE source_node=$1", [trustedKey.source_node]), /KRATT_FABRIC_SOURCE_HEAD_TRANSITION_INVALID/);
