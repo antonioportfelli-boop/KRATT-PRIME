@@ -418,7 +418,8 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     if (stored.policy_revision !== authorized.value.policy_revision) return { policyChanged: true };
     const storedAuthorization = { ...authorized.value, policy_revision: stored.policy_revision };
     if (ackEnabled) phase = "ACK";
-    const acknowledgement = await makeOrLoadAck(client, storedAuthorization, stored.result_json, "DUPLICATE");
+    const duplicateAckResult = stored.outcome === "REJECTED" ? "REJECTED" : "DUPLICATE";
+    const acknowledgement = await makeOrLoadAck(client, storedAuthorization, stored.result_json, duplicateAckResult);
     phase = "PERSISTENCE";
     return { value: { duplicate: true, sequence_gap: false, outcome: stored.outcome,
       result: stored.result_json, acknowledgement } };
@@ -426,6 +427,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
 
   let client;
   try { client = await pool.connect(); } catch { return fail("PERSISTENCE_UNAVAILABLE"); }
+  let taskCancelled = false;
   let transactionOpen = false;
   let phase = "PERSISTENCE";
   try {
@@ -502,10 +504,7 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     if (taskId) {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [taskId]);
       const cancelled = await client.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE", [taskId]);
-      if (cancelled.rowCount > 0) {
-        await client.query("ROLLBACK"); transactionOpen = false;
-        return fail("TASK_CANCELLED");
-      }
+      taskCancelled = cancelled.rowCount > 0;
     }
     let commitAuthorization = authorized.value;
     if (typeof deps.revalidateAuthorization === "function") {
@@ -557,6 +556,26 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
     );
     const canonical = toCanonicalFabricEventV2(event, authenticated.value);
     if (!canonical.ok) throw new Error(canonical.code);
+    if (taskCancelled) {
+      const rejectedResult = { code: "TASK_CANCELLED" };
+      const rejectedJson = JSON.stringify(rejectedResult);
+      const processedAt = new Date(now).toISOString();
+      phase = "RECEIPT";
+      await client.query(
+        `INSERT INTO kratt_fabric_receiver_receipts
+          (event_id,source_node,destination_node,source_sequence,content_digest,event_type,source_revision,key_id,policy_revision,outcome,result_json,processed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'REJECTED',$10::jsonb,$11)`,
+        [event.event_id,event.source_node,event.destination_node,event.sequence,event.content_digest,
+         event.event_type,event.source_revision,event.key_id,commitAuthorization.policy_revision,rejectedJson,processedAt]
+      );
+      phase = ackEnabled ? "ACK" : "COMMIT";
+      const acknowledgement = await makeOrLoadAck(client, commitAuthorization, rejectedResult, "REJECTED");
+      phase = "COMMIT";
+      await client.query("COMMIT");
+      transactionOpen = false;
+      return ok({ duplicate: false, sequence_gap: sequenceGap, outcome: "REJECTED",
+        result: rejectedResult, acknowledgement });
+    }
     phase = "HANDLER";
     const handled = await deps.handler(canonical.value, { client, authorization: commitAuthorization, sequence_gap: sequenceGap, task_id: taskId });
     let resultJson;
