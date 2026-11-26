@@ -87,4 +87,26 @@ CREATE TRIGGER kratt_fabric_receiver_receipt_identity_guard
   BEFORE INSERT ON kratt_fabric_receiver_receipts
   FOR EACH ROW EXECUTE FUNCTION kratt_guard_fabric_receiver_receipt_identity();
 
+CREATE OR REPLACE FUNCTION kratt_guard_fabric_inbound_ack_binding()
+RETURNS trigger LANGUAGE plpgsql AS $
+DECLARE receipt_row kratt_fabric_receiver_receipts%ROWTYPE;
+BEGIN
+  SELECT * INTO receipt_row FROM kratt_fabric_receiver_receipts WHERE event_id = NEW.event_id;
+  IF NOT FOUND OR NEW.ack_json->>'source_node' <> receipt_row.source_node OR
+     NEW.ack_json->>'receiver_node' <> receipt_row.destination_node OR
+     NEW.ack_json->>'source_sequence' <> receipt_row.source_sequence::text OR
+     NEW.ack_json->>'event_digest' <> receipt_row.content_digest OR
+     NEW.ack_json->>'policy_revision' IS DISTINCT FROM receipt_row.policy_revision OR
+     NEW.ack_json->>'result' <> receipt_row.outcome THEN
+    RAISE EXCEPTION 'KRATT_FABRIC_INBOUND_ACK_IDENTITY_MISMATCH';
+  END IF;
+  RETURN NEW;
+END;
+$;
+
+DROP TRIGGER IF EXISTS kratt_fabric_inbound_ack_binding_guard ON kratt_fabric_inbound_acknowledgements;
+CREATE TRIGGER kratt_fabric_inbound_ack_binding_guard
+  BEFORE INSERT ON kratt_fabric_inbound_acknowledgements
+  FOR EACH ROW EXECUTE FUNCTION kratt_guard_fabric_inbound_ack_binding();
+
 COMMIT;
