@@ -8,6 +8,7 @@ export const MAX_FABRIC_EVENT_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_FABRIC_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$/;
 const TOKEN = /^[a-z][a-z0-9._:-]{0,127}$/;
 const SHA1 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -24,6 +25,7 @@ const ok = value => ({ ok: true, value });
 const isRecord = value => typeof value === "object" && value !== null && !Array.isArray(value) && !utilTypes.isProxy(value) &&
   [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const validId = value => typeof value === "string" && ID.test(value);
+const validTaskId = value => typeof value === "string" && TASK_ID.test(value);
 const validToken = value => typeof value === "string" && TOKEN.test(value);
 
 function validUnicode(value) {
@@ -330,12 +332,12 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
   if (!authorized.ok) return authorized;
   let taskId = null;
   const taskEvent = event.event_type.startsWith("factory.task.") || event.event_type.startsWith("task.");
-  if (typeof deps.resolveTaskId === "function" || taskEvent || validId(event.payload?.task_id)) {
+  if (typeof deps.resolveTaskId === "function" || taskEvent || Object.hasOwn(event.payload, "task_id")) {
     try { taskId = typeof deps.resolveTaskId === "function" ? await deps.resolveTaskId(event) : event.payload?.task_id; }
     catch { return fail("TASK_SCOPE_RESOLUTION_FAILED"); }
-    if (taskId !== null && taskId !== undefined && !validId(taskId)) return fail("TASK_SCOPE_INVALID");
+    if (taskId !== null && taskId !== undefined && !validTaskId(taskId)) return fail("TASK_SCOPE_INVALID");
   }
-  if (taskEvent && !validId(taskId)) return fail("TASK_SCOPE_REQUIRED");
+  if (taskEvent && !validTaskId(taskId)) return fail("TASK_SCOPE_REQUIRED");
 
   const ackKeys = ["protocol", "ack_id", "event_id", "source_node", "receiver_node", "source_sequence",
     "event_digest", "delivery_attempt", "result", "policy_revision", "issued_at", "key_id", "content_digest", "signature"];
