@@ -120,7 +120,9 @@ export function canonicalizeFabricJcs(value) {
   return encode(snapshot);
 }
 
-export function fabricEventContentDigest(event) {
+export function fabricEventContentDigest(input) {
+  const event = snapshotJson(input);
+  if (!isRecord(event)) throw new TypeError("EVENT_SHAPE_INVALID");
   const body = Object.create(null);
   for (const key of EVENT_KEYS) {
     if (!DIGEST_EXCLUDED.has(key)) body[key] = event[key];
@@ -133,6 +135,7 @@ export function fabricSigningInput(event) {
 }
 
 function validateSnapshot(event) {
+  if (!isRecord(event)) return fail("EVENT_SHAPE_INVALID");
   const errors = [];
   const keys = Object.keys(event);
   if (keys.length !== EVENT_KEYS.length || keys.some(key => !EVENT_KEYS.includes(key))) return fail("EVENT_SHAPE_INVALID");
@@ -231,7 +234,10 @@ export async function authenticateSteelFabricEventV1(input, { resolveTrustedKey,
 }
 
 /** Canonical model preserves wire semantics; absent STEEL agent/component fields remain null. */
-export function toCanonicalFabricEventV2(event, authenticatedKey) {
+export function toCanonicalFabricEventV2(input, authenticatedKey) {
+  const checked = validateSteelFabricEventV1(input);
+  if (!checked.ok) return checked;
+  const event = checked.value;
   if (!authenticatedKey || authenticatedKey.source_node !== event.source_node || authenticatedKey.key_id !== event.key_id) {
     return fail("AUTHENTICATED_IDENTITY_REQUIRED");
   }
@@ -264,7 +270,10 @@ function validPolicyList(value) {
 }
 
 /** Server-owned policy must explicitly bind node, destination, event type and every requested scope. */
-export function authorizeSteelFabricEventV1(event, authenticatedKey, policy) {
+export function authorizeSteelFabricEventV1(input, authenticatedKey, policy) {
+  const checked = validateSteelFabricEventV1(input);
+  if (!checked.ok) return checked;
+  const event = checked.value;
   if (!authenticatedKey || authenticatedKey.source_node !== event.source_node || authenticatedKey.key_id !== event.key_id) return fail("AUTHENTICATED_IDENTITY_REQUIRED");
   let trustedPolicy;
   try { trustedPolicy = snapshotJson(policy); } catch { return fail("SOURCE_NOT_AUTHORIZED"); }
