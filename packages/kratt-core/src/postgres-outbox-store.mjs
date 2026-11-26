@@ -158,13 +158,13 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     "attempts=o.attempts+1"+attemptSequenceUpdate+",delivery_started_at=NULL,delivery_lease_token=NULL,updated_at=$1 "+
     "FROM picked, kratt_dispatch_intents i "+
     "WHERE o.outbox_id=picked.outbox_id AND i.idempotency_key=o.idempotency_key "+
-    "RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token,o.lease_until,i.task_id,"+attemptSequenceReturn,
+    "RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_owner,o.lease_token,o.lease_until,i.task_id,"+attemptSequenceReturn,
     [at,limit,workerId,token,until]);
    return r.rows;
   });
  }
- async function beginOutboxDelivery({outboxId,leaseToken}={}){
-  if(!validId(outboxId)||typeof leaseToken!=="string"||leaseToken.length<16||leaseToken.length>128)
+ async function beginOutboxDelivery({outboxId,leaseToken,workerId}={}){
+  if(!validId(outboxId)||!validId(workerId)||typeof leaseToken!=="string"||leaseToken.length<16||leaseToken.length>128)
    return{ok:false,reason:"OUTBOX_DELIVERY_INPUT_INVALID"};
   const at=nowIso();
   return stateTx(async c=>{
@@ -172,7 +172,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    if(identity.rowCount!==1)return{ok:false,reason:"OUTBOX_NOT_FOUND"};
    const taskId=identity.rows[0].task_id;
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[taskId]);
-   const q=await c.query("SELECT o.status,o.lease_token,o.lease_until,o.delivery_started_at,o.delivery_lease_token,"+
+   const q=await c.query("SELECT o.status,o.lease_owner,o.lease_token,o.lease_until,o.delivery_started_at,o.delivery_lease_token,"+
     "i.task_id,i.status AS intent_status FROM kratt_dispatch_outbox o "+
     "JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
     "WHERE o.outbox_id=$1 FOR UPDATE OF o,i",[outboxId]);
@@ -183,6 +183,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");
     return{ok:false,reason:"LEASE_LOST"};
    }
+   if(r.lease_owner!==workerId){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"LEASE_OWNER_MISMATCH"};}
    if(r.intent_status!=="INTENT_COMMITTED"){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"INTENT_TERMINAL"};}
    const cancelled=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1",[taskId]);
    if(cancelled.rowCount)return{ok:false,reason:"TASK_CANCELLED"};
@@ -196,14 +197,14 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    return{ok:true,duplicate:false,task_id:taskId,delivery_started_at:at};
   });
  }
- async function finishOutbox({outboxId,leaseToken,outcome,actorId,taskId}={}){
-  if(!validId(outboxId)||typeof leaseToken!=="string"||!validId(actorId)||!validId(taskId)||
+ async function finishOutbox({outboxId,leaseToken,workerId,outcome,actorId,taskId}={}){
+  if(!validId(outboxId)||!validId(workerId)||typeof leaseToken!=="string"||!validId(actorId)||!validId(taskId)||
    !["COMPLETED","FAILED"].includes(outcome?.status))return{ok:false,reason:"OUTBOX_FINISH_INPUT_INVALID"};
   const at=nowIso();
   return stateTx(async c=>{
    const q=await c.query("SELECT o.idempotency_key,o.provider,o.attempts,o.delivery_started_at,o.delivery_lease_token,"+
     "i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
-    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 FOR UPDATE OF o,i",[outboxId,leaseToken]);
+    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 AND o.lease_owner=$3 AND o.lease_until>$4 FOR UPDATE OF o,i",[outboxId,leaseToken,workerId,at]);
    if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};
    const item=q.rows[0];
    if(item.task_id!==taskId)return{ok:false,reason:"TASK_BINDING_MISMATCH"};
@@ -222,15 +223,15 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    return{ok:true};
   });
  }
- async function retryOutbox({outboxId,leaseToken,errorCode,maxAttempts=8,retrySafety="UNKNOWN"}={}){
-  if(!validId(outboxId)||typeof leaseToken!=="string"||!/^[A-Z0-9_:-]{1,96}$/.test(errorCode??"")||
+ async function retryOutbox({outboxId,leaseToken,workerId,errorCode,maxAttempts=8,retrySafety="UNKNOWN"}={}){
+  if(!validId(outboxId)||!validId(workerId)||typeof leaseToken!=="string"||!/^[A-Z0-9_:-]{1,96}$/.test(errorCode??"")||
    !Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>32||!["SAFE_TO_RETRY","UNKNOWN"].includes(retrySafety))
    return{ok:false,reason:"OUTBOX_RETRY_INPUT_INVALID"};
   const at=nowIso();
   return stateTx(async c=>{
    const q=await c.query("SELECT o.attempts,o.delivery_started_at,o.delivery_lease_token,o.idempotency_key,o.provider,"+
     "i.task_id,o.lease_owner FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
-    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 FOR UPDATE OF o,i",[outboxId,leaseToken]);
+    "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 AND o.lease_owner=$3 AND o.lease_until>$4 FOR UPDATE OF o,i",[outboxId,leaseToken,workerId,at]);
    if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};
    const r=q.rows[0],attempts=Number(r.attempts);
    const canRetry=retrySafety==="SAFE_TO_RETRY"||!r.delivery_started_at;
