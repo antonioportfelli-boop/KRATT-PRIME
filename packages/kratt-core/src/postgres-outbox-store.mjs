@@ -258,7 +258,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
  async function cancelTaskWithReason({taskId,actorId}={}){
   if(!validId(taskId)||!validId(actorId))return{ok:false,reason:"CANCEL_INPUT_INVALID"};
   const at=nowIso();
-  return stateTx(async c=>{
+  const result=await stateTx(async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[taskId]);
    const existing=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE",[taskId]);
    if(existing.rowCount)return{ok:true,duplicate:true,task_id:taskId,cancelled_outbox_count:0};
@@ -274,7 +274,6 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    const inserted=await c.query("INSERT INTO kratt_cancelled_tasks(task_id,cancelled_at,actor_id) VALUES($1,$2,$3) ON CONFLICT(task_id) DO NOTHING RETURNING task_id",
     [taskId,at,actorId]);
    if(inserted.rowCount!==1)return{ok:true,duplicate:true,task_id:taskId,cancelled_outbox_count:0};
-   incrementFabricMetric(metrics,"fabric_task_cancelled");
    const cancelled=await c.query("UPDATE kratt_dispatch_outbox o SET status='CANCELLED',lease_owner=NULL,lease_token=NULL,lease_until=NULL,updated_at=$2 "+
     "FROM kratt_dispatch_intents i WHERE i.idempotency_key=o.idempotency_key AND i.task_id=$1 "+
     "AND o.status IN ('PENDING','LEASED') AND o.delivery_started_at IS NULL RETURNING o.outbox_id",[taskId,at]);
@@ -283,6 +282,8 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
     created_at:at,actor_id:actorId,task_id:taskId,result:{cancelled_outbox_count:cancelled.rowCount}});
    return{ok:true,duplicate:false,task_id:taskId,cancelled_outbox_count:cancelled.rowCount};
   });
+  if(result?.ok===true && result.duplicate!==true)incrementFabricMetric(metrics,"fabric_task_cancelled");
+  return result;
  }
  async function cancelTask(input={}){const r=await cancelTaskWithReason(input);return r.ok===true;}
  async function reconcileOutbox({outboxId,actorId,decision,evidenceDigest,reason}={}){
