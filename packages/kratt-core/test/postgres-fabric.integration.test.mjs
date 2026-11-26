@@ -280,7 +280,7 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.deepEqual(replayAfterCancel.value.acknowledgement, ingressWinsResult.value.acknowledgement);
 
     const longTaskId = "t" + "x".repeat(190);
-    const longTaskEvent = makeEvent({ id: "fabric-db-long-task-id", sequence: 11, taskId: longTaskId });
+    const longTaskEvent = makeEvent({ id: "fabric-db-long-task-id", sequence: 12, taskId: longTaskId });
     const longTaskResult = await receiveSteelFabricEventV1(poolA, JSON.stringify(longTaskEvent), deps());
     assert.equal(longTaskResult.ok, true, JSON.stringify(longTaskResult));
     assert.equal(longTaskResult.value.duplicate, false);
@@ -296,10 +296,10 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(afterRestartReplay.rows[0].count, beforeRestartReplay.rows[0].count);
 
     const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count, (SELECT count(*)::int FROM kratt_fabric_receiver_receipts) AS receipt_count, (SELECT count(*)::int FROM kratt_fabric_inbound_acknowledgements) AS ack_count");
-    assert.equal(counts.rows[0].inbox_count, 10);
+    assert.equal(counts.rows[0].inbox_count, 11);
     assert.equal(counts.rows[0].handler_count, 10);
-    assert.equal(counts.rows[0].receipt_count, 10);
-    assert.equal(counts.rows[0].ack_count, 11);
+    assert.equal(counts.rows[0].receipt_count, 11);
+    assert.equal(counts.rows[0].ack_count, 13);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_receiver_receipts SET processed_at=processed_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_RECEIVER_RECEIPT_APPEND_ONLY/);
     await assert.rejects(poolA.query("TRUNCATE TABLE kratt_fabric_inbound_acknowledgements"), /KRATT_FABRIC_LEDGER_TRUNCATE_FORBIDDEN/);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_inbound_acknowledgements SET created_at=created_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_INBOUND_ACK_APPEND_ONLY/);
