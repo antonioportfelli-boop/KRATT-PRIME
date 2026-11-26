@@ -57,7 +57,7 @@ This branch adds an opt-in PostgreSQL mode while retaining the existing local mo
 - an async composition factory that injects both adapters into the existing governed execution bridge;
 - a schema migration, contract tests and a real PostgreSQL CI workflow.
 
-The new backend is **not** production-certified merely because its code exists. It remains pending until the exact PR head passes ordinary CI and a live PostgreSQL 16 integration run.
+The new backend is **not** production-certified merely because its code exists. The recorded CI pass is staging-candidate evidence only; review, isolated target-environment validation and operational controls remain required.
 
 ## Database and operations boundary
 
@@ -71,7 +71,7 @@ The PostgreSQL mode must use:
 
 The PostgreSQL runtime journal is append-only at the table boundary. Its hash chain detects tampering but does not replace database access control, backup integrity, external checkpoints or signing.
 
-## Implemented on this Wave 2 branch — pending exact-head CI
+## Implemented on this Wave 2 branch — CI evidence snapshot
 
 The branch now includes the following PostgreSQL-specific components without replacing the local PrimeStore backend:
 
@@ -83,7 +83,7 @@ The branch now includes the following PostgreSQL-specific components without rep
 - Lease renewal: `renewExecutionClaim` appends a same-state execution revision that retains the worker identity and fence while binding the later lease expiry. Governed runtime renewal rechecks authorization context and the exact evidence cards before renewing.
 - Staging runbook and PostgreSQL 16 integration workflow.
 
-These files are **branch implementation**, not mainline capability. They must stay labelled pending until the exact branch head passes all repository CI and the live PostgreSQL integration workflow. A PostgreSQL Actions service proves the test contract in CI, not the production database configuration.
+These files are **branch implementation**, not mainline capability. Exact head `0876df0c782e099a71ba8b603d0171e2d1ad3054` passed core contract tests, app typecheck/build, CI typecheck/build and PostgreSQL 16 integration. Any subsequent code change invalidates that exact-head evidence until CI reruns. A PostgreSQL Actions service proves the test contract in CI, not the production database configuration.
 
 ## Acceptance gate
 
