@@ -182,6 +182,14 @@ export function createPostgresRuntimeStore(pool, { maxEntryBytes = 1_048_576 } =
       );
       if (head.rowCount !== 1) throw new Error("POSTGRES_RUNTIME_JOURNAL_NOT_MIGRATED");
 
+      // Verify the entire append-only chain while holding the head lock. This
+      // prevents a later append from extending a tampered or truncated journal.
+      const verifiedRows = await client.query(
+        "SELECT sequence, entry_id, record_key, value, previous_hash, entry_hash FROM " +
+        ENTRY_TABLE + " ORDER BY sequence ASC FOR UPDATE"
+      );
+      verifyRows(head.rows[0], verifiedRows.rows);
+
       // Check after taking the singleton lock so concurrent writers cannot
       // both observe a missing idempotency key and append the same identity.
       const existing = await client.query(
