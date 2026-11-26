@@ -31,6 +31,7 @@ const COMMIT = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const MIN_TIMEOUT_MS = 100;
 const MAX_TIMEOUT_MS = 120_000;
+const compareText = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 
 function fail(code) {
   throw new TypeError(code);
@@ -113,7 +114,7 @@ function readPairArray(value, { min = 0, max = 32, label }) {
   const entries = readDenseArray(value, { min, max, label });
   const pairs = entries.map((item) => readPair(item, label + "_ENTRY"));
   if (new Set(pairs.map(pairKey)).size !== pairs.length) fail(label + "_DUPLICATED");
-  return pairs.sort((a, b) => pairKey(a).localeCompare(pairKey(b)));
+  return pairs.sort((a, b) => compareText(pairKey(a), pairKey(b)));
 }
 
 function readCapabilityArray(value) {
@@ -122,7 +123,7 @@ function readCapabilityArray(value) {
   if (new Set(capabilities.map((item) => item.id)).size !== capabilities.length) {
     fail("CAPABILITY_ID_DUPLICATED");
   }
-  return capabilities.sort((a, b) => a.id.localeCompare(b.id));
+  return capabilities.sort((a, b) => compareText(a.id, b.id));
 }
 
 function readOperationArray(value, capabilities) {
@@ -170,7 +171,7 @@ function readOperationArray(value, capabilities) {
   if (new Set(operations.map((item) => item.operationId)).size !== operations.length) {
     fail("OPERATION_ID_DUPLICATED");
   }
-  return operations.sort((a, b) => a.operationId.localeCompare(b.operationId));
+  return operations.sort((a, b) => compareText(a.operationId, b.operationId));
 }
 
 function normalizeImplementation(value) {
