@@ -368,7 +368,8 @@ export async function createFabricReceiverAcknowledgement({
   try { identity = await resolveSigningIdentity(receiverNode); } catch { return fail("ACK_SIGNER_UNAVAILABLE"); }
   const publicKey = publicKeyOf(identity?.public_key);
   if (!identity || (identity.node_id ?? identity.source_node) !== receiverNode ||
-      identity.status !== "ACTIVE" || !validId(identity.key_id) || !publicKey)
+      identity.status !== "ACTIVE" || (identity.node_status !== undefined && identity.node_status !== "ACTIVE") ||
+      !validId(identity.key_id) || !publicKey)
     return fail("ACK_SIGNER_UNAVAILABLE");
   const acknowledgement = {
     protocol: FABRIC_RECEIVER_ACK_PROTOCOL,
