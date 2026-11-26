@@ -19,14 +19,15 @@ ALTER TABLE kratt_dispatch_outbox
   CHECK (delivery_attempt_sequence >= 0);
 
 CREATE OR REPLACE FUNCTION kratt_guard_delivery_attempt_sequence()
-RETURNS trigger LANGUAGE plpgsql AS $
+RETURNS trigger LANGUAGE plpgsql AS $kratt$
 BEGIN
-  IF NEW.delivery_attempt_sequence < OLD.delivery_attempt_sequence THEN
-    RAISE EXCEPTION 'KRATT_OUTBOX_DELIVERY_ATTEMPT_SEQUENCE_ROLLBACK';
+  IF NEW.delivery_attempt_sequence < OLD.delivery_attempt_sequence
+     OR NEW.delivery_attempt_sequence > OLD.delivery_attempt_sequence + 1 THEN
+    RAISE EXCEPTION 'KRATT_OUTBOX_DELIVERY_ATTEMPT_SEQUENCE_INVALID';
   END IF;
   RETURN NEW;
 END;
-$;
+$kratt$;
 
 DROP TRIGGER IF EXISTS kratt_delivery_attempt_sequence_guard ON kratt_dispatch_outbox;
 CREATE TRIGGER kratt_delivery_attempt_sequence_guard
