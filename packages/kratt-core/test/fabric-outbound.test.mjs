@@ -160,6 +160,18 @@ test("approval stays bound to the task provider while the transport outbox remai
   assert.equal(state.reserveCalls[0].task.constraints.provider, "github");
 });
 
+test("rejects accessor and proxy principals without invoking untrusted getters", async () => {
+  const { store, state } = makeStore();
+  let getterCalls = 0;
+  const accessor = {};
+  Object.defineProperty(accessor, "id", { enumerable: true, get() { getterCalls += 1; return principal.id; } });
+  assert.equal((await makeAdapter(store).publish({ task, principal: accessor, approval, idempotencyKey, eventType: "factory.task.requested" })).code, "PRINCIPAL_MISMATCH");
+  const proxied = new Proxy(principal, { ownKeys() { throw new Error("proxy trap"); } });
+  assert.equal((await makeAdapter(store).publish({ task, principal: proxied, approval, idempotencyKey, eventType: "factory.task.requested" })).code, "PRINCIPAL_MISMATCH");
+  assert.equal(getterCalls, 0);
+  assert.equal(state.sequenceCalls.length, 0);
+});
+
 test("rejects event types outside the server-owned policy before reserving a sequence", async () => {
   const { store, state } = makeStore();
   const result = await makeAdapter(store).publish({ task, principal, approval, idempotencyKey, eventType: "repository.delete" });
