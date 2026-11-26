@@ -109,10 +109,11 @@ function validRecord(record) {
     if (event.to === "CLAIMED" && event.lease_renewed !== true) {
       if (!validId(event.worker_id) || !validId(event.lease_id) ||
           !Number.isSafeInteger(event.fence) || event.fence < 1 ||
-          !validTime(event.lease_expires_at) || Date.parse(event.lease_expires_at) <= Date.parse(event.at)) return false;
+          (event.lease_expires_at !== undefined &&
+            (!validTime(event.lease_expires_at) || Date.parse(event.lease_expires_at) <= Date.parse(event.at)))) return false;
       activeClaim = {
         worker_id: event.worker_id, lease_id: event.lease_id,
-        fence: event.fence, expires_at: event.lease_expires_at
+        fence: event.fence, expires_at: event.lease_expires_at ?? null
       };
     } else if (event.lease_renewed === true) {
       if (!activeClaim || event.from !== event.to ||
@@ -120,13 +121,21 @@ function validRecord(record) {
           event.worker_id !== activeClaim.worker_id || event.lease_id !== activeClaim.lease_id ||
           event.fence !== activeClaim.fence || !validTime(event.lease_expires_at) ||
           Date.parse(event.lease_expires_at) <= Date.parse(event.at) ||
-          Date.parse(event.lease_expires_at) <= Date.parse(activeClaim.expires_at)) return false;
+          (activeClaim.expires_at !== null &&
+            Date.parse(event.lease_expires_at) <= Date.parse(activeClaim.expires_at))) return false;
       activeClaim.expires_at = event.lease_expires_at;
     } else if (["RUNNING", "SUCCEEDED", "RETRY_WAIT", "FAILED"].includes(event.to)) {
       if (!activeClaim || event.worker_id !== activeClaim.worker_id ||
-          event.lease_id !== activeClaim.lease_id || event.fence !== activeClaim.fence ||
-          event.lease_expires_at !== activeClaim.expires_at ||
-          Date.parse(event.lease_expires_at) <= Date.parse(event.at)) return false;
+          event.lease_id !== activeClaim.lease_id || event.fence !== activeClaim.fence) return false;
+      if (event.lease_expires_at !== undefined) {
+        if (!validTime(event.lease_expires_at) ||
+            Date.parse(event.lease_expires_at) <= Date.parse(event.at) ||
+            (activeClaim.expires_at !== null && event.lease_expires_at !== activeClaim.expires_at)) return false;
+        activeClaim.expires_at = event.lease_expires_at;
+      } else if (activeClaim.expires_at !== null) {
+        // New-format claims may never omit their lease expiry after it is bound.
+        return false;
+      }
     }
     previous = event.to;
   }
@@ -138,7 +147,7 @@ function validRecord(record) {
       !activeClaim || record.claim.worker_id !== activeClaim.worker_id ||
       record.claim.lease_id !== activeClaim.lease_id ||
       record.claim.fence !== activeClaim.fence ||
-      record.claim.expires_at !== activeClaim.expires_at)) return false;
+      (activeClaim.expires_at !== null && record.claim.expires_at !== activeClaim.expires_at))) return false;
   if (record.result_digest !== null && !DIGEST.test(record.result_digest)) return false;
   return true;
 }
