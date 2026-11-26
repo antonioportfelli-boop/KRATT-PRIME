@@ -33,7 +33,7 @@ const outcome = (eventType = "dispatch.completed") => ({
   provider: "github",
   operation: "repository.write",
   idempotency_key: key,
-  result: { status: eventType === "dispatch.completed" ? "completed" : "failed" },
+  result: { status: eventType === "dispatch.completed" ? "completed" : eventType === "dispatch.failed" ? "failed" : "unknown" },
 });
 const denial = () => ({
   schema_version: "kratt-audit/v1",
@@ -81,6 +81,18 @@ test("appends a completion outcome only after an intent and fenced delivery star
   assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: started.deliveryToken, record: outcome() }), true);
   assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: started.deliveryToken, record: outcome() }), false);
   assert.equal(store.listAuditEvents().map(x => x.record.event_type).join(","), "dispatch.intent_committed,dispatch.delivery_started,dispatch.completed");
+  assert.equal(store.verifyAuditChain().ok, true);
+}));
+
+test("records an unknown post-start provider result for reconciliation without making the intent retryable", () => withStore((store, db) => {
+  assert.equal(store.commitAuthorizedIntent({ idempotencyKey: key, taskId, record: intent() }), true);
+  const started = store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at });
+  assert.equal(started.ok, true);
+  assert.equal(store.appendOutcome({ idempotencyKey: key, deliveryToken: started.deliveryToken, record: outcome("dispatch.reconcile_required") }), true);
+  assert.equal(store.beginAuthorizedDelivery({ idempotencyKey: key, taskId, actorId: actor, at: "2026-11-18T15:00:02.000Z" }).ok, false);
+  const intentState = db.prepare("SELECT status FROM kratt_dispatch_intents WHERE idempotency_key = ?").get(key);
+  assert.equal(intentState.status, "INTENT_COMMITTED");
+  assert.equal(store.listAuditEvents().at(-1).record.event_type, "dispatch.reconcile_required");
   assert.equal(store.verifyAuditChain().ok, true);
 }));
 
