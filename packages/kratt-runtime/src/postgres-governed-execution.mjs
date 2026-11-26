@@ -85,6 +85,12 @@ export async function createPostgresGovernedExecutionRuntime({
           events: evidenceState?.eventCount ?? null,
           scope: evidenceState?.scope ?? null
         }),
+        storageProtection: Object.freeze({
+          encryptionAtRest: evidenceState?.encrypted === true ? "VERIFIED" :
+            evidenceState?.encrypted === false ? "NOT_ENCRYPTED" : "UNVERIFIED",
+          remoteReplication: evidenceState?.remoteSync === true ? "VERIFIED" :
+            evidenceState?.remoteSync === false ? "DISABLED" : "UNVERIFIED"
+        }),
         leases: Object.freeze({
           ok: leaseState?.ok === true,
           reservations: leaseState?.reservationCount ?? null,
