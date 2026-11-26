@@ -139,6 +139,27 @@ test("does not accept caller-provided scope or payload; server resolvers define 
   assert.equal(state.sequenceCalls.length, 1);
 });
 
+test("approval stays bound to the task provider while the transport outbox remains Fabric", async () => {
+  const businessTask = { ...task, constraints: { provider: "github", branch: "feature/wave3-test" } };
+  const businessDigest = canonicalTaskDigest(businessTask);
+  const businessIdempotencyKey = `kratt:${businessTask.task_id}:${businessDigest.slice(7)}`;
+  const businessApproval = { ...approval, provider: "github", request_digest: businessDigest };
+  const businessPolicy = { ...policy, approval_provider: "github" };
+  const { store, state } = makeStore();
+  const adapter = makeAdapter(store, {
+    resolveOutboundPolicy: async () => businessPolicy,
+    verifyApproval: async (artifact, binding) => artifact.provider === "github" &&
+      binding.provider === "github" && binding.request_digest === businessDigest
+  });
+  const result = await adapter.publish({
+    task: businessTask, principal, approval: businessApproval,
+    idempotencyKey: businessIdempotencyKey, eventType: "factory.task.requested"
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(state.reserveCalls[0].provider, "fabric");
+  assert.equal(state.reserveCalls[0].task.constraints.provider, "github");
+});
+
 test("rejects event types outside the server-owned policy before reserving a sequence", async () => {
   const { store, state } = makeStore();
   const result = await makeAdapter(store).publish({ task, principal, approval, idempotencyKey, eventType: "repository.delete" });
