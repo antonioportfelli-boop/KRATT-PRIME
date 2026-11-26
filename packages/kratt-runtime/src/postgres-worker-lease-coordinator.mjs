@@ -29,19 +29,40 @@ function exactDataObject(value, fields) {
     });
   } catch { return false; }
 }
-function canonical(value) {
+function canonical(value, depth = 0, budget = { nodes: 0 }) {
+  budget.nodes += 1;
+  if (budget.nodes > 20_000 || depth > 20) throw new TypeError("LEASE_VALUE_LIMIT");
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(Object.is(value, -0) ? 0 : value);
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("LEASE_NON_FINITE_NUMBER");
+    return JSON.stringify(Object.is(value, -0) ? 0 : value);
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 10_000) throw new TypeError("LEASE_ARRAY_LIMIT");
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== value.length + 1 || !keys.includes("length")) {
+      throw new TypeError("LEASE_ARRAY_SHAPE_INVALID");
+    }
+    const values = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+        throw new TypeError("LEASE_ARRAY_ACCESSOR_OR_HOLE");
+      }
+      values.push(canonical(descriptor.value, depth + 1, budget));
+    }
+    return "[" + values.join(",") + "]";
+  }
   if (!plain(value)) throw new TypeError("LEASE_VALUE_NOT_CANONICAL");
   const keys = Reflect.ownKeys(value);
-  if (keys.some(key => typeof key !== "string" || ["__proto__", "constructor", "prototype"].includes(key))) {
+  if (keys.length > 1024 || keys.some(key => typeof key !== "string" ||
+      ["__proto__", "constructor", "prototype"].includes(key))) {
     throw new TypeError("LEASE_KEYS_INVALID");
   }
   return "{" + keys.sort().map(key => {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || !Object.hasOwn(descriptor, "value")) throw new TypeError("LEASE_ACCESSOR_REJECTED");
-    return JSON.stringify(key) + ":" + canonical(descriptor.value);
+    return JSON.stringify(key) + ":" + canonical(descriptor.value, depth + 1, budget);
   }).join(",") + "}";
 }
 function asDate(value) {
@@ -60,7 +81,9 @@ function normalizeReservation(row) {
   if (!row) return null;
   const fence = safeFence(row.fence);
   const expiresAt = row.expires_at === null ? null : iso(row.expires_at);
-  if (fence === null || (row.status === "LEASED" && (!row.owner_id || !expiresAt)) ||
+  if (!ID.test(row.reservation_key ?? "") || !DIGEST.test(row.task_digest ?? "") ||
+      !["AVAILABLE", "LEASED"].includes(row.status) || fence === null ||
+      (row.status === "LEASED" && (!ID.test(row.owner_id ?? "") || !expiresAt)) ||
       (row.status === "AVAILABLE" && (row.owner_id !== null || row.expires_at !== null))) {
     throw new Error("POSTGRES_WORKER_LEASE_ROW_INVALID");
   }
@@ -285,13 +308,15 @@ export function createPostgresWorkerLeaseCoordinator(pool) {
       return Object.freeze({ ok: false, reason: "WORKER_RESERVATION_KEY_INVALID" });
     }
     const result = await pool.query(
-      "SELECT reservation_key, task_digest, fence, status, owner_id, expires_at FROM " +
+      "SELECT reservation_key, task_digest, fence, status, owner_id, expires_at, " +
+      "(status = 'LEASED' AND expires_at > clock_timestamp()) AS lease_active FROM " +
       RESERVATIONS + " WHERE reservation_key = $1",
       [reservationKey]
     );
     return Object.freeze({
       ok: true,
-      reservation: result.rowCount === 1 ? normalizeReservation(result.rows[0]) : null,
+      reservation: result.rowCount === 1 && (result.rows[0].lease_active !== false)
+        ? normalizeReservation(result.rows[0]) : null,
       executionStarted: false,
       dispatch: false
     });
