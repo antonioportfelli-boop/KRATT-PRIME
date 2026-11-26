@@ -176,7 +176,7 @@ test("fails closed when the provider adapter is missing", async () => {
     authenticatePrincipal: async () => ({ id: "operator-01", active: true }),
     loadTrustedContext: async () => ({}),
     loadEvidence: async () => [],
-    commandStore: { appendDecision: async record => { events.push(record); return true; }, commitAuthorizedIntent: async () => true, appendOutcome: async () => true },
+    commandStore: { appendDecision: async record => { events.push(record); return true; }, commitAuthorizedIntent: async () => true, beginAuthorizedDelivery: async () => ({ ok: true, deliveryToken: "d".repeat(64) }), appendOutcome: async () => true },
     providerAdapters: {},
     now: () => Date.parse(at),
   });
