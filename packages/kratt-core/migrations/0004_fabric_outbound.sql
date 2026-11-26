@@ -71,7 +71,7 @@ $$;
 
 DROP TRIGGER IF EXISTS kratt_fabric_outbound_head_guard ON kratt_fabric_outbound_heads;
 CREATE TRIGGER kratt_fabric_outbound_head_guard
-  BEFORE UPDATE ON kratt_fabric_outbound_heads
+  BEFORE UPDATE OR DELETE ON kratt_fabric_outbound_heads
   FOR EACH ROW EXECUTE FUNCTION kratt_guard_fabric_outbound_head();
 
 COMMIT;
