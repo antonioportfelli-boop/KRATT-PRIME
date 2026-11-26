@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createPostgresRuntimeStore } from "../src/postgres-runtime-store.mjs";
 import { createPostgresWorkerLeaseCoordinator } from "../../kratt-runtime/src/postgres-worker-lease-coordinator.mjs";
+import { DurableEvidenceRepository } from "../../kratt-runtime/src/durable-evidence.mjs";
 
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -86,6 +87,71 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
       ),
       /KRATT_GOVERNED_APPROVAL_NONCES_APPEND_ONLY/
     );
+
+    const evidenceA = new DurableEvidenceRepository({ store: createPostgresRuntimeStore(poolA) });
+    const evidenceB = new DurableEvidenceRepository({ store: createPostgresRuntimeStore(poolB) });
+    await Promise.all([evidenceA.open(), evidenceB.open()]);
+
+    const evidenceInput = (eventId, resource) => ({
+      rootId: "repo-shared",
+      branchId: "feature-wave2",
+      eventId,
+      eventType: "ci.tests.passed",
+      actorId: "ci-verifier",
+      occurredAt: new Date().toISOString(),
+      subject: "repo-shared",
+      decision: "VERIFIED",
+      sourceRef: { provider: "ci", resource, revision: "a".repeat(40) },
+      artifactDigest: "sha256:" + "b".repeat(64),
+      metadata: {
+        policy_evidence: {
+          schema_version: "kratt-policy-evidence/v1",
+          claim_type: "TESTS_PASSED",
+          verification_method: "ci-signature"
+        }
+      }
+    });
+
+    const [evidenceOne, evidenceTwo] = await Promise.all([
+      evidenceA.append(evidenceInput("evidence-postgres-a", "run-a")),
+      evidenceB.append(evidenceInput("evidence-postgres-b", "run-b"))
+    ]);
+    assert.equal(evidenceOne.ok, true, JSON.stringify(evidenceOne));
+    assert.equal(evidenceTwo.ok, true, JSON.stringify(evidenceTwo));
+
+    const [seenFromA, seenFromB] = await Promise.all([
+      evidenceA.list(),
+      evidenceB.list()
+    ]);
+    assert.equal(seenFromA.ok, true);
+    assert.equal(seenFromB.ok, true);
+    assert.equal(seenFromA.count, 2);
+    assert.equal(seenFromB.count, 2);
+    assert.deepEqual(
+      seenFromA.cards.map(card => card.cardId).sort(),
+      ["evidence-postgres-a", "evidence-postgres-b"]
+    );
+
+    const duplicateRaceId = "evidence-postgres-race";
+    const [sameA, sameB] = await Promise.all([
+      evidenceA.append(evidenceInput(duplicateRaceId, "run-race")),
+      evidenceB.append(evidenceInput(duplicateRaceId, "run-race"))
+    ]);
+    assert.equal(sameA.ok, true);
+    assert.equal(sameB.ok, true);
+    assert.equal([sameA, sameB].filter(result => result.duplicate === false).length, 1);
+    assert.equal([sameA, sameB].filter(result => result.duplicate === true).length, 1);
+    const allEvidence = await evidenceB.list();
+    assert.equal(allEvidence.count, 3);
+
+    const conflictingRace = await evidenceB.append(evidenceInput(duplicateRaceId, "run-different"));
+    assert.equal(conflictingRace.ok, false);
+    assert.equal(conflictingRace.reason, "EVIDENCE_IDEMPOTENCY_CONFLICT");
+
+    const evidenceStatus = await evidenceA.verify();
+    assert.equal(evidenceStatus.ok, true);
+    assert.equal(evidenceStatus.eventCount, 3);
+    assert.equal(evidenceStatus.scope, "POSTGRES_SHARED_DATABASE");
 
     const leasesA = createPostgresWorkerLeaseCoordinator(poolA);
     const leasesB = createPostgresWorkerLeaseCoordinator(poolB);
