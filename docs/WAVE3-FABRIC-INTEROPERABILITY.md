@@ -294,6 +294,7 @@ Migration `0007_fabric_receiver_acknowledgements.sql` adds an append-only sender
 - `UNKNOWN` also moves the outbox to `RECONCILE`; it is never interpreted as success or automatic retry.
 - A late acknowledgement can resolve a started delivery that has entered `RECONCILE` after lease expiry only while its original delivery-start token and attempt still match.
 - All acknowledgement transitions share the same task-scoped advisory lock used by cancellation and preserve the delivery-start/lease-token fence.
+- A pre-start cancellation is distinguished as `ACK_TASK_CANCELLED`; other terminal intents are rejected separately, while a started delivery must still satisfy its original delivery-start token and monotonic attempt. A cancelled task cannot persist a receiver receipt.
 - The acknowledgement does not claim an external send was cancelled and does not start another delivery.
 
 The append-only receipt and hash-chained audit record are committed in the same PostgreSQL transaction as the outbox/intent transition. A manual retry after a rejection/unknown result still requires the existing authorized reconciliation path and evidence; no automatic retry policy is added here.
