@@ -164,13 +164,31 @@ test("PostgreSQL Fabric inbox enforces atomic idempotency, monotonic source sequ
     assert.equal(rolledBack.rows[0].count, 0);
     const ackRetried = await receiveSteelFabricEventV1(poolB, JSON.stringify(ackFailureEvent), deps());
     assert.equal(ackRetried.ok, true, JSON.stringify(ackRetried));
+    const serializationEvent = makeEvent({ id: "fabric-db-result-serialization", sequence: 9, parent: ackFailureEvent.event_id });
+    let resultGetterCalls = 0;
+    const unserializable = await receiveSteelFabricEventV1(poolA, JSON.stringify(serializationEvent), deps(async (canonical, tx) => {
+      await tx.client.query("INSERT INTO handler_receipts(event_id,event_type) VALUES($1,$2)", [canonical.identity.event_id, canonical.identity.event_type]);
+      const result = {};
+      Object.defineProperty(result, "secret", { enumerable: true, get() { resultGetterCalls++; return "not-safe"; } });
+      return result;
+    }));
+    assert.equal(unserializable.ok, false);
+    assert.equal(unserializable.code, "EVENT_RESULT_NOT_SERIALIZABLE");
+    assert.equal(resultGetterCalls, 0);
+    const serializationRollback = await poolA.query("SELECT count(*)::int AS inbox_count FROM kratt_fabric_event_inbox WHERE event_id=$1", [serializationEvent.event_id]);
+    const handlerRollback = await poolA.query("SELECT count(*)::int AS handler_count FROM handler_receipts WHERE event_id=$1", [serializationEvent.event_id]);
+    assert.equal(serializationRollback.rows[0].inbox_count, 0);
+    assert.equal(handlerRollback.rows[0].handler_count, 0);
+    const serializationRetry = await receiveSteelFabricEventV1(poolB, JSON.stringify(serializationEvent), deps());
+    assert.equal(serializationRetry.ok, true, JSON.stringify(serializationRetry));
 
     const counts = await poolA.query("SELECT (SELECT count(*)::int FROM kratt_fabric_event_inbox) AS inbox_count, (SELECT count(*)::int FROM handler_receipts) AS handler_count, (SELECT count(*)::int FROM kratt_fabric_receiver_receipts) AS receipt_count, (SELECT count(*)::int FROM kratt_fabric_inbound_acknowledgements) AS ack_count");
-    assert.equal(counts.rows[0].inbox_count, 7);
-    assert.equal(counts.rows[0].handler_count, 7);
-    assert.equal(counts.rows[0].receipt_count, 7);
-    assert.equal(counts.rows[0].ack_count, 8);
+    assert.equal(counts.rows[0].inbox_count, 8);
+    assert.equal(counts.rows[0].handler_count, 8);
+    assert.equal(counts.rows[0].receipt_count, 8);
+    assert.equal(counts.rows[0].ack_count, 9);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_receiver_receipts SET processed_at=processed_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_RECEIVER_RECEIPT_APPEND_ONLY/);
+    await assert.rejects(poolA.query("TRUNCATE TABLE kratt_fabric_inbound_acknowledgements"), /KRATT_FABRIC_LEDGER_TRUNCATE_FORBIDDEN/);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_inbound_acknowledgements SET created_at=created_at WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_INBOUND_ACK_APPEND_ONLY/);
     await assert.rejects(poolA.query("UPDATE kratt_fabric_event_inbox SET destination_node=$2 WHERE event_id=$1", [first.event_id, "elsewhere"]), /KRATT_FABRIC_EVENT_INBOX_APPEND_ONLY/);
     await assert.rejects(poolA.query("DELETE FROM kratt_fabric_event_inbox WHERE event_id=$1", [first.event_id]), /KRATT_FABRIC_EVENT_INBOX_APPEND_ONLY/);
