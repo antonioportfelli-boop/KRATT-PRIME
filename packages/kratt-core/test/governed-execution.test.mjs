@@ -220,7 +220,7 @@ test("WP-01 approval + verified ECK provenance + fenced lease govern execution l
 
   const completed = await runtime.complete({
     principal, task, constructionTask, record: started.record,
-    resultDigest: `sha256:${"c".repeat(64)}`
+    resultDigest: "sha256:" + "d".repeat(64)
   });
   assert.equal(completed.ok, true);
   assert.equal(completed.state, "SUCCEEDED");
