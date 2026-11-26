@@ -134,7 +134,7 @@ test("invalid provider result after dispatch is reconciled rather than marked co
   assert.equal(retry.retrySafety, "UNKNOWN");
   assert.equal(retry.errorCode, "PROVIDER_RESULT_INVALID");
   assert.equal(f.calls.some(call => call[0] === "finish"), false);
-  assert.equal(result.results[0].status, "RECONCILE_REQUIRED");
+  assert.equal(result.results[0].status, "RETRY_SCHEDULED");
 });
 
 test("provider accepted but outcome persistence failed is never reported as recorded", async () => {
@@ -149,7 +149,7 @@ test("provider accepted but outcome persistence failed is never reported as reco
 });
 
 test("missing adapter is retried before the delivery fence and causes no side effect", async () => {
-  const f = fixture({ adapters: false });
+  const f = fixture({ adapters: false, retry: { ok: true, status: "PENDING", reconciliation_required: false } });
   const result = await createOutboxWorker({
     store: f.store, adapters: f.registry, workerId: "worker-1", actorId: "operator-1"
   }).runOnce();
