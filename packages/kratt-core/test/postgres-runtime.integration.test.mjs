@@ -59,6 +59,33 @@ test("PostgreSQL shared journal and worker leases survive concurrent pools and p
     );
     assert.equal((await storeA.verify()).ok, true);
 
+    const nonceValues = [
+      "integration-approval-key",
+      "integration-approval-nonce-1",
+      "integration-approval-1",
+      "sha256:" + "c".repeat(64),
+      "d".repeat(64),
+      new Date(Date.now() + 60_000).toISOString()
+    ];
+    const nonceSql =
+      "INSERT INTO kratt_governed_approval_nonces " +
+      "(key_id, nonce, approval_id, request_digest, signature_digest, expires_at, consumed_at) " +
+      "VALUES ($1, $2, $3, $4, $5, $6::timestamptz, clock_timestamp()) " +
+      "ON CONFLICT DO NOTHING RETURNING key_id";
+    const [nonceA, nonceB] = await Promise.all([
+      poolA.query(nonceSql, nonceValues),
+      poolB.query(nonceSql, nonceValues)
+    ]);
+    assert.equal(nonceA.rowCount + nonceB.rowCount, 1);
+    await assert.rejects(
+      poolA.query(
+        "UPDATE kratt_governed_approval_nonces SET approval_id = 'tampered' " +
+        "WHERE key_id = $1 AND nonce = $2",
+        nonceValues.slice(0, 2)
+      ),
+      /KRATT_GOVERNED_APPROVAL_NONCES_APPEND_ONLY/
+    );
+
     const leasesA = createPostgresWorkerLeaseCoordinator(poolA);
     const leasesB = createPostgresWorkerLeaseCoordinator(poolB);
     await Promise.all([leasesA.open(), leasesB.open()]);
