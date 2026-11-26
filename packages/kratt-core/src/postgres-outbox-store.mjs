@@ -205,13 +205,13 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    const q=await c.query("SELECT o.idempotency_key,o.provider,o.attempts,o.delivery_started_at,o.delivery_lease_token,"+
     "i.task_id FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
     "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 AND o.lease_owner=$3 AND o.lease_until>$4 FOR UPDATE OF o,i",[outboxId,leaseToken,workerId,at]);
-   if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};
+   if(q.rowCount!==1){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"LEASE_LOST"};}
    const item=q.rows[0];
    if(item.task_id!==taskId)return{ok:false,reason:"TASK_BINDING_MISMATCH"};
    if(!item.delivery_started_at||item.delivery_lease_token!==leaseToken)return{ok:false,reason:"DELIVERY_NOT_STARTED"};
    const event={schema_version:SCHEMA,event_id:"outcome:"+digest(item.idempotency_key),
     event_type:outcome.status==="COMPLETED"?"dispatch.completed":"dispatch.failed",created_at:at,
-    actor_id:actorId,task_id:item.task_id,provider:item.provider,idempotency_key:item.idempotency_key,
+    actor_id:actorId,worker_id:workerId,task_id:item.task_id,provider:item.provider,idempotency_key:item.idempotency_key,
     result:{status:outcome.status.toLowerCase()}};
    await appendAudit(c,event);
    const iu=await c.query("UPDATE kratt_dispatch_intents SET status=$1,updated_at=$2 WHERE idempotency_key=$3 AND status='INTENT_COMMITTED' RETURNING idempotency_key",
@@ -232,14 +232,14 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date(),authorizeRe
    const q=await c.query("SELECT o.attempts,o.delivery_started_at,o.delivery_lease_token,o.idempotency_key,o.provider,"+
     "i.task_id,o.lease_owner FROM kratt_dispatch_outbox o JOIN kratt_dispatch_intents i ON i.idempotency_key=o.idempotency_key "+
     "WHERE o.outbox_id=$1 AND o.status='LEASED' AND o.lease_token=$2 AND o.lease_owner=$3 AND o.lease_until>$4 FOR UPDATE OF o,i",[outboxId,leaseToken,workerId,at]);
-   if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};
+   if(q.rowCount!==1){incrementFabricMetric(metrics,"fabric_delivery_fence_rejected");return{ok:false,reason:"LEASE_LOST"};}
    const r=q.rows[0],attempts=Number(r.attempts);
    const canRetry=retrySafety==="SAFE_TO_RETRY"||!r.delivery_started_at;
    if(!canRetry){
     await c.query("UPDATE kratt_dispatch_outbox SET status='RECONCILE',lease_owner=NULL,lease_token=NULL,lease_until=NULL,"+
      "last_error_code=$2,updated_at=$3 WHERE outbox_id=$1",[outboxId,errorCode,at]);
     await appendAudit(c,{schema_version:SCHEMA,event_id:"reconcile-required:"+digest(r.idempotency_key+":"+String(attempts)),
-     event_type:"dispatch.reconcile_required",created_at:at,actor_id:r.lease_owner,task_id:r.task_id,
+     event_type:"dispatch.reconcile_required",created_at:at,actor_id:r.lease_owner,worker_id:r.lease_owner,task_id:r.task_id,
      provider:r.provider,idempotency_key:r.idempotency_key,attempts,error_code:errorCode});
     return{ok:true,status:"RECONCILE",terminal:false,reconciliation_required:true,attempts,retry_at:null};
    }
