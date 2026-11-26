@@ -32,7 +32,7 @@ function makeAck(event, attempt, result = "ACCEPTED", suffix = "one", overrides 
     receiver_node: event.destination_node,
     source_sequence: event.sequence,
     event_digest: event.content_digest,
-    delivery_attempt: attempt,
+    delivery_attempt: Number(attempt),
     result,
     policy_revision: "steel-policy-7",
     issued_at: "2026-11-26T17:00:00.000Z",
