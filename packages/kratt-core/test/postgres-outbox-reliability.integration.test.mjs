@@ -25,9 +25,15 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   const reliability=await readFile(join(here,"../migrations/0006_outbox_delivery_reliability.sql"),"utf8");
   await pool.query(base);await pool.query(fabric);await pool.query(reliability);await pool.query(reliability);
   let now=Date.parse("2026-11-26T12:00:00.000Z");
+  const metricCalls=[];
+  const metrics={
+   increment:(name,amount=1)=>metricCalls.push(["counter",name,amount]),
+   gauge:(name,value)=>metricCalls.push(["gauge",name,value])
+  };
   const store=createPostgresOutboxStore(pool,{
    clock:()=>new Date(now),
-   authorizeReconciliation:async request=>request.actorId==="security-admin"&&request.evidenceDigest==="e".repeat(64)
+   authorizeReconciliation:async request=>request.actorId==="security-admin"&&request.evidenceDigest==="e".repeat(64),
+   metrics
   });
   async function seed(taskId,tail){
    const idempotencyKey="kratt:"+taskId+":"+tail.repeat(64);
@@ -203,6 +209,14 @@ test("PostgreSQL outbox fences delivery start, orders cancellation, retries safe
   );
   const counts=await pool.query("SELECT count(*)::int AS reconciliation_count FROM kratt_dispatch_outbox_reconciliations");
   assert.equal(counts.rows[0].reconciliation_count,3);
+  const counters=Object.fromEntries(metricCalls.filter(x=>x[0]==="counter").map(([,name,amount])=>
+   [name,metricCalls.filter(y=>y[0]==="counter"&&y[1]===name).reduce((sum,y)=>sum+y[2],0)]));
+  const gauges=Object.fromEntries(metricCalls.filter(x=>x[0]==="gauge").map(([,name,value])=>[name,value]));
+  assert.ok((counters.fabric_delivery_fence_rejected??0)>=2,JSON.stringify(counters));
+  assert.ok((counters.fabric_delivery_lease_expired??0)>=2,JSON.stringify(counters));
+  assert.ok((counters.fabric_task_cancelled??0)>=2,JSON.stringify(counters));
+  assert.ok(Number.isFinite(gauges.fabric_outbox_pending),JSON.stringify(gauges));
+  assert.ok(Number.isFinite(gauges.fabric_outbox_reconcile_required),JSON.stringify(gauges));
  }finally{
   await pool?.end();
   await admin.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>undefined);
