@@ -38,3 +38,53 @@ test("ledger rejects unverified and revoked approvals", async () => {
   ledger.revoke(a.approvalId);
   assert.equal(ledger.consume(a, { now }).code, "APPROVAL_REVOKED");
 });
+
+
+test("request digest is included in the normalized signed approval payload", () => {
+  const digest = "a".repeat(64);
+  const normalized = normalizeApprovalEnvelope(envelope({ requestDigest: digest }));
+  assert.equal(normalized.requestDigest, digest);
+  assert.ok(Object.isFrozen(normalized));
+  assert.throws(() => normalizeApprovalEnvelope(envelope({ requestDigest: "not-a-digest" })));
+});
+
+test("approval verification binds the exact canonical request payload digest", async () => {
+  const digest = "b".repeat(64);
+  const seen = [];
+  const verified = await verifyApprovalForRequest({
+    envelope: envelope({ requestDigest: digest }),
+    verifier: { verify: async (normalized) => { seen.push(normalized); return true; } },
+    request: { ...request, requestDigest: digest },
+    principalRef: "principal.01",
+    agentRef: "agent.01",
+    requiredScopes: ["repo.write"],
+    now,
+  });
+  assert.equal(verified.code, "APPROVAL_VERIFIED");
+  assert.equal(verified.requestDigest, digest);
+  assert.equal(seen[0].requestDigest, digest);
+});
+
+test("approval with a missing or mismatched request digest fails closed", async () => {
+  const digest = "c".repeat(64);
+  const missing = await verifyApprovalForRequest({
+    envelope: envelope(),
+    verifier: { verify: async () => true },
+    request: { ...request, requestDigest: digest },
+    principalRef: "principal.01",
+    agentRef: "agent.01",
+    requiredScopes: ["repo.write"],
+    now,
+  });
+  const mismatch = await verifyApprovalForRequest({
+    envelope: envelope({ requestDigest: "d".repeat(64) }),
+    verifier: { verify: async () => true },
+    request: { ...request, requestDigest: digest },
+    principalRef: "principal.01",
+    agentRef: "agent.01",
+    requiredScopes: ["repo.write"],
+    now,
+  });
+  assert.equal(missing.code, "APPROVAL_REQUEST_DIGEST_MISMATCH");
+  assert.equal(mismatch.code, "APPROVAL_REQUEST_DIGEST_MISMATCH");
+});
