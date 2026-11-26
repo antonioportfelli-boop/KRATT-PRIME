@@ -10,7 +10,7 @@ import { receiveSteelFabricEventV1, fabricEventContentDigest, fabricSigningInput
 const connectionString = process.env.KRATT_TEST_DATABASE_URL;
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationDir = join(here, "../migrations");
-const NOW = "2026-11-26T12:00:00.000Z";
+const NOW = "2026-11-26T11:59:59.000Z";
 const STEEL_COMMIT = "1978fa37d5df7bfa6cb2a3ba64480307492893d5";
 const KRATT_COMMIT = "dabb19d26cc20b23f6a25f5360a2b474acc11447";
 
