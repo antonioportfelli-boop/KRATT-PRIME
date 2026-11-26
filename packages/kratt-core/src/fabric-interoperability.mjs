@@ -626,11 +626,12 @@ export async function receiveSteelFabricEventV1(pool, raw, deps = {}) {
       const message = error instanceof Error ? error.message : "";
       const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
         ? "SQLSTATE_" + error.code : null;
-      const reason = ["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(message)
+      const isTrustReceiverError = /^TRUST_RECEIVER_(KEY|ACK)_/.test(message);
+      const reason = ["RECEIVER_ACK_INVALID", "RECEIVER_ACK_SIGNER_UNAVAILABLE"].includes(message) || isTrustReceiverError
         ? message
         : /^ACK_[A-Z0-9_]{1,96}$/.test(message) ? message
           : sqlState ?? "ACK_INTERNAL_ERROR";
-      if (reason === "RECEIVER_ACK_INVALID" || reason === "RECEIVER_ACK_SIGNER_UNAVAILABLE") return fail(reason);
+      if (reason === "RECEIVER_ACK_INVALID" || reason === "RECEIVER_ACK_SIGNER_UNAVAILABLE" || isTrustReceiverError) return fail(reason);
       return fail("RECEIVER_ACK_CREATION_FAILED", reason);
     }
     if (phase === "HANDLER") return fail(error instanceof Error && error.message === "EVENT_RESULT_NOT_SERIALIZABLE"
@@ -660,5 +661,8 @@ export const FABRIC_EVENT_ERROR_CODES = Object.freeze([
   "TRUST_INGRESS_KEY_TIME_INVALID", "TRUST_INGRESS_KEY_SIGN_WINDOW_CLOSED", "TRUST_INGRESS_KEY_VERIFY_WINDOW_CLOSED",
   "TRUST_INGRESS_POLICY_REVISION_CHANGED", "TRUST_INGRESS_REVALIDATION_UNAVAILABLE", "DELIVERY_ATTEMPT_REQUIRED",
   "RECEIVER_ACK_SIGNER_UNAVAILABLE", "RECEIVER_ACK_INVALID",
+  "TRUST_RECEIVER_KEY_LOCK_INPUT_INVALID", "TRUST_RECEIVER_ACK_TIME_INVALID", "TRUST_RECEIVER_KEY_UNAVAILABLE",
+  "TRUST_RECEIVER_KEY_TIME_INVALID", "TRUST_RECEIVER_KEY_SIGN_WINDOW_CLOSED", "TRUST_RECEIVER_KEY_VERIFY_WINDOW_CLOSED",
+  "TRUST_RECEIVER_KEY_LOCK_UNAVAILABLE",
   "RECEIVER_ACK_CREATION_FAILED", "EVENT_RESULT_NOT_SERIALIZABLE", "SEQUENCE_STALE", "CAUSAL_PARENT_MISSING", "EVENT_HANDLER_FAILED"
 ]);
