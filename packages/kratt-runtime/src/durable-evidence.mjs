@@ -23,9 +23,9 @@ function normalizeEnvelope(value) {
 }
 
 /**
- * Durable single-process evidence projection over PrimeStore's fsync'd local journal.
- * No database migrations are performed in place; records carry a schema version and
- * future versions must be replayed into a new projection.
+ * Durable evidence projection over a PrimeStore-compatible append-only journal.
+ * The local default is fsync'd PrimeStore; an explicitly injected shared adapter
+ * may provide a different verified storage scope. No migrations run here.
  */
 export class DurableEvidenceRepository {
   #store;
@@ -123,6 +123,6 @@ export class DurableEvidenceRepository {
       eventCount: ledger.count, evidenceHeadHash: ledger.headHash,
       journalEntries: journal.count, journalHeadHash: journal.headHash,
       encrypted: store.encrypted === true, remoteSync: store.remoteSync === true,
-      scope: "SINGLE_PROCESS_LOCAL_JOURNAL" });
+      scope: typeof store.scope === "string" ? store.scope : "SINGLE_PROCESS_LOCAL_JOURNAL" });
   }
 }
