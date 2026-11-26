@@ -126,15 +126,20 @@ Local unit suite: `node --test packages/kratt-core/test/fabric-interoperability.
 
 The PostgreSQL integration test is separate and uses `KRATT_TEST_DATABASE_URL` plus the workflow's ephemeral PostgreSQL 16 service. It checks idempotency, concurrent duplicate delivery through two pools, monotonic ordering, sequence gaps, causal-parent requirements, transactional handler rollback/retry, and append-only database guards. A local run without a database URL skips this test; that skip is not PostgreSQL verification.
 
-Remaining Wave 3 work:
-- complete outbound KRATT event construction/signing and transactional outbox binding;
-- persist trusted node/key/policy registry with revocation/rotation audit semantics;
-- end-to-end KRATT-to-STEEL and STEEL-to-KRATT contract fixtures against the STEEL implementation;
-- durable retry scheduling, cancellation race and dead-letter reconciliation;
-- schema evolution and compatibility negotiation;
-- live staging deployment, database privilege test, encryption verification and restore drill.
+Current Wave 3 status at the time of this update:
+- inbound 3XT-FABRIC/1 parsing, Ed25519 verification, authorization, PostgreSQL inbox, replay, ordering and causality: implemented and CI-verified;
+- outbound 3XT-FABRIC/1 signing, task-bound approval verification boundary, source sequence reservation, and atomic PostgreSQL intent/outbox/event/audit persistence: implemented and CI-verified;
+- unit suite for outbound composition: seven focused tests;
+- live PostgreSQL 16 suite: three integration tests (runtime journal/leases, Fabric inbox, Fabric outbound outbox), all run in CI with a live database, not skipped.
 
-**This work package is an implemented KRATT ingress candidate. It is not yet a live KRATT ↔ STEEL integration, staging-verified system or production-ready transport.**
+Remaining Wave 3 work:
+- persist trusted node/key/policy registry with independently administered revocation/rotation audit semantics;
+- end-to-end KRATT-to-STEEL and STEEL-to-KRATT contract fixtures against the STEEL implementation and pinned source revision;
+- transport worker/provider registration, retry scheduling and cancellation-race reconciliation (currently deliberately not activated);
+- schema evolution and compatibility negotiation;
+- staging role/grant verification, backup/restore drill, connection TLS and encryption-at-rest evidence.
+
+**KRATT can now prepare and durably queue authenticated outbound Fabric envelopes, but this is not yet live network delivery or a verified two-repository KRATT ↔ STEEL deployment. It is not staging-verified or production-ready.**
 
 
 ## 9. Outbound Fabric adapter and transactional outbox (WP-03.4)
@@ -183,4 +188,11 @@ The new outbox row is committed in `PENDING` state. It is not claimed or dispatc
 
 ### WP-03.4 verification
 
-The outbound unit suite covers signed event creation, server-derived scope/payload/evidence, disallowed event types, approval/time/principal binding, signing-key mismatch, duplicate idempotency and request-digest conflicts. The PostgreSQL 16 integration suite creates an isolated schema, reapplies migrations, races two outbox stores against one idempotency key, verifies the persisted event signature, checks immutable guards, and asserts the outbox remains `PENDING` with zero attempts. A passing GitHub Actions job is required before this work package is marked CI-verified.
+The outbound unit suite covers signed event creation, server-derived scope/payload/evidence, disallowed event types, approval/time/principal binding, signing-key mismatch, duplicate idempotency and request-digest conflicts. The PostgreSQL 16 integration suite creates an isolated schema, reapplies migrations, races two outbox stores against one idempotency key, verifies the persisted event signature, checks immutable guards (including sequence-head update and delete rejection), and asserts the outbox remains `PENDING` with zero attempts.
+
+CI evidence for the previous verified outbound implementation snapshot `3e3d65e2b9fca960112ba1e60477820a321d23a8`:
+- [Node 22 typecheck/build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45837077370)
+- [KRATT core tests and application typecheck/build](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45837077259)
+- [PostgreSQL 16 runtime, inbox and outbound outbox integration](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/45837077302)
+
+The database job ran three live PostgreSQL 16 integration tests and reported 3 passed, 0 failed. The ordinary core test step reports three database-dependent tests skipped because the separate live PostgreSQL step executes them against the CI database; the separate step is the database verification evidence. Later hardening changes that reject deletion of an outbound sequence head have been added after this evidence snapshot and require the next CI run before being counted as verified.
