@@ -242,7 +242,7 @@ export function createSqliteCommandStore(database) {
     if (typeof idempotencyKey !== "string" ||
         typeof deliveryToken !== "string" || !/^[a-f0-9]{64}$/.test(deliveryToken) ||
         !validateAuditRecord(record) ||
-        !["dispatch.completed", "dispatch.failed"].includes(record.event_type) ||
+        !["dispatch.completed", "dispatch.failed", "dispatch.reconcile_required"].includes(record.event_type) ||
         record.idempotency_key !== idempotencyKey) return false;
 
     return runTransaction(database, () => {
@@ -251,6 +251,9 @@ export function createSqliteCommandStore(database) {
       if (!intent || intent.task_id !== record.task_id || intent.status !== "INTENT_COMMITTED" ||
           !delivery || delivery.task_id !== record.task_id || delivery.delivery_token !== deliveryToken) return false;
       if (!appendAuditRecord(record)) return false;
+      // Unknown provider outcome remains an open intent for manual reconciliation.
+      // The durable delivery-start row prevents a blind second provider invocation.
+      if (record.event_type === "dispatch.reconcile_required") return true;
       const status = record.event_type === "dispatch.completed" ? "COMPLETED" : "FAILED";
       const updated = updateIntentStatus.run(status, record.created_at, idempotencyKey);
       return Number(updated.changes) === 1;
