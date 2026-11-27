@@ -10,6 +10,8 @@ import { canonicalApprovalPayload, canonicalTaskDigest } from "../src/policy.mjs
 import { createTrustedAuthorizationRuntime } from "../src/trusted-runtime.mjs";
 import { DurableEvidenceRepository } from "../../kratt-runtime/src/durable-evidence.mjs";
 import { createGovernedExecutionRuntime } from "../../kratt-runtime/src/governed-execution.mjs";
+import { createWorkerLeaseCoordinator } from "../../kratt-runtime/src/worker-lease-coordinator.mjs";
+import { createSecurityTelemetry } from "../src/security-telemetry.mjs";
 
 const at = "2026-11-26T12:00:00.000Z";
 const revision = "a".repeat(40);
@@ -145,7 +147,7 @@ async function withRuntime(run, options = {}) {
     const runtime = createGovernedExecutionRuntime({
       store,
       evidenceRepository,
-      authorizationRuntime,
+      authorizationRuntime: options.authorizationRuntime ?? authorizationRuntime,
       authenticatePrincipal: async () => ({ id: "builder-1", active: true }),
       loadTrustedContext: async () => context,
       verifyEvidenceProvenance: async (record, { card }) =>
@@ -156,7 +158,8 @@ async function withRuntime(run, options = {}) {
       nowEpochMs,
       nowIso,
       leaseTtlMs: 60_000,
-      cancelWorker: async () => options.cancelAcknowledged === true
+      cancelWorker: async () => options.cancelAcknowledged === true,
+      telemetry: options.telemetry
     });
 
     function makeApproval(nonce = "nonce-unique-1234567890") {
@@ -319,3 +322,165 @@ test("expired worker lease prevents the workflow from entering RUNNING", async (
   assert.equal(result.ok, false);
   assert.equal(result.reason, "WORKER_LEASE_NOT_CURRENT");
 }));
+
+
+test("running cancellation fails closed until the worker acknowledges it", async () => withRuntime(async fixture => {
+  const authorized = await fixture.runtime.authorizeAndClaim({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    approval: fixture.makeApproval("nonce-cancel-noack-123456")
+  });
+  assert.equal(authorized.ok, true);
+  const started = await fixture.runtime.start({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: authorized.record
+  });
+  assert.equal(started.ok, true);
+  const cancelled = await fixture.runtime.cancel({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: started.record, reason: "operator requested cancellation"
+  });
+  assert.equal(cancelled.ok, false);
+  assert.equal(cancelled.reason, "WORKER_CANCELLATION_NOT_ACKNOWLEDGED");
+  const recovered = await fixture.runtime.recover();
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.records[0].state, "RUNNING");
+  assert.equal((await fixture.runtime.status()).activeLeaseCount, 1);
+}));
+
+test("running cancellation is persisted only after worker acknowledgement", async () => withRuntime(async fixture => {
+  const authorized = await fixture.runtime.authorizeAndClaim({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    approval: fixture.makeApproval("nonce-cancel-ack-123456")
+  });
+  assert.equal(authorized.ok, true);
+  const started = await fixture.runtime.start({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: authorized.record
+  });
+  assert.equal(started.ok, true);
+  const cancelled = await fixture.runtime.cancel({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: started.record, reason: "operator requested cancellation"
+  });
+  assert.equal(cancelled.ok, true);
+  assert.equal(cancelled.state, "CANCELLED");
+  assert.equal(cancelled.lease_released, true);
+  const recovered = await fixture.runtime.recover();
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.records[0].state, "CANCELLED");
+  assert.equal((await fixture.runtime.status()).activeLeaseCount, 0);
+}, { cancelAcknowledged: true }));
+
+test("an old execution claim cannot start after a newer fencing generation takes over", async () => withRuntime(async fixture => {
+  const authorized = await fixture.runtime.authorizeAndClaim({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    approval: fixture.makeApproval("nonce-fence-old-123456")
+  });
+  assert.equal(authorized.ok, true);
+  fixture.setCurrentMs(Date.parse(at) + 61_000);
+
+  const takeover = createWorkerLeaseCoordinator({ store: fixture.store, now: fixture.nowIso });
+  const current = await takeover.acquire({
+    operationId: "takeover-after-expiry",
+    reservationKey: "reserve-" + authorized.record.execution_key,
+    taskDigest: authorized.record.task_digest,
+    ownerId: "replacement-worker",
+    ttlMs: 60_000
+  });
+  assert.equal(current.ok, true);
+  assert.equal(current.fencingToken, 2);
+
+  const oldWorker = await fixture.runtime.start({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: authorized.record
+  });
+  assert.equal(oldWorker.ok, false);
+  assert.equal(oldWorker.reason, "WORKER_LEASE_NOT_CURRENT");
+}));
+
+
+test("governed execution emits allow and lease-fencing telemetry without changing lifecycle authority", async () => {
+  const events = [];
+  const telemetry = createSecurityTelemetry({ sink: event => events.push(event) });
+  await withRuntime(async fixture => {
+    const authorized = await fixture.runtime.authorizeAndClaim({
+      principal, task: fixture.task, constructionTask: fixture.constructionTask,
+      approval: fixture.makeApproval("nonce-telemetry-allow-123456")
+    });
+    assert.equal(authorized.ok, true);
+    assert.equal(events.some(event => event.name === "authorization.allowed" &&
+      event.correlationId === fixture.task.task_id), true);
+
+    fixture.setCurrentMs(Date.parse(at) + 61_000);
+    const blocked = await fixture.runtime.start({
+      principal, task: fixture.task, constructionTask: fixture.constructionTask,
+      record: authorized.record
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.reason, "WORKER_LEASE_NOT_CURRENT");
+    assert.equal(events.some(event => event.name === "lease.fenced" &&
+      event.correlationId === fixture.task.task_id), true);
+  }, { telemetry });
+});
+
+test("governed execution emits authorization denial and evidence provenance failure events", async () => {
+  const events = [];
+  const telemetry = createSecurityTelemetry({ sink: event => events.push(event) });
+  await withRuntime(async fixture => {
+    const denied = await fixture.runtime.authorizeAndClaim({
+      principal, task: fixture.task, constructionTask: fixture.constructionTask
+    });
+    assert.equal(denied.ok, false);
+    assert.equal(denied.reason, "AUTHORIZATION_NOT_ALLOWED");
+    assert.equal(events.some(event => event.name === "authorization.denied" &&
+      event.outcome === "denied" && event.correlationId === fixture.task.task_id), true);
+
+    const alternate = createGovernedExecutionRuntime({
+      store: fixture.store,
+      evidenceRepository: fixture.evidenceRepository,
+      authorizationRuntime: fixture.authorizationRuntime,
+      authenticatePrincipal: async () => ({ id: "builder-1", active: true }),
+      loadTrustedContext: async () => trustedContext(),
+      verifyEvidenceProvenance: async () => false,
+      nowEpochMs: fixture.nowEpochMs,
+      nowIso: fixture.nowIso,
+      telemetry
+    });
+    const rejectedEvidence = await alternate.authorizeAndClaim({
+      principal, task: fixture.task, constructionTask: fixture.constructionTask,
+      approval: fixture.makeApproval("nonce-telemetry-evidence-123456")
+    });
+    assert.equal(rejectedEvidence.ok, false);
+    assert.equal(rejectedEvidence.reason, "POLICY_EVIDENCE_PROVENANCE_REJECTED");
+    assert.equal(events.some(event => event.name === "evidence.verification_failed" &&
+      event.correlationId === fixture.task.task_id), true);
+  }, {
+    telemetry,
+    authorizationRuntime: {
+      evaluate(task, _evidence, context) {
+        return {
+          schema_version: "kratt-prime/v0.1",
+          decision_id: `decision:${task.task_id}`,
+          task_id: task.task_id,
+          decision: "DENY",
+          reasons: ["TEST_POLICY_DENY"],
+          evidence_ids: [],
+          evaluated_at: context.evaluated_at
+        };
+      }
+    }
+  });
+});
+
+test("telemetry sink failure cannot change governed execution authorization", async () => {
+  const telemetry = createSecurityTelemetry({ sink: () => { throw new Error("sink unavailable"); } });
+  await withRuntime(async fixture => {
+    const authorized = await fixture.runtime.authorizeAndClaim({
+      principal, task: fixture.task, constructionTask: fixture.constructionTask,
+      approval: fixture.makeApproval("nonce-telemetry-sinkfail-123456")
+    });
+    assert.equal(authorized.ok, true);
+    assert.equal(authorized.authorization.decision, "ALLOW");
+    assert.equal(telemetry.snapshot().diagnostics.sinkFailures, 1);
+  }, { telemetry });
+});

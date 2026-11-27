@@ -3,21 +3,18 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "engines": {
-    "node": ">=22 <23"
-  },
+  "engines": { "node": ">=22 <23" },
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.app.json --noEmit && vite build",
     "preview": "vite preview",
     "pack": "node scripts/pack-deploy.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "test": "node --test packages/kratt-core/test/*.test.mjs"
+    "test": "node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs",
+    "bench:kratt": "node packages/kratt-core/bench/throughput.mjs",
+    "bench:runtime": "node packages/kratt-core/bench/end-to-end.mjs"
   },
-  "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
-  },
+  "dependencies": { "react": "^19.2.8", "react-dom": "^19.2.8" },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",

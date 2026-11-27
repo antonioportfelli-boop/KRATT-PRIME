@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { validateEvidenceRecord, validateTaskEnvelope, validateTrustedContext } from "../../kratt-core/src/contracts.mjs";
 import { canonicalTaskDigest, isPolicyDecision } from "../../kratt-core/src/policy.mjs";
 import { verifyConstructionTask } from "../../kratt-core/src/construction-protocol.mjs";
@@ -188,7 +189,8 @@ export function createGovernedExecutionRuntime({
   leaseTtlMs = 60_000,
   maxContextAgeMs = 300_000,
   maxEvidenceCards = 10_000,
-  cancelWorker
+  cancelWorker,
+  telemetry
 } = {}) {
   if (!store || typeof store.open !== "function" || typeof store.put !== "function" ||
       typeof store.readAll !== "function" || typeof store.verify !== "function")
@@ -207,6 +209,28 @@ export function createGovernedExecutionRuntime({
     throw new TypeError("GOVERNED_EXECUTION_LIMIT_INVALID");
   if (cancelWorker !== undefined && typeof cancelWorker !== "function")
     throw new TypeError("WORKER_CANCELLATION_ACK_REQUIRED");
+  if (telemetry !== undefined && telemetry !== null &&
+      (typeof telemetry.recordSecurityEvent !== "function" || typeof telemetry.observe !== "function"))
+    throw new TypeError("GOVERNED_EXECUTION_TELEMETRY_INVALID");
+
+  function recordSecurityEvent(name, task, outcome, reason, durationMs = null) {
+    if (!telemetry || !validId(task?.task_id)) return;
+    try {
+      telemetry.recordSecurityEvent({
+        name, correlationId: task.task_id, component: "governed-execution",
+        outcome, reason, ...(durationMs === null ? {} : { durationMs })
+      });
+    } catch { /* telemetry is non-authoritative */ }
+  }
+
+  function observeDuration(name, durationMs, outcome, reason) {
+    if (!telemetry) return;
+    try {
+      telemetry.observe(name, durationMs, {
+        component: "governed-execution", outcome, reason
+      });
+    } catch { /* telemetry is non-authoritative */ }
+  }
 
   const evidence = evidenceRepository ?? new DurableEvidenceRepository({ store });
   const leases = leaseCoordinator ?? createWorkerLeaseCoordinator({ store, now: nowIso });
@@ -239,32 +263,47 @@ export function createGovernedExecutionRuntime({
   }
 
   async function verifiedPolicyEvidence(task, identity) {
-    let snapshot;
-    try { snapshot = await readEvidenceSnapshot(evidence, { maxCards: maxEvidenceCards }); }
-    catch { return failure("EVIDENCE_JOURNAL_UNAVAILABLE"); }
-    if (!snapshot.ok) return failure(snapshot.reason);
-    const records = [];
-    const cardsById = new Map();
-    for (const card of snapshot.cards) {
-      if (!plain(card?.evidence?.metadata) || !Object.hasOwn(card.evidence.metadata, "policy_evidence")) continue;
-      const record = cardToPolicyEvidence(card, task);
-      if (!record) return failure("POLICY_EVIDENCE_CARD_INVALID", { evidence_id: card?.cardId ?? null });
-      let provenance = false;
-      try {
-        provenance = await verifyEvidenceProvenance(record, {
-          task, principal: identity, card,
-          evidence_head_hash: snapshot.evidenceHeadHash,
-          journal_head_hash: snapshot.journalHeadHash
+    const started = performance.now();
+    const reject = (reason, extra = {}) => {
+      recordSecurityEvent(
+        "evidence.verification_failed", task, "failed",
+        /^[A-Z0-9_:-]{1,96}$/.test(reason) ? reason : "EVIDENCE_VERIFICATION_FAILED"
+      );
+      return failure(reason, extra);
+    };
+    try {
+      let snapshot;
+      try { snapshot = await readEvidenceSnapshot(evidence, { maxCards: maxEvidenceCards }); }
+      catch { return reject("EVIDENCE_JOURNAL_UNAVAILABLE"); }
+      if (!snapshot.ok) return reject(snapshot.reason);
+      const records = [];
+      const cardsById = new Map();
+      for (const card of snapshot.cards) {
+        if (!plain(card?.evidence?.metadata) || !Object.hasOwn(card.evidence.metadata, "policy_evidence")) continue;
+        const record = cardToPolicyEvidence(card, task);
+        if (!record) return reject("POLICY_EVIDENCE_CARD_INVALID");
+        let provenance = false;
+        try {
+          provenance = await verifyEvidenceProvenance(record, {
+            task, principal: identity, card,
+            evidence_head_hash: snapshot.evidenceHeadHash,
+            journal_head_hash: snapshot.journalHeadHash
+          });
+        } catch { provenance = false; }
+        if (provenance !== true) return reject("POLICY_EVIDENCE_PROVENANCE_REJECTED");
+        if (cardsById.has(record.evidence_id)) return reject("DUPLICATE_POLICY_EVIDENCE_ID");
+        records.push(record);
+        cardsById.set(record.evidence_id, {
+          card_id: card.cardId, content_digest: card.contentDigest
         });
-      } catch { provenance = false; }
-      if (provenance !== true) return failure("POLICY_EVIDENCE_PROVENANCE_REJECTED", { evidence_id: record.evidence_id });
-      if (cardsById.has(record.evidence_id)) return failure("DUPLICATE_POLICY_EVIDENCE_ID");
-      records.push(record);
-      cardsById.set(record.evidence_id, {
-        card_id: card.cardId, content_digest: card.contentDigest
-      });
+      }
+      return { ok: true, records, cardsById, snapshot };
+    } finally {
+      observeDuration(
+        "kratt.governed_execution.evidence_verification.duration",
+        performance.now() - started, "completed", "EVIDENCE_SNAPSHOT_AND_PROVENANCE"
+      );
     }
-    return { ok: true, records, cardsById, snapshot };
   }
 
   async function identityAndBinding({ principal, task: taskInput, constructionTask }) {
@@ -347,13 +386,31 @@ export function createGovernedExecutionRuntime({
     if (!policyEvidence.ok) return policyEvidence;
 
     let decision;
+    const authorizationStarted = performance.now();
     try {
       decision = authorizationRuntime.evaluate(bound.task, policyEvidence.records, bound.context, { approval });
-    } catch { return failure("AUTHORIZATION_EVALUATION_FAILED"); }
-    if (!isPolicyDecision(decision) || decision.decision !== "ALLOW")
+    } catch {
+      const duration = performance.now() - authorizationStarted;
+      observeDuration("kratt.governed_execution.authorization.duration", duration, "blocked", "AUTHORIZATION_EVALUATION_FAILED");
+      recordSecurityEvent("authorization.blocked", bound.task, "blocked", "AUTHORIZATION_EVALUATION_FAILED", duration);
+      return failure("AUTHORIZATION_EVALUATION_FAILED");
+    }
+    const authorizationDuration = performance.now() - authorizationStarted;
+    const validDecision = isPolicyDecision(decision);
+    const allowed = validDecision && decision.decision === "ALLOW";
+    const denied = validDecision && decision.decision === "DENY";
+    const decisionOutcome = allowed ? "allowed" : denied ? "denied" : "blocked";
+    const decisionEvent = allowed ? "authorization.allowed" : denied ? "authorization.denied" : "authorization.blocked";
+    const decisionReason = allowed ? "POLICY_ALLOW" : denied ? "POLICY_DENY" : "POLICY_BLOCKED";
+    observeDuration(
+      "kratt.governed_execution.authorization.duration",
+      authorizationDuration, decisionOutcome, decisionReason
+    );
+    recordSecurityEvent(decisionEvent, bound.task, decisionOutcome, decisionReason, authorizationDuration);
+    if (!allowed)
       return failure("AUTHORIZATION_NOT_ALLOWED", {
-        decision: isPolicyDecision(decision) ? decision.decision : "BLOCKED",
-        reasons: isPolicyDecision(decision) ? decision.reasons : ["INVALID_POLICY_DECISION"]
+        decision: validDecision ? decision.decision : "BLOCKED",
+        reasons: validDecision ? decision.reasons : ["INVALID_POLICY_DECISION"]
       });
 
     const usedIds = [...decision.evidence_ids];
@@ -452,7 +509,12 @@ export function createGovernedExecutionRuntime({
   }
 
   async function leaseIsCurrent(record) {
-    if (!record.claim) return { ok: false, reason: "EXECUTION_CLAIM_MISSING" };
+    const started = performance.now();
+    if (!record.claim) {
+      recordSecurityEvent("lease.fenced", record, "failed", "EXECUTION_CLAIM_MISSING");
+      observeDuration("kratt.governed_execution.lease_validation.duration", performance.now() - started, "failed", "EXECUTION_CLAIM_MISSING");
+      return { ok: false, reason: "EXECUTION_CLAIM_MISSING" };
+    }
     const inspected = await leases.inspect(leaseReservationKey(record));
     const reservation = inspected?.reservation;
     if (inspected?.ok !== true || !reservation || reservation.status !== "LEASED" ||
@@ -460,8 +522,14 @@ export function createGovernedExecutionRuntime({
         reservation.fence !== record.claim.fence ||
         reservation.lease?.ownerId !== record.claim.worker_id ||
         reservation.lease?.expiresAt !== record.claim.expires_at ||
-        Date.parse(reservation.lease.expiresAt) <= nowEpochMs())
-      return { ok: false, reason: "WORKER_LEASE_NOT_CURRENT" };
+        Date.parse(reservation.lease.expiresAt) <= nowEpochMs()) {
+      const reason = "WORKER_LEASE_NOT_CURRENT";
+      const duration = performance.now() - started;
+      recordSecurityEvent("lease.fenced", record, "failed", reason, duration);
+      observeDuration("kratt.governed_execution.lease_validation.duration", duration, "failed", reason);
+      return { ok: false, reason };
+    }
+    observeDuration("kratt.governed_execution.lease_validation.duration", performance.now() - started, "completed", "LEASE_CURRENT");
     return { ok: true, reservation };
   }
 
@@ -564,6 +632,7 @@ export function createGovernedExecutionRuntime({
     if (!cancelled.ok) return failure(cancelled.reason);
     const persisted = await appendExecutionRecord(cancelled.record, store);
     if (!persisted.ok) return failure("EXECUTION_CANCELLATION_PERSIST_FAILED");
+    recordSecurityEvent("dispatch.cancelled", bound.task, "cancelled", "CANCELLATION_PERSISTED");
     const released = await releaseLease(record, record.claim, bound.identity.id);
     return Object.freeze({
       ok: released.ok, state: cancelled.record.state, record: cancelled.record,

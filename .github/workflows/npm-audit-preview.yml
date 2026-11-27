@@ -1,0 +1,71 @@
+name: Dependency security remediation preview
+
+on:
+  push:
+    branches:
+      - feature/wave4-performance-security-hardening-2026-11-27
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/npm-audit-preview.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  preview-patch-updates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install current lockfile
+        run: npm ci
+      - name: Raise Vite to patched 8.2.4 patch line
+        run: npm install --package-lock-only --ignore-scripts --save-dev "vite@^8.2.4"
+      - name: Update vulnerable source-map-js transitive package
+        run: npm update --package-lock-only --ignore-scripts source-map-js
+      - name: Install proposed updated lockfile
+        run: npm ci
+      - name: Capture dependency audit
+        run: npm audit --json > npm-audit-after.json || echo "npm audit produced advisories; inspect captured report"
+      - name: Verify patched package versions and severity
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            const audit = JSON.parse(fs.readFileSync("npm-audit-after.json", "utf8"));
+            const vite = lock.packages["node_modules/vite"]?.version;
+            const sourceMap = lock.packages["node_modules/source-map-js"]?.version;
+            const counts = audit.metadata?.vulnerabilities ?? {};
+            console.log(JSON.stringify({ vite, sourceMap, vulnerabilities: counts }, null, 2));
+            const atLeast = (version, required) => {
+              const a = version.split(".").map(Number);
+              const b = required.split(".").map(Number);
+              for (let i = 0; i < 3; i += 1) if (a[i] !== b[i]) return a[i] > b[i];
+              return true;
+            };
+            if (!vite || !atLeast(vite, "8.2.4")) throw new Error("VITE_PATCH_LEVEL_NOT_REACHED");
+            if (!sourceMap || !atLeast(sourceMap, "1.2.2")) throw new Error("SOURCE_MAP_PATCH_LEVEL_NOT_REACHED");
+            if ((counts.high ?? 0) !== 0 || (counts.critical ?? 0) !== 0) throw new Error("HIGH_OR_CRITICAL_AUDIT_FINDINGS_REMAIN");
+          '
+      - name: Run KRATT tests
+        run: npm test
+      - name: Typecheck and build
+        run: npm run typecheck && npm run build
+      - name: Upload proposed lockfile and audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-remediation-preview-${{ github.sha }}
+          path: |
+            package.json
+            package-lock.json
+            npm-audit-after.json
+          if-no-files-found: warn
+          retention-days: 14

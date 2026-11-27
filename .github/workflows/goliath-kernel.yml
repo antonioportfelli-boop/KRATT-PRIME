@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - "feature/hardware-aware-runtime-v0.2.0-2026-11-07"
+      - "feature/wave4-performance-security-hardening-2026-11-27"
     paths:
       - "packages/goliath-kernel/**"
       - ".github/workflows/goliath-kernel.yml"

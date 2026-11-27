@@ -5,6 +5,7 @@ import {
   normalizeIntegrationDescriptor, toCapabilityAuditRecord, OPERATION_CLASSES,
 } from "../src/integration-capability-registry.mjs";
 
+const now = Date.parse("2026-11-27T12:00:00.000Z");
 const descriptor = (overrides = {}) => ({
   integrationId: "github.primary", provider: "github", accountRef: "acct:antonio",
   state: "WRITE_ENABLED",
@@ -25,7 +26,7 @@ const scopes = { read: ["repo:read"], write: ["repo:contents:write"] };
 const approval = (overrides = {}) => ({
   verified: true, provider: "github", operationId: "repo.file.create",
   target: "antonioportfelli-boop/KRATT-PRIME", requestId: "req:wave11:01",
-  expiresAt: "2026-11-26T00:00:00.000Z", approvalRef: "approval:wave11:01", ...overrides,
+  expiresAt: "2026-11-28T00:00:00.000Z", approvalRef: "approval:wave11:01", ...overrides,
 });
 
 test("normalizes and freezes descriptor", () => {
@@ -54,25 +55,25 @@ test("blocks discovered and connected-unverified states", () => {
   for (const state of ["DISCOVERED", "CONNECTED_UNVERIFIED"]) {
     assert.equal(evaluateIntegrationOperation({
       integration: descriptor({ state }), operation: operation(), request: request(),
-      effectiveScopes: scopes, approval: approval(),
+      effectiveScopes: scopes, approval: approval(), now,
     }).code, "INTEGRATION_UNVERIFIED");
   }
 });
 test("blocks disabled and error states", () => {
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor({ state: "DISABLED" }), operation: operation(),
-    request: request(), effectiveScopes: scopes,
+    request: request(), effectiveScopes: scopes, now,
   }).code, "INTEGRATION_DISABLED");
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor({ state: "ERROR" }), operation: operation(),
-    request: request(), effectiveScopes: scopes,
+    request: request(), effectiveScopes: scopes, now,
   }).code, "INTEGRATION_ERROR");
 });
 test("allows scoped read from verified-read-only integration", () => {
   const result = evaluateIntegrationOperation({
     integration: descriptor({ state: "VERIFIED_READ_ONLY", capabilities: { read: ["repo:read"], write: [] } }),
     operation: operation({ operationId: "repo.read", class: OPERATION_CLASSES.READ, requiredScopes: ["repo:read"] }),
-    request: request(), effectiveScopes: scopes,
+    request: request(), effectiveScopes: scopes, now,
   });
   assert.equal(result.allowed, true);
   assert.equal(result.sideEffect, "NONE");
@@ -81,49 +82,49 @@ test("read-only integration cannot authorize writes", () => {
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor({ state: "VERIFIED_READ_ONLY", capabilities: { read: ["repo:read"], write: [] } }),
     operation: operation(), request: request(), effectiveScopes: { read: ["repo:read"], write: [] },
-    approval: approval(),
+    approval: approval(), now,
   }).code, "WRITE_NOT_ENABLED");
 });
 test("blocks target outside allow-list", () => {
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor(), operation: operation(),
     request: request({ target: "3XTRINITY-CORPORATION-AND-SOFTWARE/KRATT-PRIME" }),
-    effectiveScopes: scopes, approval: approval({ target: "3XTRINITY-CORPORATION-AND-SOFTWARE/KRATT-PRIME" }),
+    effectiveScopes: scopes, approval: approval({ target: "3XTRINITY-CORPORATION-AND-SOFTWARE/KRATT-PRIME" }), now,
   }).code, "TARGET_OUT_OF_SCOPE");
 });
 test("blocks missing, unverified and mismatched approvals", () => {
-  const base = { integration: descriptor(), operation: operation(), request: request(), effectiveScopes: scopes };
+  const base = { integration: descriptor(), operation: operation(), request: request(), effectiveScopes: scopes, now };
   assert.equal(evaluateIntegrationOperation(base).code, "APPROVAL_NOT_VERIFIED");
   assert.equal(evaluateIntegrationOperation({ ...base, approval: approval({ verified: false }) }).code, "APPROVAL_NOT_VERIFIED");
   assert.equal(evaluateIntegrationOperation({ ...base, approval: approval({ target: "other/repo" }) }).code, "APPROVAL_BINDING_MISMATCH");
   assert.equal(evaluateIntegrationOperation({ ...base, approval: approval({ requestId: "req:other" }) }).code, "APPROVAL_BINDING_MISMATCH");
 });
-test("blocks expired approval", () => {
+test("blocks expired approval using an injected deterministic clock", () => {
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor(), operation: operation(), request: request(), effectiveScopes: scopes,
-    approval: approval(), now: Date.parse("2026-11-27T00:00:00.000Z"),
+    approval: approval({ expiresAt: "2026-11-27T11:59:59.999Z" }), now,
   }).code, "APPROVAL_EXPIRED");
 });
 test("requires explicit destructive approval", () => {
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor(), operation: operation({ class: OPERATION_CLASSES.DESTRUCTIVE_WRITE }),
-    request: request(), effectiveScopes: scopes, approval: approval({ destructive: false }),
+    request: request(), effectiveScopes: scopes, approval: approval({ destructive: false }), now,
   }).code, "DESTRUCTIVE_APPROVAL_REQUIRED");
 });
 test("blocks provider mismatch", () => {
   assert.equal(evaluateIntegrationOperation({
     integration: descriptor(), operation: operation(), request: request({ provider: "slack" }),
-    effectiveScopes: scopes, approval: approval(),
+    effectiveScopes: scopes, approval: approval(), now,
   }).code, "PROVIDER_MISMATCH");
 });
 test("creates minimal redacted audit record", () => {
   const decision = evaluateIntegrationOperation({
     integration: descriptor(), operation: operation(), request: request(),
-    effectiveScopes: scopes, approval: approval(),
+    effectiveScopes: scopes, approval: approval(), now,
   });
   const audit = toCapabilityAuditRecord(decision, {
     integrationId: "github.primary", actorRef: "principal:antonio",
-    occurredAt: "2026-11-25T01:00:00.000Z",
+    occurredAt: "2026-11-27T01:00:00.000Z",
   });
   assert.equal(audit.allowed, true);
   assert.equal(audit.approvalRef, "approval:wave11:01");

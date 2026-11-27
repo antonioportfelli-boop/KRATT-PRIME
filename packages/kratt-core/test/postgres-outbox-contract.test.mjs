@@ -16,7 +16,7 @@ test("outbox supports lease recovery, bounded retries and dead letters",()=>{
  assert.match(migration,/'PENDING','LEASED','DONE','DEAD'/);
  assert.match(migration,/lease_until TIMESTAMPTZ/);
  assert.match(store,/FOR UPDATE SKIP LOCKED/);
- assert.ok(store.includes("lease_until<=$1"));
+ assert.ok(store.includes("lease_until<=NOW()"));
  assert.match(store,/maxAttempts/);
 });
 test("nonce, cancellation, intent, outbox and audit reservation share one transaction",()=>{
@@ -28,4 +28,24 @@ test("worker requires an explicit adapter and forwards the stable idempotency ke
  assert.match(worker,/Object\.hasOwn\(adapters,item\.provider\)/);
  assert.match(worker,/idempotencyKey:item\.idempotency_key/);
  assert.match(worker,/PROVIDER_ADAPTER_UNAVAILABLE/);
+});
+
+
+test("finish and retry reject expired PostgreSQL leases using database time", () => {
+  const finishStart = store.indexOf("async function finishOutbox");
+  const retryStart = store.indexOf("async function retryOutbox", finishStart);
+  const cancelStart = store.indexOf("async function cancelTask", retryStart);
+  const finish = store.slice(finishStart, retryStart);
+  const retry = store.slice(retryStart, cancelStart);
+  assert.match(finish, /lease_until>clock_timestamp\(\)/);
+  assert.match(retry, /lease_until>clock_timestamp\(\)/);
+});
+
+test("outbox persists correlation identity from authorized intent through worker claim and audit", () => {
+ assert.match(migration,/kratt_dispatch_intents\([^;]*correlation_id TEXT NOT NULL/);
+ assert.match(migration,/kratt_dispatch_outbox\([^;]*correlation_id TEXT NOT NULL/);
+ assert.match(store,/correlation_id:resolvedCorrelationId/);
+ assert.match(store,/correlation_id:item\.correlation_id/);
+ assert.match(store,/o\.correlation_id/);
+ assert.match(worker,/item\?\.correlation_id/);
 });
