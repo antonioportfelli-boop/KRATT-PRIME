@@ -94,3 +94,21 @@ No numeric latency target should be declared until the hardware, provider mix, d
 ## 5. Explicit limitations
 
 The current codebase is not NIST-certified, FIPS-validated, CISA-certified, accredited for classified information, or approved for national critical infrastructure. NIST and CISA frameworks are reference models; the applicable jurisdiction, system categorisation, legal basis, threat model, procurement rules, cryptographic requirements and independent assessment determine the actual authorization path.
+
+## 6. Primary source register
+
+The following are the authoritative publication pages used for this alignment. Version and publication status must be re-checked when a control baseline is approved.
+
+- NIST Cybersecurity Framework 2.0: https://doi.org/10.6028/NIST.CSWP.29
+- NIST SP 800-207, Zero Trust Architecture: https://doi.org/10.6028/NIST.SP.800-207
+- NIST SP 800-207A, Zero Trust Architecture Model for Access Control in Cloud-Native Applications in Multi-Cloud Environments: https://doi.org/10.6028/NIST.SP.800-207A
+- CISA Zero Trust Maturity Model v2.0: https://www.cisa.gov/sites/default/files/2023-04/zero_trust_maturity_model_v2_508.pdf
+- NIST SP 800-53 Rev. 5: https://csrc.nist.gov/pubs/sp/800/53/r5/final
+- NIST SP 800-218 / SSDF 1.1: https://csrc.nist.gov/pubs/sp/800/218/final
+- NIST SP 800-218 Rev. 1 / SSDF 1.2 Initial Public Draft: https://csrc.nist.gov/pubs/sp/800/218/r1/ipd
+- SLSA Provenance v1.0: https://slsa.dev/spec/v1.0/provenance
+- GitHub artifact attestations: https://docs.github.com/en/actions/concepts/security/artifact-attestations
+- OWASP API Security Project / API Security Top 10: https://owasp.org/projects/api-security-project
+- OpenTelemetry messaging metrics semantic conventions: https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/
+
+OpenTelemetry messaging conventions and NIST SSDF 1.2 were treated as draft/development material in the reviewed snapshot. Do not use their identifiers as proof of a final standard or certification.
