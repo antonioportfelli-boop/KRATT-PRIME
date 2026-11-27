@@ -92,6 +92,7 @@ test("both providers can stream through one SSE channel with provider attributio
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body({
       provider: "both",
+      model: undefined,
       models: { openai: "gpt-example", xai: "grok-example" },
     })),
   }));
@@ -112,6 +113,7 @@ test("missing credentials or model adapters block dual-provider invocation befor
     method: "POST",
     body: JSON.stringify(body({
       provider: "both",
+      model: undefined,
       models: { openai: "gpt-example", xai: "grok-example" },
     })),
   }));
