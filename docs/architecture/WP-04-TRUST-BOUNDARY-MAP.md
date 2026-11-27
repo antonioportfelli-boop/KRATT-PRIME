@@ -4,39 +4,52 @@ Date: 2026-11-27
 
 ## Control plane
 
-- Validate the closed versioned adapter declaration.
-- Bind exact pinned source and independently verified artifact provenance.
-- Own registration identity and lifecycle.
-- Load current principal, agent and integration grants from trusted server authorities.
-- Intersect scopes and bind them to an exact operation and request digest.
-- Verify signed approval and consume its nonce/revocation state.
-- Append decision evidence before issuing a bounded authorization grant.
+- WP-04.1: closed declarative adapter contract and exact-version compatibility.
+- WP-04.2: host-owned registration, immutable source/artifact digest and provenance.
+- WP-04.3: trusted principal/agent/integration grants, versioned capability intersection, request-digest-bound approval, nonce consumption and decision audit.
+- WP-04.4: current registration check, short-lived grant check, supervisor attestation, execution fence and durable execution start/outcome evidence.
 
 ## Data plane
 
-- Consume only a branded, short-lived grant.
-- Re-read registration and verify its revision/digests immediately before worker start.
-- Apply current revocation and cancellation fences.
-- Pass a minimal immutable invocation context to an OS-isolated worker supervisor.
-- Never create or widen authority.
-- Reconcile unknown provider outcomes; never blind-retry an ambiguous effect.
+Only a WP-04.3 branded grant may pass the WP-04.4 invocation boundary. The runner:
+1. Re-reads adapter registration and compares the exact revision/digests.
+2. Requires VERIFIED_READ_ONLY and a READ operation.
+3. Requires PROCESS_ISOLATED mode.
+4. Requires a trusted attestation of the OS process/container restrictions.
+5. Revalidates current policy/cancellation before launch.
+6. Persists start evidence.
+7. Passes only pinned source coordinates, request digest, scopes and bounded execution limits.
+8. Validates the worker's bounded result and persists its terminal state.
+
+## Isolation profile
+
+The host supervisor must enforce:
+- separate unprivileged OS identity / container boundary;
+- provider-specific allowlisted egress only;
+- read-only artifact mount and ephemeral bounded temp storage;
+- no raw secrets in worker context;
+- memory and wall-clock limits;
+- process kill/termination and cleanup;
+- artifact digest verification before code load.
+
+Node Worker Threads and JavaScript object freezing are not considered OS security boundaries.
 
 ## Reuse map
 
-| Responsibility | Existing owner | New WP-04 layer |
+| Layer | Existing owner | WP-04 additions |
 |---|---|---|
 | Contract | adapter-contract.mjs | WP-04.1 |
-| Registration/provenance | adapter-registration.mjs + integration-registry.mjs | WP-04.2 |
-| Capability policy | integration-capability-registry.mjs | Reused by WP-04.3 |
-| Request-bound approval | approval-evidence.mjs | Extended with signed requestDigest |
-| Durable replay | approval ledger interface | Host-injected; durable implementation remains external |
-| Execution | authorized-dispatch.mjs + outbox worker | WP-04.4 consumes a WP-04.3 branded grant; no second auth engine |
-| Isolation | OS process/container supervisor | Host-supplied platform boundary; not simulated by JS object freezing |
+| Registration | adapter-registration.mjs + integration-registry.mjs | WP-04.2 |
+| Authorization | integration-capability-registry.mjs + approval-evidence.mjs | WP-04.3 |
+| Dispatch | authorized-dispatch.mjs and WP-03 outbox | Remains the only effect/dispatch layer |
+| Process execution | Host process/container supervisor | WP-04.4 invocation contract only |
+| Audit/recovery | host durable stores and WP-03 reconciliation contracts | WP-04.2–04.4 storage interfaces |
 
-## Current gaps
+## Not yet established
 
-- No canonical tenant ID and tenant-scoped persistence contract.
-- Registration store, decision audit store and replay ledger require production transactional implementations.
-- Verifier key lifecycle, revocation source and trusted context loader need controlled deployment configuration.
-- WP-04.4 must enforce process/container isolation. Node Worker threads are not treated as a security boundary.
-- No live provider operation or STEEL receiver has been exercised.
+- A real supervisor implementation or OS policy profile.
+- Transactional production registration, approval replay, execution and audit stores.
+- Trusted verifier key lifecycle and live context loading.
+- Credential broker; no raw credentials are passed.
+- Tenant ID as a mandatory partition key.
+- Live provider or current STEEL protocol conformance.

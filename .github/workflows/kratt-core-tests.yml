@@ -6,6 +6,7 @@ on:
       - integration/source-reconciliation-2026-10
       - feature/wp-04-2-host-registration-provenance-2026-11-27
       - feature/wp-04-3-capability-authorization-binding-2026-11-27
+      - feature/wp-04-4-process-isolated-adapter-context-2026-11-27
   pull_request:
     branches:
       - main
