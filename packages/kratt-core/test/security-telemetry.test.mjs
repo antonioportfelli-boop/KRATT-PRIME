@@ -6,12 +6,8 @@ test("records structured security events without raw payloads", () => {
   const events = [];
   const telemetry = createSecurityTelemetry({ sink: event => events.push(event), now: () => "2026-11-27T12:00:00.000Z" });
   assert.equal(telemetry.recordSecurityEvent({
-    name: "authorization.denied",
-    correlationId: "corr-1",
-    component: "policy-engine",
-    outcome: "denied",
-    reason: "TARGET_OUT_OF_SCOPE",
-    durationMs: 2.4,
+    name: "authorization.denied", correlationId: "corr-1", component: "policy-engine",
+    outcome: "denied", reason: "TARGET_OUT_OF_SCOPE", durationMs: 2.4,
   }), true);
   assert.equal(events.length, 1);
   assert.equal(events[0].reason, "TARGET_OUT_OF_SCOPE");
