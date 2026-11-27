@@ -81,6 +81,7 @@ function normalizeClaim(item) {
   return Object.freeze({
     outboxId,
     idempotencyKey,
+    idempotency_key: idempotencyKey,
     provider,
     payload,
     leaseToken,
@@ -159,7 +160,7 @@ export function createOutboxWorker({
     try {
       providerResult = await dispatch(Object.freeze({
         payload: item.payload,
-        idempotencyKey: item.idempotencyKey,
+        idempotencyKey:item.idempotency_key,
       }));
     } catch {
       return retry(item, "PROVIDER_DISPATCH_FAILED");
