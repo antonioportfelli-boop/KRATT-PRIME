@@ -28,3 +28,13 @@ jobs:
           node --check packages/kratt-core/src/security-telemetry.mjs
       - name: Benchmark smoke test
         run: KRATT_BENCH_ITERATIONS=1000 npm run bench:kratt
+      - name: Capture npm dependency audit report
+        run: npm audit --json > npm-audit.json || echo "npm audit reported advisories; preserve JSON for review"
+      - name: Upload npm dependency audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ github.sha }}
+          path: npm-audit.json
+          if-no-files-found: warn
+          retention-days: 14
