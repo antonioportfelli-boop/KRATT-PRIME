@@ -146,6 +146,28 @@ mod tests {
     }
 
     #[test]
+    fn packet_event_field_offsets_match_the_xdp_c_abi() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(PacketEvent, ts_ns), 0);
+        assert_eq!(offset_of!(PacketEvent, proto), 8);
+        assert_eq!(offset_of!(PacketEvent, ip_version), 9);
+        assert_eq!(offset_of!(PacketEvent, pad), 10);
+        assert_eq!(offset_of!(PacketEvent, saddr), 12);
+        assert_eq!(offset_of!(PacketEvent, daddr), 28);
+        assert_eq!(offset_of!(PacketEvent, sport), 44);
+        assert_eq!(offset_of!(PacketEvent, dport), 46);
+        assert_eq!(offset_of!(PacketEvent, pkt_len), 48);
+    }
+
+    #[test]
+    fn packet_processing_rejects_unknown_ip_versions() {
+        let mut engine = KineticResonanceEngine::new(128, DynamicConfig::default()).unwrap();
+        let event = PacketEvent { ip_version: 0, ..Default::default() };
+        assert_eq!(process_packet_event(&event, &mut engine), Err("unsupported IP version"));
+    }
+
+    #[test]
     fn decodes_ipv4_and_ipv6_addresses() {
         let mut event = PacketEvent { ip_version: 4, ..Default::default() };
         event.saddr[..4].copy_from_slice(&[192, 0, 2, 1]);
