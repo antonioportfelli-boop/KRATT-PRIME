@@ -85,7 +85,7 @@ export function createOutboxWorker({
       try {
         const result = await adapter.dispatch({
           payload: item.payload,
-          idempotencyKey: item.idempotency_key
+          idempotencyKey:item.idempotency_key
         });
         const duration = performance.now() - started;
         const valid = result && typeof result === "object" &&
