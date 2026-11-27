@@ -68,7 +68,7 @@ export function createOutboxWorker({
     const results = [];
 
     for (const item of claimed) {
-      const adapter = Object.hasOwn(adapters, item.provider) ? adapters[item.provider] : null;
+      const adapter = Object.hasOwn(adapters,item.provider) ? adapters[item.provider] : null;
       if (!adapter || typeof adapter.dispatch !== "function") {
         const retry = await store.retryOutbox({
           outboxId: item.outbox_id,
