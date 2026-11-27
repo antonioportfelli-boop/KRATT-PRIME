@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { types as utilTypes } from "node:util";
 import {
   verifyApprovalForRequest,
 } from "./approval-evidence.mjs";
@@ -21,9 +22,14 @@ const SCOPE_KEYS = ["read", "write"];
 const VERIFIED_GRANTS = new WeakSet();
 
 function isPlain(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      utilTypes.isProxy(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
 }
 
 function exactDataKeys(value, keys) {
@@ -46,7 +52,7 @@ function safeRef(value) {
 }
 
 function safeScopeList(value) {
-  return Array.isArray(value) &&
+  return Array.isArray(value) && !utilTypes.isProxy(value) &&
     value.length <= 128 &&
     value.every((entry) => typeof entry === "string" &&
       entry.length > 0 && entry.length <= 160 && /^[a-zA-Z0-9][a-zA-Z0-9._:@/-]*$/.test(entry)) &&
