@@ -150,6 +150,8 @@ export function createOutboxWorker({
     const item = normalizeClaim(rawItem);
     if (!item) return { outbox_id: null, status: "CLAIM_INVALID" };
 
+    if (!Object.hasOwn(adapters,item.provider)) return retry(item, "PROVIDER_ADAPTER_UNAVAILABLE");
+
     const dispatch = registry.get(item.provider);
     if (!dispatch) return retry(item, "PROVIDER_ADAPTER_UNAVAILABLE");
 
