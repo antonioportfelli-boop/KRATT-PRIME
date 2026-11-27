@@ -15,11 +15,12 @@ function item(id, provider = "provider-a") {
 
 function fakeStore(items) {
   const calls = { claims: [], finishes: [], retries: [] };
+  const pending = [...items];
   return {
     calls,
     async claimOutbox(input) {
       calls.claims.push(input);
-      return items;
+      return pending.splice(0, input.limit);
     },
     async finishOutbox(input) {
       calls.finishes.push(input);
@@ -68,9 +69,11 @@ test("runs provider calls with a bounded concurrency ceiling and stable result o
   assert.equal(result.metrics.recorded, 4);
   assert.equal(store.calls.finishes.length, 4);
   assert.equal(store.calls.retries.length, 0);
-  assert.deepEqual(store.calls.claims, [{
-    workerId: "worker.test", limit: 4, leaseSeconds: 45,
-  }]);
+  assert.deepEqual(store.calls.claims, [
+    { workerId: "worker.test", limit: 2, leaseSeconds: 45 },
+    { workerId: "worker.test", limit: 2, leaseSeconds: 45 },
+  ]);
+  assert.ok(store.calls.claims.every((claim) => claim.limit <= result.metrics.concurrency));
 });
 
 test("isolates provider failures and schedules a bounded retry", async () => {
