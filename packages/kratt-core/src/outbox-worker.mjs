@@ -204,33 +204,56 @@ export function createOutboxWorker({
     }
 
     const startedAt = performance.now();
-    const claimed = await store.claimOutbox({ workerId, limit, leaseSeconds });
-    if (!Array.isArray(claimed)) throw new TypeError("OUTBOX_CLAIM_RESULT_INVALID");
-
-    const results = new Array(claimed.length);
-    let cursor = 0;
-    let inFlight = 0;
+    const results = [];
     let maxInFlight = 0;
+    let totalClaimed = 0;
 
-    async function consume() {
-      while (true) {
-        const index = cursor;
-        cursor += 1;
-        if (index >= claimed.length) return;
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        try {
-          results[index] = await processItem(claimed[index]);
-        } catch {
-          results[index] = { outbox_id: null, status: "WORKER_ITEM_FAILED" };
-        } finally {
-          inFlight -= 1;
+    // Never reserve more leases than can begin immediately. Claiming a large
+    // batch and then queueing it behind a smaller worker pool can let later
+    // leases expire before their provider operation even starts.
+    while (totalClaimed < limit) {
+      const windowLimit = Math.min(concurrency, limit - totalClaimed);
+      const claimed = await store.claimOutbox({
+        workerId,
+        limit: windowLimit,
+        leaseSeconds,
+      });
+      if (!Array.isArray(claimed)) throw new TypeError("OUTBOX_CLAIM_RESULT_INVALID");
+      if (claimed.length > windowLimit) {
+        throw new TypeError("OUTBOX_CLAIM_LIMIT_EXCEEDED");
+      }
+      if (claimed.length === 0) break;
+
+      const windowResults = new Array(claimed.length);
+      let cursor = 0;
+      let inFlight = 0;
+
+      async function consume() {
+        while (true) {
+          const index = cursor;
+          cursor += 1;
+          if (index >= claimed.length) return;
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          try {
+            windowResults[index] = await processItem(claimed[index]);
+          } catch {
+            windowResults[index] = { outbox_id: null, status: "WORKER_ITEM_FAILED" };
+          } finally {
+            inFlight -= 1;
+          }
         }
       }
-    }
 
-    const poolSize = Math.min(concurrency, claimed.length);
-    await Promise.all(Array.from({ length: poolSize }, () => consume()));
+      const poolSize = Math.min(concurrency, claimed.length);
+      await Promise.all(Array.from({ length: poolSize }, () => consume()));
+      results.push(...windowResults);
+      totalClaimed += claimed.length;
+
+      // A short claim means the queue was drained at this instant. Do not spin
+      // on an empty/partial database window.
+      if (claimed.length < windowLimit) break;
+    }
 
     const durationMs = Math.max(0, performance.now() - startedAt);
     const recorded = results.filter((item) =>
@@ -245,7 +268,7 @@ export function createOutboxWorker({
       : 0;
 
     return Object.freeze({
-      claimed: claimed.length,
+      claimed: totalClaimed,
       results: Object.freeze(results),
       metrics: Object.freeze({
         concurrency,
