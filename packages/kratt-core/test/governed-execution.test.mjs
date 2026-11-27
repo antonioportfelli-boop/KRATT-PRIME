@@ -454,7 +454,7 @@ test("governed execution emits authorization denial and evidence provenance fail
     assert.equal(rejectedEvidence.reason, "POLICY_EVIDENCE_PROVENANCE_REJECTED");
     assert.equal(events.some(event => event.name === "evidence.verification_failed" &&
       event.correlationId === fixture.task.task_id), true);
-  });
+  }, { telemetry });
 });
 
 test("telemetry sink failure cannot change governed execution authorization", async () => {
