@@ -407,7 +407,7 @@ async function executeScenario(evidenceCount, concurrency) {
     const result = {
       benchmark: "kratt.end_to_end.authorized_dispatch",
       profile: "local_sqlite_wal_full__ed25519_policy_and_evidence__mock_provider",
-      commit_sha: process.env.GITHUB_SHA ?? process.env.KRATT_COMMIT_SHA ?? null,
+      commit_sha: process.env.KRATT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? null,
       node_version: process.version,
       platform: process.platform,
       architecture: process.arch,

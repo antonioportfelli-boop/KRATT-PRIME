@@ -39,11 +39,12 @@ jobs:
           KRATT_BENCH_EVIDENCE_COUNTS: "1,8,32,128"
           KRATT_BENCH_CONCURRENCY: "1,4,16,64"
           KRATT_BENCH_ROUNDS: "3"
+          KRATT_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Upload benchmark JSON results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kratt-wave4-1-benchmark-${{ github.sha }}
+          name: kratt-wave4-1-benchmark-${{ github.event.pull_request.head.sha || github.sha }}
           path: benchmarks/results/*.json
           if-no-files-found: warn
           retention-days: 14
