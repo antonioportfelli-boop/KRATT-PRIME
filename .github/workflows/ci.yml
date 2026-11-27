@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, feature/phase10-runtime-observatory-v1, feature/phase11-wave10-reconciled-2026-11-23, feature/chiro-x-pattern-intelligence-v1]
 
+permissions:
+  contents: read
+
 jobs:
   vite:
     name: typecheck + build
@@ -20,11 +23,17 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+      - name: Verify checkout root and npm lockfile
+        working-directory: ${{ github.workspace }}
+        run: |
+          test -s package.json
+          test -s package-lock.json
+          node -e 'const lock = require("./package-lock.json"); if (!Number.isInteger(lock.lockfileVersion) || lock.lockfileVersion < 1 || !lock.packages || !lock.packages[""]) process.exit(1)'
       - name: Install
-        run: npm ci
+        run: npm ci --prefix "${{ github.workspace }}"
       - name: Contract tests
-        run: npm test
+        run: npm --prefix "${{ github.workspace }}" test
       - name: Typecheck
-        run: npm run typecheck
+        run: npm --prefix "${{ github.workspace }}" run typecheck
       - name: Build
-        run: npm run build
+        run: npm --prefix "${{ github.workspace }}" run build
