@@ -9,7 +9,7 @@ The gateway exposes two same-origin POST endpoints:
 - /api/agents/respond returns one provider response or a bounded parallel response from both providers.
 - /api/agents/stream returns Server-Sent Events. The request may select openai, xai, or both; each event carries its provider identifier and text deltas.
 
-The adapters use the OpenAI-compatible Responses API endpoint for each provider. They never accept an arbitrary base URL, never forward provider API keys to the browser, and only invoke explicitly allowlisted model IDs. Tool calling is intentionally disabled in this first bridge. Model output is data, not authority; any future tool request must be translated into a KRATT task and sent through the existing policy, approval, idempotency and audit path.
+The adapters use the OpenAI-compatible Responses API endpoint for each provider. They never accept an arbitrary base URL, never forward provider API keys to the browser, and only invoke explicitly allowlisted model IDs. Reasoning effort is explicit per provider (medium by default) and can be tuned through server-only settings. Tool calling is intentionally disabled in this first bridge. Model output is data, not authority; any future tool request must be translated into a KRATT task and sent through the existing policy, approval, idempotency and audit path.
 
 ## Required host controls
 
@@ -30,6 +30,8 @@ Configure these variables in the Netlify server/function runtime, not in client 
 - XAI_API_KEY
 - OPENAI_MODELS (comma-separated exact model IDs allowed for this application)
 - XAI_MODELS (comma-separated exact model IDs allowed for this application)
+- OPENAI_REASONING_EFFORT (optional; defaults to medium)
+- XAI_REASONING_EFFORT (optional; defaults to medium)
 
 Do not use VITE_OPENAI_API_KEY, VITE_XAI_API_KEY, NEXT_PUBLIC_*, or any browser-exposed setting. Do not paste credentials into source, commits, logs, prompts, or issue descriptions. Rotate any credential that has already been committed or exposed.
 

@@ -94,6 +94,7 @@ function validateBody(body, maxOutputTokens) {
   const models = {};
   const instructions = {};
   if (body.provider === "both") {
+    if (body.model !== undefined) throw new GatewayError(400, "DUAL_MODEL_SELECTION_INVALID");
     if (!isRecord(body.models) || Object.keys(body.models).length !== 2 ||
         PROVIDERS.some((provider) => typeof body.models[provider] !== "string" || !SAFE_ID.test(body.models[provider]))) {
       throw new GatewayError(400, "DUAL_MODEL_SELECTION_INVALID");
@@ -101,6 +102,7 @@ function validateBody(body, maxOutputTokens) {
     if (body.previousResponseId !== undefined) throw new GatewayError(400, "DUAL_PREVIOUS_RESPONSE_NOT_SUPPORTED");
     for (const provider of PROVIDERS) models[provider] = body.models[provider];
   } else {
+    if (body.models !== undefined) throw new GatewayError(400, "MODEL_SELECTION_INVALID");
     if (typeof body.model !== "string" || !SAFE_ID.test(body.model)) {
       throw new GatewayError(400, "MODEL_SELECTION_INVALID");
     }
@@ -108,7 +110,7 @@ function validateBody(body, maxOutputTokens) {
   }
   if (body.instructionsByProvider !== undefined) {
     if (!isRecord(body.instructionsByProvider) ||
-        Object.keys(body.instructionsByProvider).some((key) => !PROVIDERS.includes(key)) ||
+        Object.keys(body.instructionsByProvider).some((key) => !providerIds.includes(key)) ||
         Object.values(body.instructionsByProvider).some((value) =>
           typeof value !== "string" || value.length > 20_000)) {
       throw new GatewayError(400, "PROVIDER_INSTRUCTIONS_INVALID");
@@ -142,7 +144,7 @@ function safeProviderError(error) {
   return allowed.has(error?.message) ? error.message : "PROVIDER_EXECUTION_FAILED";
 }
 
-function sseResponse(stream, abortController, onCancel) {
+function sseResponse(stream) {
   return new Response(stream, {
     status: 200,
     headers: {
@@ -390,7 +392,7 @@ export function createModelGateway({
         request.signal.removeEventListener("abort", abortRequest);
       },
     });
-    return sseResponse(output, abortController);
+    return sseResponse(output);
   }
 
   async function handle(request) {

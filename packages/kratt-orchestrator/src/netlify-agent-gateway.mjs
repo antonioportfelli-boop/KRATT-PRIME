@@ -29,6 +29,7 @@ export function createNetlifyAgentGateway({
     providers.openai = createOpenAIResponsesAdapter({
       apiKey: env.OPENAI_API_KEY,
       allowedModels: parseModelAllowlist(env.OPENAI_MODELS, "OPENAI_MODELS"),
+      reasoningEffort: env.OPENAI_REASONING_EFFORT ?? "medium",
       fetchImpl,
     });
   }
@@ -36,6 +37,7 @@ export function createNetlifyAgentGateway({
     providers.xai = createXAIResponsesAdapter({
       apiKey: env.XAI_API_KEY,
       allowedModels: parseModelAllowlist(env.XAI_MODELS, "XAI_MODELS"),
+      reasoningEffort: env.XAI_REASONING_EFFORT ?? "medium",
       fetchImpl,
     });
   }

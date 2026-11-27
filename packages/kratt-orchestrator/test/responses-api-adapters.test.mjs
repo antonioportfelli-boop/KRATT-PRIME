@@ -31,6 +31,7 @@ test("OpenAI adapter uses the Responses API and keeps the credential server-side
   assert.equal(captured.options.headers.Authorization, "Bearer openai-test-secret");
   assert.equal(captured.body.stream, false);
   assert.equal(captured.body.max_output_tokens, 128);
+  assert.equal(captured.body.reasoning.effort, "medium");
   assert.equal(result.outputText, "OpenAI answer");
   assert.deepEqual(result.usage, { input_tokens: 5, output_tokens: 3, total_tokens: 8 });
   assert.equal(JSON.stringify(result).includes("openai-test-secret"), false);

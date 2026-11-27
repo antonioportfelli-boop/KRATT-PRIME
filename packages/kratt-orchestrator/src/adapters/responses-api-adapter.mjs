@@ -141,6 +141,7 @@ export function createResponsesApiAdapter({
   timeoutMs = 900_000,
   maxOutputTokens = 4096,
   defaultMaxOutputTokens = 1024,
+  reasoningEffort = "medium",
 } = {}) {
   const apiRoot = API_ROOTS[providerId];
   if (!apiRoot) throw new TypeError("MODEL_PROVIDER_UNSUPPORTED");
@@ -160,10 +161,14 @@ export function createResponsesApiAdapter({
     throw new TypeError("MODEL_OUTPUT_BUDGET_INVALID");
   }
 
+  if (typeof reasoningEffort !== "string" || !/^[a-z]{2,16}$/.test(reasoningEffort)) {
+    throw new TypeError("MODEL_REASONING_EFFORT_INVALID");
+  }
   const limits = {
     allowedModels: new Set(allowedModels),
     maxOutputTokens,
     defaultMaxOutputTokens,
+    reasoningEffort,
   };
 
   async function send(path, options) {
@@ -197,6 +202,7 @@ export function createResponsesApiAdapter({
       model: request.model,
       input: request.input,
       max_output_tokens: request.maxOutputTokens,
+      reasoning: { effort: limits.reasoningEffort },
       stream: false,
     };
     if (request.instructions !== undefined) payload.instructions = request.instructions;
@@ -221,6 +227,7 @@ export function createResponsesApiAdapter({
       model: request.model,
       input: request.input,
       max_output_tokens: request.maxOutputTokens,
+      reasoning: { effort: limits.reasoningEffort },
       stream: true,
     };
     if (request.instructions !== undefined) payload.instructions = request.instructions;
