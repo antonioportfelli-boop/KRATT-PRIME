@@ -30,7 +30,7 @@ const allowed = {
   evaluated_at: at,
 };
 
-function setup({ decision = allowed, commit = true, appendDecision = true, appendOutcome = true, dispatch } = {}) {
+function setup({ decision = allowed, commit = true, appendDecision = true, appendOutcome = true, dispatch, telemetry } = {}) {
   const events = [];
   const claimed = new Set();
   const calls = [];
@@ -54,7 +54,7 @@ function setup({ decision = allowed, commit = true, appendDecision = true, appen
   };
   const adapter = {
     async dispatch(input) {
-      calls.push(["dispatch", input.idempotencyKey]);
+      calls.push(["dispatch", input.idempotencyKey, input.correlationId]);
       return dispatch ? dispatch(input) : { status: "completed", provider_reference: "mock-123" };
     },
   };
@@ -66,6 +66,7 @@ function setup({ decision = allowed, commit = true, appendDecision = true, appen
     commandStore,
     providerAdapters: { github: adapter },
     now: () => Date.parse(at),
+    telemetry,
   });
   return { runtime, events, calls, claimed };
 }
@@ -119,7 +120,9 @@ test("does not dispatch when durable intent commit fails", async () => {
   const result = await runtime.execute({ principal: "session", task: task() });
   assert.equal(result.reason, "INTENT_NOT_COMMITTED_OR_DUPLICATE");
   assert.deepEqual(calls.map(x => x[0]), ["commit"]);
-  assert.deepEqual(events, []);
+  assert.equal(events.length, 1);
+  assert.equal(events[0][0], "decision");
+  assert.equal(events[0][1].event_type, "authorization.blocked");
 });
 
 test("prevents duplicate intent dispatch through the durable idempotency claim", async () => {
@@ -145,7 +148,7 @@ test("does not dispatch if trusted context or evidence cannot be loaded", async 
   const result = await runtime.execute({ principal: "session", task: task() });
   assert.equal(result.reason, "TRUSTED_INPUT_UNAVAILABLE");
   assert.deepEqual(calls, []);
-  assert.equal(events[0].event_type, "authorization.denied");
+  assert.equal(events[0].event_type, "authorization.blocked");
 });
 
 test("fails closed when the provider adapter is missing", async () => {
@@ -161,7 +164,7 @@ test("fails closed when the provider adapter is missing", async () => {
   });
   const result = await runtime.execute({ principal: "session", task: task() });
   assert.equal(result.reason, "PROVIDER_ADAPTER_UNAVAILABLE");
-  assert.equal(events[0].event_type, "authorization.denied");
+  assert.equal(events[0].event_type, "authorization.blocked");
 });
 
 test("reports provider failure and records its outcome", async () => {
@@ -328,4 +331,70 @@ test("trusted context fails closed when kill-switch state is omitted", () => {
   const checked = validateTrustedContext(context);
   assert.equal(checked.ok, false);
   assert.ok(checked.errors.includes("TRUSTED_CONTEXT_SHAPE_INVALID"));
+});
+
+
+test("propagates a single correlation id through audit, loaders, and provider while isolating telemetry", async () => {
+  const emitted = [];
+  let loaderCorrelation;
+  const telemetry = {
+    recordSecurityEvent(event) {
+      emitted.push(event);
+      throw new Error("telemetry failure must not change execution");
+    },
+  };
+  const { runtime, events, calls } = setup({ telemetry });
+  const result = await runtime.execute({
+    principal: "session",
+    task: task(),
+    correlationId: "wave41-correlation-01",
+  });
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.correlation_id, "wave41-correlation-01");
+  assert.deepEqual(emitted.map(event => event.name), [
+    "authorization.allowed",
+    "dispatch.intent_committed",
+    "dispatch.completed",
+  ]);
+  assert.ok(emitted.every(event => event.correlationId === "wave41-correlation-01"));
+  assert.ok(events.every(([, record]) => record.correlation_id === "wave41-correlation-01"));
+  assert.equal(calls.find(call => call[0] === "dispatch")[2], "wave41-correlation-01");
+});
+
+test("fails closed and audits malformed correlation identifiers without dispatch", async () => {
+  const { runtime, events, calls } = setup();
+  const result = await runtime.execute({
+    principal: "session",
+    task: task(),
+    correlationId: "not a valid correlation id",
+  });
+  assert.equal(result.status, "DENIED");
+  assert.equal(result.reason, "INVALID_CORRELATION_ID");
+  assert.equal(calls.some(call => call[0] === "dispatch"), false);
+  assert.equal(events[0][1].event_type, "authorization.denied");
+  assert.equal(events[0][1].correlation_id, result.correlation_id);
+});
+
+test("persists authentication failures as denied decisions", async () => {
+  const audit = [];
+  const runtime = createAuthorizedDispatchRuntime({
+    authorizationRuntime: { evaluate: () => allowed },
+    authenticatePrincipal: async () => { throw new Error("credential rejected"); },
+    loadTrustedContext: async () => ({}),
+    loadEvidence: async () => [],
+    commandStore: {
+      appendDecision: async record => { audit.push(record); return true; },
+      commitAuthorizedIntent: async () => true,
+      appendOutcome: async () => true,
+    },
+    providerAdapters: { github: { dispatch: async () => { throw new Error("must not run"); } } },
+    now: () => Date.parse(at),
+  });
+  const result = await runtime.execute({ principal: "invalid-session", task: task() });
+  assert.equal(result.status, "DENIED");
+  assert.equal(result.audit_recorded, true);
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].event_type, "authorization.denied");
+  assert.equal(audit[0].actor_id, "unknown");
+  assert.match(audit[0].correlation_id, /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/);
 });
