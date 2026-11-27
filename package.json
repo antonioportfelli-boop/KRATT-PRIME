@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "pack": "node scripts/pack-deploy.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "test": "node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs",
+    "test": "node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs packages/kratt-runtime/test/*.test.mjs",
     "start:wave8": "node packages/kratt-orchestrator/src/wave8-server.mjs",
     "wave8:check": "node scripts/wave8-check-connections.mjs",
     "wave8:migrate": "node scripts/wave8-apply-migration.mjs",
@@ -24,36 +24,7 @@
     "wave10:verify": "npm test && npm run typecheck && npm run build",
     "wave10:hardening:verify": "npm run wave10:verify && node --check packages/kratt-core/src/runtime-observatory.mjs && node --check packages/kratt-core/src/postgres-runtime-observatory-store.mjs && node --check packages/kratt-core/src/observed-operation.mjs && node --check packages/kratt-orchestrator/src/runtime-observatory-api.mjs && node --check packages/kratt-orchestrator/src/wave8-server.mjs",
     "phase11:migrate": "node scripts/wave8-apply-migration.mjs",
-    "phase11:verify": "npm test && npm run typecheck && npm run build && node --check packages/kratt-core/src/phase11-wave10-integration.mjs && node --check packages/kratt-core/src/phase11-migration-contract.mjs && node --check packages/kratt-orchestrator/src/phase11-runtime.mjs"
-  },
-  "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.1.0",
-    "typescript": "~5.9.2",
-    "vite": "^8.2.2"
-  }
-}
-{
-  "name": "trinitywayve-aura",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "engines": {
-    "node": ">=22 <23"
-  },
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -p tsconfig.app.json --noEmit && vite build",
-    "preview": "vite preview",
-    "pack": "node scripts/pack-deploy.mjs",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "test": "node --test packages/kratt-core/test/*.test.mjs packages/kratt-runtime/test/*.test.mjs",
+    "phase11:verify": "npm test && npm run typecheck && npm run build && node --check packages/kratt-core/src/phase11-wave10-integration.mjs && node --check packages/kratt-core/src/phase11-migration-contract.mjs && node --check packages/kratt-orchestrator/src/phase11-runtime.mjs",
     "lint": "node scripts/lint-runtime.mjs",
     "runtime": "node packages/kratt-runtime/src/cli.mjs",
     "runtime:check": "node --check packages/kratt-runtime/src/cli.mjs && node --check packages/kratt-runtime/src/server.mjs"
