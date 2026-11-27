@@ -50,14 +50,14 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date()}={}){
  }
  async function claimOutbox({workerId,limit=10,leaseSeconds=60}={}){
   if(!validId(workerId)||!Number.isInteger(limit)||limit<1||limit>100||!Number.isInteger(leaseSeconds)||leaseSeconds<5||leaseSeconds>900)throw new TypeError("OUTBOX_CLAIM_OPTIONS_INVALID");
-  const token=randomUUID(),at=clock().toISOString(),until=new Date(Date.parse(at)+leaseSeconds*1000).toISOString();
-  const r=await pool.query("WITH picked AS (SELECT outbox_id FROM kratt_dispatch_outbox WHERE ((status='PENDING' AND available_at<=$1) OR (status='LEASED' AND lease_until<=$1)) ORDER BY available_at,outbox_id FOR UPDATE SKIP LOCKED LIMIT $2) UPDATE kratt_dispatch_outbox o SET status='LEASED',lease_owner=$3,lease_token=$4,lease_until=$5,attempts=o.attempts+1,updated_at=$1 FROM picked WHERE o.outbox_id=picked.outbox_id RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token",
-   [at,limit,workerId,token,until]);return r.rows;
+  const token=randomUUID();
+  const r=await pool.query("WITH picked AS (SELECT outbox_id FROM kratt_dispatch_outbox WHERE ((status='PENDING' AND available_at<=NOW()) OR (status='LEASED' AND lease_until<=NOW())) ORDER BY available_at,outbox_id FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE kratt_dispatch_outbox o SET status='LEASED',lease_owner=$2,lease_token=$3,lease_until=NOW()+($4 * INTERVAL '1 second'),attempts=o.attempts+1,updated_at=NOW() FROM picked WHERE o.outbox_id=picked.outbox_id RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token",
+   [limit,workerId,token,leaseSeconds]);return r.rows;
  }
  async function finishOutbox({outboxId,leaseToken,outcome,actorId,taskId}={}){
   if(!validId(outboxId)||typeof leaseToken!=="string"||!validId(actorId)||!validId(taskId)||!["COMPLETED","FAILED"].includes(outcome?.status))return{ok:false,reason:"OUTBOX_FINISH_INPUT_INVALID"};
   const at=clock().toISOString();return tx(pool,async c=>{
-   const q=await c.query("SELECT idempotency_key,provider,attempts FROM kratt_dispatch_outbox WHERE outbox_id=$1 AND status='LEASED' AND lease_token=$2 FOR UPDATE",[outboxId,leaseToken]);
+   const q=await c.query("SELECT idempotency_key,provider,attempts FROM kratt_dispatch_outbox WHERE outbox_id=$1 AND status='LEASED' AND lease_token=$2 AND lease_until>clock_timestamp() FOR UPDATE",[outboxId,leaseToken]);
    if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};const item=q.rows[0];
    const event={schema_version:SCHEMA,event_id:"outcome:"+digest(item.idempotency_key),event_type:outcome.status==="COMPLETED"?"dispatch.completed":"dispatch.failed",
     created_at:at,actor_id:actorId,task_id:taskId,provider:item.provider,idempotency_key:item.idempotency_key,result:{status:outcome.status.toLowerCase()}};
@@ -72,7 +72,7 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date()}={}){
  async function retryOutbox({outboxId,leaseToken,errorCode,maxAttempts=8}={}){
   if(!validId(outboxId)||typeof leaseToken!=="string"||!/^[A-Z0-9_:-]{1,96}$/.test(errorCode??"")||!Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>32)return{ok:false,reason:"OUTBOX_RETRY_INPUT_INVALID"};
   const at=clock().toISOString();return tx(pool,async c=>{
-   const q=await c.query("SELECT attempts FROM kratt_dispatch_outbox WHERE outbox_id=$1 AND status='LEASED' AND lease_token=$2 FOR UPDATE",[outboxId,leaseToken]);
+   const q=await c.query("SELECT attempts FROM kratt_dispatch_outbox WHERE outbox_id=$1 AND status='LEASED' AND lease_token=$2 AND lease_until>clock_timestamp() FOR UPDATE",[outboxId,leaseToken]);
    if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};const attempts=Number(q.rows[0].attempts),terminal=attempts>=maxAttempts,delay=Math.min(3600,2**Math.min(attempts,10)),available=new Date(Date.parse(at)+delay*1000).toISOString();
    await c.query("UPDATE kratt_dispatch_outbox SET status=$1,available_at=$2,last_error_code=$3,lease_owner=NULL,lease_token=NULL,lease_until=NULL,updated_at=$4 WHERE outbox_id=$5",
     [terminal?"DEAD":"PENDING",available,errorCode,at,outboxId]);return{ok:true,terminal,attempts,retry_at:terminal?null:available};
