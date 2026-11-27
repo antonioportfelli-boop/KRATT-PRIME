@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - feature/wave4-performance-security-hardening-2026-11-27
+      - feature/agent-provider-bridge-openai-xai-2026-11-27
   pull_request:
-    branches: [main]
+    branches: [main, feature/wave4-performance-security-hardening-2026-11-27]
 
 permissions:
   contents: read
@@ -26,6 +27,9 @@ jobs:
         run: |
           node --check packages/kratt-core/src/canonical-request.mjs
           node --check packages/kratt-core/src/security-telemetry.mjs
+          node --check packages/kratt-orchestrator/src/adapters/responses-api-adapter.mjs
+          node --check packages/kratt-orchestrator/src/model-gateway.mjs
+          node --check packages/kratt-orchestrator/src/netlify-agent-gateway.mjs
       - name: Benchmark smoke test
         run: KRATT_BENCH_ITERATIONS=1000 npm run bench:kratt
       - name: Capture npm dependency audit report

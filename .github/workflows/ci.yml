@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/kratt-governed-execution-bridge-v1]
+    branches: [main, feature/kratt-governed-execution-bridge-v1, feature/agent-provider-bridge-openai-xai-2026-11-27]
   pull_request:
-    branches: [main]
+    branches: [main, feature/wave4-performance-security-hardening-2026-11-27]
 
 jobs:
   vite:
@@ -24,8 +24,13 @@ jobs:
         run: npm ci
       - name: KRATT core and orchestration contract tests
         run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
-      - name: Console and local API syntax
-        run: node --check products/kratt-prime-console/app.js && node --check packages/kratt-orchestrator/src/local-server.mjs
+      - name: Console, local API and provider gateway syntax
+        run: |
+          node --check products/kratt-prime-console/app.js
+          node --check packages/kratt-orchestrator/src/local-server.mjs
+          node --check packages/kratt-orchestrator/src/adapters/responses-api-adapter.mjs
+          node --check packages/kratt-orchestrator/src/model-gateway.mjs
+          node --check packages/kratt-orchestrator/src/netlify-agent-gateway.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Build
