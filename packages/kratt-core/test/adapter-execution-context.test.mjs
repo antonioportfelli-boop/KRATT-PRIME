@@ -331,3 +331,51 @@ test("rejects audit failures and malformed invocation inputs", async () => {
 test("constructor rejects missing trusted isolation and execution dependencies", () => {
   assert.throws(() => createAdapterExecutionRuntime({}), /ADAPTER_AUTHORIZATION_RUNTIME_REQUIRED/);
 });
+
+test("rejects Proxy-backed invocation requests and isolation receipts", async () => {
+  const requestProxy = new Proxy(request(), {
+    get(target, key, receiver) {
+      if (key === "requestDigest") return "f".repeat(64);
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const { runtime, calls } = setup();
+  const requestResult = await runtime.execute({
+    request: requestProxy,
+    approvalEnvelope: null,
+  });
+  assert.equal(requestResult.code, "EXECUTION_REQUEST_INVALID");
+  assert.equal(calls.authorize, 0);
+  assert.equal(calls.worker.length, 0);
+
+  const isolationReceipt = new Proxy({
+    verified: true,
+    evidenceRef: "evidence.isolation",
+    verifierRef: "verifier.platform",
+  }, {});
+  const { runtime: receiptRuntime, calls: receiptCalls } = setup({ isolationReceipt });
+  const receiptResult = await receiptRuntime.execute({
+    request: request(),
+    approvalEnvelope: null,
+  });
+  assert.equal(receiptResult.code, "PROCESS_ISOLATION_UNVERIFIED");
+  assert.equal(receiptCalls.worker.length, 0);
+});
+
+test("treats Proxy-backed worker outcomes as UNKNOWN, never as completed", async () => {
+  const workerResult = new Proxy({
+    status: "COMPLETED",
+    workerRef: "worker.github.01",
+    resultRef: "result.github.01",
+    resultDigest: "e".repeat(64),
+    finishedAt: "2026-11-27T03:00:01.000Z",
+    reasonCode: null,
+  }, {});
+  const { runtime, calls } = setup({ workerResult });
+  const result = await runtime.execute({
+    request: request(),
+    approvalEnvelope: null,
+  });
+  assert.equal(result.code, "EXECUTION_OUTCOME_UNKNOWN");
+  assert.equal(calls.finishes[0].result.status, "UNKNOWN");
+});

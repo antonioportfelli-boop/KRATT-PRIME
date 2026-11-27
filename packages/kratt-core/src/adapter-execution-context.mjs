@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { types as utilTypes } from "node:util";
 import { isAuthorizedAdapterInvocation } from "./adapter-authorization.mjs";
 import { resolveAdapterOperation } from "./adapter-contract.mjs";
 
@@ -23,7 +24,8 @@ const RESULT_STATES = new Set(["COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]);
 const REQUIRED_ISOLATION = "OS_PROCESS_CONTAINER";
 
 function isPlain(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      utilTypes.isProxy(value)) return false;
   try {
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;

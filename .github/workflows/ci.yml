@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/kratt-governed-execution-bridge-v1, feature/wp-04-2-host-registration-provenance-2026-11-27, feature/wp-04-3-capability-authorization-binding-2026-11-27, feature/wp-04-4-process-isolated-adapter-context-2026-11-27]
+    branches: [main, feature/kratt-governed-execution-bridge-v1, feature/wp-04-2-host-registration-provenance-2026-11-27, feature/wp-04-3-capability-authorization-binding-2026-11-27, feature/wp-04-4-process-isolated-adapter-context-2026-11-27, feature/wp-04-5-proxy-boundary-hardening-2026-11-27]
   pull_request:
-    branches: [main]
+    branches: [main, feature/wp-04-4-process-isolated-adapter-context-2026-11-27]
 
 jobs:
   vite:
