@@ -105,6 +105,7 @@ const supervisor = {
 
 function setup({
   record = registration(),
+  registrationSequence = null,
   supervisorDescriptor = supervisor,
   isolationReceipt = {
     verified: true, evidenceRef: "evidence.isolation", verifierRef: "verifier.platform",
@@ -119,9 +120,19 @@ function setup({
     finishedAt: "2026-11-27T03:00:01.000Z", reasonCode: null,
   },
 } = {}) {
-  const calls = { authorize: 0, worker: [], starts: [], finishes: [], fences: [] };
+  const calls = { authorize: 0, worker: [], starts: [], finishes: [], fences: [], registrationReads: 0 };
+  const registrations = Array.isArray(registrationSequence) && registrationSequence.length > 0
+    ? registrationSequence
+    : [record];
+  const registrationReader = {
+    async get() {
+      const index = Math.min(calls.registrationReads, registrations.length - 1);
+      calls.registrationReads += 1;
+      return { ok: true, record: registrations[index] };
+    },
+  };
   const authorizationRuntime = createAdapterAuthorizationRuntime({
-    registrationRuntime: { get: async () => ({ ok: true, record }) },
+    registrationRuntime: registrationReader,
     trustedContextLoader: { load: async () => trustedContext },
     approvalVerifier: { verify: async () => true },
     approvalLedger: new InMemoryApprovalLedger(),
@@ -135,7 +146,7 @@ function setup({
         return authorizationRuntime.authorize(input);
       },
     },
-    registrationRuntime: { get: async () => ({ ok: true, record }) },
+    registrationRuntime: registrationReader,
     workerSupervisor: {
       describeIsolation: async () => supervisorDescriptor,
       runInRestrictedProcess: async (input) => {
@@ -215,7 +226,12 @@ test("does not start a worker when authorization grant is unbranded or mismatche
 });
 
 test("blocks a registration revision or artifact digest changed after authorization", async () => {
-  const { runtime } = setup({ record: registration("PROCESS_ISOLATED", 3) });
+  const { runtime } = setup({
+    registrationSequence: [
+      registration("PROCESS_ISOLATED", 2),
+      registration("PROCESS_ISOLATED", 3),
+    ],
+  });
   const result = await runtime.execute({ request: request(), approvalEnvelope: null });
   assert.equal(result.code, "REGISTRATION_CHANGED_AFTER_AUTHORIZATION");
 });
