@@ -40,3 +40,12 @@ test("finish and retry reject expired PostgreSQL leases using database time", ()
   assert.match(finish, /lease_until>clock_timestamp\(\)/);
   assert.match(retry, /lease_until>clock_timestamp\(\)/);
 });
+
+test("outbox persists correlation identity from authorized intent through worker claim and audit", () => {
+ assert.match(migration,/kratt_dispatch_intents\([^;]*correlation_id TEXT NOT NULL/);
+ assert.match(migration,/kratt_dispatch_outbox\([^;]*correlation_id TEXT NOT NULL/);
+ assert.match(store,/correlation_id:resolvedCorrelationId/);
+ assert.match(store,/correlation_id:item\.correlation_id/);
+ assert.match(store,/o\.correlation_id/);
+ assert.match(worker,/item\?\.correlation_id/);
+});

@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 
 function taskCorrelationId(item) {
-  const value = item?.payload?.task?.task_id ?? item?.payload?.task_id;
+  const value = item?.correlation_id ?? item?.payload?.correlation_id ?? item?.payload?.task?.task_id ?? item?.payload?.task_id;
   return typeof value === "string" && ID.test(value) ? value : null;
 }
 

@@ -24,14 +24,15 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date()}={}){
   await c.query("INSERT INTO kratt_audit_events(sequence,event_id,event_type,created_at,record_json,previous_hash,hash) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)",[sequence,record.event_id,record.event_type,record.created_at,json,previous,hash]);
   await c.query("UPDATE kratt_audit_head SET sequence=$1,hash=$2 WHERE singleton=TRUE",[sequence,hash]);return{sequence,hash};
  }
- async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload}={}){
+ async function reserveAuthorizedIntent({task,principal,approval,idempotencyKey,providerPayload,correlationId}={}){
   const now=clock(),at=(now instanceof Date?now:new Date(now)).toISOString();
+  const resolvedCorrelationId=correlationId??task?.task_id;
   if(!task||!validId(task.task_id)||!principal||!validId(principal.id)||task.actor!==principal.id||
-   !validId(approval?.key_id)||!validId(approval?.nonce)||!validId(approval?.approval_id)||!validTime(approval?.expires_at)||
+   !validId(resolvedCorrelationId)||!validId(approval?.key_id)||!validId(approval?.nonce)||!validId(approval?.approval_id)||!validTime(approval?.expires_at)||
    Date.parse(approval.expires_at)<=Date.parse(at)||!validIdempotencyKey(idempotencyKey)||!HEX.test(approval?.request_digest??"")||!HEX.test(approval?.signature_digest??""))
    return{ok:false,reason:"RESERVATION_INPUT_INVALID"};
   const intentId="intent:"+digest(idempotencyKey),outboxId="outbox:"+digest(idempotencyKey);
-  const event={schema_version:SCHEMA,event_id:intentId,event_type:"dispatch.intent_committed",created_at:at,actor_id:principal.id,task_id:task.task_id,
+  const event={schema_version:SCHEMA,event_id:intentId,event_type:"dispatch.intent_committed",created_at:at,correlation_id:resolvedCorrelationId,actor_id:principal.id,task_id:task.task_id,
    provider:task.constraints?.provider??"unknown",operation:task.action,idempotency_key:idempotencyKey,approval_key_id:approval.key_id,approval_id:approval.approval_id,request_digest:approval.request_digest};
   try{return await tx(pool,async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[task.task_id]);
@@ -40,27 +41,27 @@ export function createPostgresOutboxStore(pool,{clock=()=>new Date()}={}){
    if(nonce.rowCount!==1)return{ok:false,reason:"APPROVAL_REPLAYED"};
    const cancelled=await c.query("SELECT task_id FROM kratt_cancelled_tasks WHERE task_id=$1 FOR UPDATE",[task.task_id]);
    if(cancelled.rowCount)return{ok:false,reason:"TASK_CANCELLED"};
-   const intent=await c.query("INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,actor_id,provider,operation,status,created_at) VALUES($1,$2,$3,$4,$5,'INTENT_COMMITTED',$6) ON CONFLICT(idempotency_key) DO NOTHING RETURNING idempotency_key",
-    [idempotencyKey,task.task_id,principal.id,event.provider,task.action,at]);
+   const intent=await c.query("INSERT INTO kratt_dispatch_intents(idempotency_key,task_id,correlation_id,actor_id,provider,operation,status,created_at) VALUES($1,$2,$3,$4,$5,$6,'INTENT_COMMITTED',$7) ON CONFLICT(idempotency_key) DO NOTHING RETURNING idempotency_key",
+    [idempotencyKey,task.task_id,resolvedCorrelationId,principal.id,event.provider,task.action,at]);
    if(intent.rowCount!==1)return{ok:false,reason:"DUPLICATE_IDEMPOTENCY_KEY"};
-   await c.query("INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,provider,payload,status,available_at) VALUES($1,$2,$3,$4::jsonb,'PENDING',$5)",
-    [outboxId,idempotencyKey,event.provider,JSON.stringify(providerPayload??{task}),at]);
+   await c.query("INSERT INTO kratt_dispatch_outbox(outbox_id,idempotency_key,correlation_id,provider,payload,status,available_at) VALUES($1,$2,$3,$4,$5::jsonb,'PENDING',$6)",
+    [outboxId,idempotencyKey,resolvedCorrelationId,event.provider,JSON.stringify(providerPayload??{task}),at]);
    const audit=await appendAudit(c,event);return{ok:true,intent_id:intentId,outbox_id:outboxId,audit_sequence:audit.sequence};
   });}catch(e){if(e?.code==="23505")return{ok:false,reason:"DUPLICATE_OR_REPLAYED"};throw e;}
  }
  async function claimOutbox({workerId,limit=10,leaseSeconds=60}={}){
   if(!validId(workerId)||!Number.isInteger(limit)||limit<1||limit>100||!Number.isInteger(leaseSeconds)||leaseSeconds<5||leaseSeconds>900)throw new TypeError("OUTBOX_CLAIM_OPTIONS_INVALID");
   const token=randomUUID();
-  const r=await pool.query("WITH picked AS (SELECT outbox_id FROM kratt_dispatch_outbox WHERE ((status='PENDING' AND available_at<=NOW()) OR (status='LEASED' AND lease_until<=NOW())) ORDER BY available_at,outbox_id FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE kratt_dispatch_outbox o SET status='LEASED',lease_owner=$2,lease_token=$3,lease_until=NOW()+($4 * INTERVAL '1 second'),attempts=o.attempts+1,updated_at=NOW() FROM picked WHERE o.outbox_id=picked.outbox_id RETURNING o.outbox_id,o.idempotency_key,o.provider,o.payload,o.attempts,o.lease_token",
+  const r=await pool.query("WITH picked AS (SELECT outbox_id FROM kratt_dispatch_outbox WHERE ((status='PENDING' AND available_at<=NOW()) OR (status='LEASED' AND lease_until<=NOW())) ORDER BY available_at,outbox_id FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE kratt_dispatch_outbox o SET status='LEASED',lease_owner=$2,lease_token=$3,lease_until=NOW()+($4 * INTERVAL '1 second'),attempts=o.attempts+1,updated_at=NOW() FROM picked WHERE o.outbox_id=picked.outbox_id RETURNING o.outbox_id,o.idempotency_key,o.correlation_id,o.provider,o.payload,o.attempts,o.lease_token",
    [limit,workerId,token,leaseSeconds]);return r.rows;
  }
  async function finishOutbox({outboxId,leaseToken,outcome,actorId,taskId}={}){
   if(!validId(outboxId)||typeof leaseToken!=="string"||!validId(actorId)||!validId(taskId)||!["COMPLETED","FAILED"].includes(outcome?.status))return{ok:false,reason:"OUTBOX_FINISH_INPUT_INVALID"};
   const at=clock().toISOString();return tx(pool,async c=>{
-   const q=await c.query("SELECT idempotency_key,provider,attempts FROM kratt_dispatch_outbox WHERE outbox_id=$1 AND status='LEASED' AND lease_token=$2 AND lease_until>clock_timestamp() FOR UPDATE",[outboxId,leaseToken]);
+   const q=await c.query("SELECT idempotency_key,correlation_id,provider,attempts FROM kratt_dispatch_outbox WHERE outbox_id=$1 AND status='LEASED' AND lease_token=$2 AND lease_until>clock_timestamp() FOR UPDATE",[outboxId,leaseToken]);
    if(q.rowCount!==1)return{ok:false,reason:"LEASE_LOST"};const item=q.rows[0];
    const event={schema_version:SCHEMA,event_id:"outcome:"+digest(item.idempotency_key),event_type:outcome.status==="COMPLETED"?"dispatch.completed":"dispatch.failed",
-    created_at:at,actor_id:actorId,task_id:taskId,provider:item.provider,idempotency_key:item.idempotency_key,result:{status:outcome.status.toLowerCase()}};
+    created_at:at,correlation_id:item.correlation_id??taskId,actor_id:actorId,task_id:taskId,provider:item.provider,idempotency_key:item.idempotency_key,result:{status:outcome.status.toLowerCase()}};
    await appendAudit(c,event);
    const iu=await c.query("UPDATE kratt_dispatch_intents SET status=$1,updated_at=$2 WHERE idempotency_key=$3 AND status='INTENT_COMMITTED' RETURNING idempotency_key",[outcome.status,at,item.idempotency_key]);
    if(iu.rowCount!==1)throw new Error("INTENT_STATE_CONFLICT");

@@ -5,6 +5,7 @@ import { createSecurityTelemetry } from "../src/security-telemetry.mjs";
 
 const baseItem = Object.freeze({
   outbox_id: "outbox-1",
+  correlation_id: "corr-outbox-1",
   provider: "mock-provider",
   idempotency_key: "idempotency-1",
   lease_token: "lease-1",
@@ -42,7 +43,7 @@ test("outbox worker emits correlated completion after durable outcome recording"
   assert.equal(fixture.calls.finish.length, 1);
   assert.equal(fixture.calls.finish[0].taskId, "task-outbox-1");
   assert.equal(events.some(event => event.name === "dispatch.completed" &&
-    event.outcome === "completed" && event.correlationId === "task-outbox-1"), true);
+    event.outcome === "completed" && event.correlationId === "corr-outbox-1"), true);
   assert.equal(telemetry.snapshot().latency.length, 1);
 });
 
