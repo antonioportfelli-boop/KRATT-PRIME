@@ -34,10 +34,11 @@ jobs:
       - name: Run 4x4 end-to-end benchmark smoke matrix
         run: npm run bench:runtime
         env:
-          KRATT_BENCH_ITERATIONS: "10"
-          KRATT_BENCH_WARMUP: "2"
+          KRATT_BENCH_ITERATIONS: "25"
+          KRATT_BENCH_WARMUP: "5"
           KRATT_BENCH_EVIDENCE_COUNTS: "1,8,32,128"
           KRATT_BENCH_CONCURRENCY: "1,4,16,64"
+          KRATT_BENCH_ROUNDS: "3"
       - name: Upload benchmark JSON results
         if: always()
         uses: actions/upload-artifact@v4

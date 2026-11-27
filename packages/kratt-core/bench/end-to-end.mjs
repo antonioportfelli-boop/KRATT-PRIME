@@ -18,6 +18,7 @@ const ALLOWED_EVIDENCE = [1, 8, 32, 128];
 const ALLOWED_CONCURRENCY = [1, 4, 16, 64];
 const iterations = Number(process.env.KRATT_BENCH_ITERATIONS ?? 100);
 const warmup = Number(process.env.KRATT_BENCH_WARMUP ?? 10);
+const measurementRounds = Number(process.env.KRATT_BENCH_ROUNDS ?? 3);
 
 function parseProfile(value, allowed, fallback) {
   if (!value) return fallback;
@@ -33,6 +34,9 @@ if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > 10_000) 
 }
 if (!Number.isSafeInteger(warmup) || warmup < 0 || warmup > 2_000) {
   throw new Error("KRATT_BENCH_WARMUP must be an integer from 0 to 2000");
+}
+if (!Number.isSafeInteger(measurementRounds) || measurementRounds < 1 || measurementRounds > 10) {
+  throw new Error("KRATT_BENCH_ROUNDS must be an integer from 1 to 10");
 }
 
 const evidenceCounts = parseProfile(process.env.KRATT_BENCH_EVIDENCE_COUNTS, ALLOWED_EVIDENCE, ALLOWED_EVIDENCE);
@@ -346,18 +350,51 @@ async function executeScenario(evidenceCount, concurrency) {
     if (warmResult.errors !== 0) throw new Error("BENCH_WARMUP_FAILED");
 
     collectStages = true;
-    const measurementInputs = createInputs(iterations, true);
+    const measurementInputs = Array.from(
+      { length: measurementRounds },
+      () => createInputs(iterations, true),
+    );
+    const measured = { successes: 0, errors: 0, errorKinds: {}, latencies: [] };
+    const roundResults = [];
     const memoryBefore = process.memoryUsage();
     const cpuBefore = process.cpuUsage();
     const eventLoopDelay = monitorEventLoopDelay({ resolution: 1 });
     eventLoopDelay.enable();
+    await new Promise(resolve => setTimeout(resolve, 5));
     const measuredAt = performance.now();
-    const measured = await runBatch(runtime, measurementInputs, concurrency, true);
+    for (let round = 0; round < measurementRounds; round += 1) {
+      const roundStartedAt = performance.now();
+      const current = await runBatch(runtime, measurementInputs[round], concurrency, true);
+      const roundElapsedMs = performance.now() - roundStartedAt;
+      measured.successes += current.successes;
+      measured.errors += current.errors;
+      measured.latencies.push(...current.latencies);
+      for (const [reason, count] of Object.entries(current.errorKinds)) {
+        measured.errorKinds[reason] = (measured.errorKinds[reason] ?? 0) + count;
+      }
+      roundResults.push({
+        round: round + 1,
+        successful_operations: current.successes,
+        submitted_operations: iterations,
+        errors: current.errors,
+        duration_ms: roundElapsedMs,
+        throughput_ops_per_second: roundElapsedMs > 0
+          ? current.successes / (roundElapsedMs / 1000) : null,
+      });
+    }
     const elapsedMs = performance.now() - measuredAt;
+    await new Promise(resolve => setTimeout(resolve, 5));
     eventLoopDelay.disable();
     collectStages = false;
     const cpu = process.cpuUsage(cpuBefore);
     const memoryAfter = process.memoryUsage();
+    const roundThroughputs = roundResults.map(item => item.throughput_ops_per_second).filter(Number.isFinite);
+    const roundThroughputMean = roundThroughputs.length
+      ? roundThroughputs.reduce((sum, value) => sum + value, 0) / roundThroughputs.length
+      : null;
+    const roundThroughputVariance = roundThroughputs.length
+      ? roundThroughputs.reduce((sum, value) => sum + ((value - roundThroughputMean) ** 2), 0) / roundThroughputs.length
+      : null;
 
     const audit = commandStoreBase.verifyAuditChain();
     const telemetrySnapshot = telemetry.snapshot();
@@ -377,7 +414,9 @@ async function executeScenario(evidenceCount, concurrency) {
       timestamp,
       workload: {
         evidence_records: evidenceCount,
-        measurement_operations: iterations,
+        measurement_operations: iterations * measurementRounds,
+        measurement_operations_per_round: iterations,
+        measurement_rounds: measurementRounds,
         provider: "bench-provider",
         provider_mode: "mock; no network or external side effect",
         storage: "temporary local SQLite file; WAL; synchronous=FULL",
@@ -387,7 +426,17 @@ async function executeScenario(evidenceCount, concurrency) {
       },
       concurrency,
       warmup_iterations: warmup,
-      measurement_iterations: iterations,
+      measurement_iterations: iterations * measurementRounds,
+      measurement_iterations_per_round: iterations,
+      measurement_rounds: measurementRounds,
+      measurement_round_results: roundResults,
+      throughput_variation: {
+        mean_operations_per_second: roundThroughputMean,
+        standard_deviation_operations_per_second: roundThroughputVariance === null
+          ? null : Math.sqrt(roundThroughputVariance),
+        coefficient_of_variation_percent: roundThroughputMean > 0 && roundThroughputVariance !== null
+          ? Math.sqrt(roundThroughputVariance) / roundThroughputMean * 100 : null,
+      },
       duration_ms: {
         p50: percentile(measured.latencies, 0.50),
         p95: percentile(measured.latencies, 0.95),
@@ -401,13 +450,16 @@ async function executeScenario(evidenceCount, concurrency) {
         successful_validated_operations_per_second: elapsedMs > 0
           ? measured.successes / (elapsedMs / 1000) : null,
         successful_operations: measured.successes,
-        submitted_operations: iterations,
-        success_ratio: iterations > 0 ? measured.successes / iterations : null,
+        submitted_operations: iterations * measurementRounds,
+        success_ratio: iterations * measurementRounds > 0
+          ? measured.successes / (iterations * measurementRounds) : null,
       },
       errors: {
         count: measured.errors,
-        rate: iterations > 0 ? measured.errors / iterations : null,
-        timeouts: 0,
+        rate: iterations * measurementRounds > 0
+          ? measured.errors / (iterations * measurementRounds) : null,
+        timeouts: null,
+        timeout_observation: "No end-to-end deadline is configured in this benchmark profile.",
         kinds: measured.errorKinds,
         audit_chain_ok: auditOk,
         audit_entries: audit.count,
@@ -431,7 +483,10 @@ async function executeScenario(evidenceCount, concurrency) {
           mean: Number.isFinite(eventLoopDelay.mean) ? eventLoopDelay.mean / 1e6 : null,
         },
       },
-      retries: { count: 0, note: "This authorized-dispatch profile does not exercise the PostgreSQL outbox retry worker." },
+      retries: {
+        count: 0,
+        note: "This authorized-dispatch profile does not exercise the PostgreSQL outbox retry worker.",
+      },
       stages,
       not_measured: [
         "PostgreSQL outbox processing",
@@ -465,6 +520,8 @@ async function executeScenario(evidenceCount, concurrency) {
       p50_ms: result.duration_ms.p50,
       p95_ms: result.duration_ms.p95,
       p99_ms: result.duration_ms.p99,
+      measurement_rounds: measurementRounds,
+      throughput_cv_percent: result.throughput_variation.coefficient_of_variation_percent,
       audit_chain_ok: auditOk,
     }) + "\n");
 
