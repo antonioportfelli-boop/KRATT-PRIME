@@ -14,7 +14,7 @@ const task = (overrides = {}) => ({
   target: { resource_type: "repository", resource_id: "example/project" },
   constraints: { note: "not-forwarded" },
   required_evidence: [
-    { claim_type: "TESTS_PASSED", subject: "example/project", required: true, revision: null }
+    { claim_type: "TESTS_PASSED", subject: "example-project", required: true, revision: null }
   ],
   created_at: "2026-11-09T12:00:00Z",
   requested_authority: ["repository.read"],
@@ -26,7 +26,7 @@ const route = (overrides = {}) => ({
   repository: "example/project",
   branch: "feature/agent-inventory-17",
   base_sha: "a".repeat(40),
-  scope: ["packages/"],
+  scope: ["packages"],
   required_evidence: ["evidence:repository-map"],
   resource_budget: {
     max_wall_ms: 10_000,
@@ -68,7 +68,7 @@ test("rejects malformed KRATT tasks and unsupported task IDs", async () => {
     route: route(), authorizeTask: async () => true
   })).reason, "KRATT_TASK_INVALID");
 
-  assert.equal((await mapKrattTaskToSteel(task({ task_id: "Inventory_17" }), {
+  assert.equal((await mapKrattTaskToSteel(task({ task_id: "Inventory-17" }), {
     route: route(), authorizeTask: async () => true
   })).reason, "TASK_ID_NOT_STEEL_COMPATIBLE");
 });
