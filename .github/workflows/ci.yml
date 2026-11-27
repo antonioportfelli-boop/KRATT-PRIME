@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/wave10-observatory-hardening-remediation-v1, feature/chiro-x-pattern-intelligence-v1, feature/chiro-x-wave2-intelligence-fabric]
+    branches: [main, feature/wave10-observatory-hardening-remediation-v1, feature/chiro-x-pattern-intelligence-v1, feature/chiro-x-wave2-intelligence-fabric, repair/org-kratt-ci-contract-2026-11-27]
   pull_request:
     branches: [main, feature/phase10-runtime-observatory-v1, feature/phase11-wave10-reconciled-2026-11-23, feature/chiro-x-pattern-intelligence-v1]
 
