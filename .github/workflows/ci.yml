@@ -20,8 +20,18 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+      - name: Verify locked install inputs
+        shell: bash
+        run: |
+          printf 'Workspace: %s\\n' "$PWD"
+          test -s package.json
+          test -s package-lock.json
+          node --input-type=commonjs -e "const fs = require('node:fs'); const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8')); if (!Number.isInteger(lock.lockfileVersion) || lock.lockfileVersion < 1) process.exit(1); console.log('Lockfile version:', lock.lockfileVersion)"
+          printf 'npm package-lock config: '
+          npm config get package-lock
       - name: Install
-        run: npm ci
+        run: npm ci --package-lock=true
+        working-directory: ${{ github.workspace }}
       - name: Contract tests
         run: npm test
       - name: Typecheck
