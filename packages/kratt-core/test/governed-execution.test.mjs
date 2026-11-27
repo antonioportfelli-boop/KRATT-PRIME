@@ -147,7 +147,7 @@ async function withRuntime(run, options = {}) {
     const runtime = createGovernedExecutionRuntime({
       store,
       evidenceRepository,
-      authorizationRuntime,
+      authorizationRuntime: options.authorizationRuntime ?? authorizationRuntime,
       authenticatePrincipal: async () => ({ id: "builder-1", active: true }),
       loadTrustedContext: async () => context,
       verifyEvidenceProvenance: async (record, { card }) =>
@@ -432,10 +432,8 @@ test("governed execution emits authorization denial and evidence provenance fail
     });
     assert.equal(denied.ok, false);
     assert.equal(denied.reason, "AUTHORIZATION_NOT_ALLOWED");
-    assert.equal(events.some(event =>
-      ["authorization.denied", "authorization.blocked"].includes(event.name) &&
-      ["denied", "blocked"].includes(event.outcome) &&
-      event.correlationId === fixture.task.task_id), true, JSON.stringify(events));
+    assert.equal(events.some(event => event.name === "authorization.denied" &&
+      event.outcome === "denied" && event.correlationId === fixture.task.task_id), true);
 
     const alternate = createGovernedExecutionRuntime({
       store: fixture.store,
@@ -456,7 +454,22 @@ test("governed execution emits authorization denial and evidence provenance fail
     assert.equal(rejectedEvidence.reason, "POLICY_EVIDENCE_PROVENANCE_REJECTED");
     assert.equal(events.some(event => event.name === "evidence.verification_failed" &&
       event.correlationId === fixture.task.task_id), true);
-  }, { telemetry });
+  }, {
+    telemetry,
+    authorizationRuntime: {
+      evaluate(task, _evidence, context) {
+        return {
+          schema_version: "kratt-prime/v0.1",
+          decision_id: `decision:${task.task_id}`,
+          task_id: task.task_id,
+          decision: "DENY",
+          reasons: ["TEST_POLICY_DENY"],
+          evidence_ids: [],
+          evaluated_at: context.evaluated_at
+        };
+      }
+    }
+  });
 });
 
 test("telemetry sink failure cannot change governed execution authorization", async () => {
