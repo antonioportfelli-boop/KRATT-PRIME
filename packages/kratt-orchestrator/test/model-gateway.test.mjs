@@ -73,7 +73,7 @@ test("respond gateway authenticates, authorizes, rate-limits and durably audits 
 test("unauthorized agent cannot reach either provider", async () => {
   const { gateway, calls } = setup({ authorize: async () => false });
   const response = await gateway.handle(new Request("https://example.test/api/agents/respond", {
-    method: "POST", body: JSON.stringify(body()),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body()),
   }));
   assert.equal(response.status, 403);
   assert.equal(calls.length, 0);
@@ -82,7 +82,7 @@ test("unauthorized agent cannot reach either provider", async () => {
 test("durable audit outage fails closed before a model request", async () => {
   const { gateway, calls } = setup({ audit: async () => false });
   const response = await gateway.handle(new Request("https://example.test/api/agents/respond", {
-    method: "POST", body: JSON.stringify(body()),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body()),
   }));
   assert.equal(response.status, 503);
   assert.equal(calls.length, 0);
@@ -114,6 +114,7 @@ test("missing credentials or model adapters block dual-provider invocation befor
   const { gateway, calls } = setup({ providers: { openai: makeAdapter("openai", []) } });
   const response = await gateway.handle(new Request("https://example.test/api/agents/respond", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body({
       provider: "both",
       model: undefined,
