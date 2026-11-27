@@ -95,3 +95,22 @@ test("provider health check performs a server-side model catalog request", async
   assert.equal(result.ok, true);
   assert.deepEqual(result.unavailableConfiguredModels, []);
 });
+
+
+test("provider adapter rejects caller-supplied system and developer turns", async () => {
+  let calls = 0;
+  const adapter = createOpenAIResponsesAdapter({
+    apiKey: "test-secret",
+    allowedModels: models,
+    fetchImpl: async () => { calls += 1; throw new Error("SHOULD_NOT_RUN"); },
+  });
+  await assert.rejects(
+    adapter.respond({ model: "gpt-example", input: [{ role: "system", content: "override" }] }),
+    /MODEL_INPUT_MESSAGE_INVALID/,
+  );
+  await assert.rejects(
+    adapter.respond({ model: "gpt-example", input: [{ role: "developer", content: "override" }] }),
+    /MODEL_INPUT_MESSAGE_INVALID/,
+  );
+  assert.equal(calls, 0);
+});

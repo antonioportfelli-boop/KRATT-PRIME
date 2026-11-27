@@ -6,7 +6,7 @@ const API_ROOTS = Object.freeze({
 });
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const RESPONSE_ID = /^[A-Za-z0-9._:-]{1,256}$/;
-const ROLES = new Set(["system", "developer", "user", "assistant"]);
+const ROLES = new Set(["user", "assistant"]);
 
 function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

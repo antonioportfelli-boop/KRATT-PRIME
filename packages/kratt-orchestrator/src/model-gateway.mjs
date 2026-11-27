@@ -4,8 +4,7 @@ const PROVIDERS = Object.freeze(["openai", "xai"]);
 const PROVIDER_SELECTIONS = new Set([...PROVIDERS, "both"]);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ALLOWED_BODY_KEYS = new Set([
-  "provider", "model", "models", "input", "instructions", "instructionsByProvider",
-  "agentId", "maxOutputTokens", "previousResponseId",
+  "provider", "model", "models", "input", "agentId", "maxOutputTokens",
 ]);
 
 class GatewayError extends Error {
@@ -39,6 +38,9 @@ function isRecord(value) {
 }
 
 async function readJson(request, limit) {
+  if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+    throw new GatewayError(415, "JSON_CONTENT_TYPE_REQUIRED");
+  }
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > limit) throw new GatewayError(413, "REQUEST_TOO_LARGE");
   if (!request.body) throw new GatewayError(400, "REQUEST_BODY_REQUIRED");
@@ -74,32 +76,22 @@ function validateBody(body, maxOutputTokens) {
   if (typeof body.agentId !== "string" || !SAFE_ID.test(body.agentId)) {
     throw new GatewayError(400, "AGENT_ID_INVALID");
   }
-  if (typeof body.input !== "string" && !Array.isArray(body.input)) {
+  if (typeof body.input !== "string" || !body.input.trim() || body.input.length > 100_000) {
     throw new GatewayError(400, "MODEL_INPUT_INVALID");
   }
   const tokens = body.maxOutputTokens ?? 1024;
   if (!Number.isInteger(tokens) || tokens < 1 || tokens > maxOutputTokens) {
     throw new GatewayError(400, "MODEL_OUTPUT_BUDGET_INVALID");
   }
-  if (body.instructions !== undefined &&
-      (typeof body.instructions !== "string" || body.instructions.length > 20_000)) {
-    throw new GatewayError(400, "MODEL_INSTRUCTIONS_INVALID");
-  }
-  if (body.previousResponseId !== undefined &&
-      (typeof body.previousResponseId !== "string" || body.previousResponseId.length > 256 ||
-       !/^[A-Za-z0-9._:-]+$/.test(body.previousResponseId))) {
-    throw new GatewayError(400, "PREVIOUS_RESPONSE_ID_INVALID");
-  }
+
   const providerIds = body.provider === "both" ? [...PROVIDERS] : [body.provider];
   const models = {};
-  const instructions = {};
   if (body.provider === "both") {
     if (body.model !== undefined) throw new GatewayError(400, "DUAL_MODEL_SELECTION_INVALID");
     if (!isRecord(body.models) || Object.keys(body.models).length !== 2 ||
         PROVIDERS.some((provider) => typeof body.models[provider] !== "string" || !SAFE_ID.test(body.models[provider]))) {
       throw new GatewayError(400, "DUAL_MODEL_SELECTION_INVALID");
     }
-    if (body.previousResponseId !== undefined) throw new GatewayError(400, "DUAL_PREVIOUS_RESPONSE_NOT_SUPPORTED");
     for (const provider of PROVIDERS) models[provider] = body.models[provider];
   } else {
     if (body.models !== undefined) throw new GatewayError(400, "MODEL_SELECTION_INVALID");
@@ -108,35 +100,21 @@ function validateBody(body, maxOutputTokens) {
     }
     models[body.provider] = body.model;
   }
-  if (body.instructionsByProvider !== undefined) {
-    if (!isRecord(body.instructionsByProvider) ||
-        Object.keys(body.instructionsByProvider).some((key) => !providerIds.includes(key)) ||
-        Object.values(body.instructionsByProvider).some((value) =>
-          typeof value !== "string" || value.length > 20_000)) {
-      throw new GatewayError(400, "PROVIDER_INSTRUCTIONS_INVALID");
-    }
-    Object.assign(instructions, body.instructionsByProvider);
-  }
-  for (const provider of providerIds) {
-    if (!Object.hasOwn(instructions, provider) && body.instructions !== undefined) {
-      instructions[provider] = body.instructions;
-    }
-  }
   return {
     agentId: body.agentId,
     input: body.input,
     providerIds,
     models,
-    instructions,
+    instructions: {},
+    instructionDigests: {},
     maxOutputTokens: tokens,
-    previousResponseId: body.previousResponseId,
   };
 }
 
 function safeProviderError(error) {
   const allowed = new Set([
     "MODEL_NOT_ALLOWLISTED", "MODEL_INPUT_INVALID", "MODEL_INPUT_MESSAGE_INVALID",
-    "MODEL_INSTRUCTIONS_INVALID", "MODEL_OUTPUT_BUDGET_INVALID", "MODEL_PREVIOUS_RESPONSE_ID_INVALID",
+    "MODEL_INSTRUCTIONS_INVALID", "MODEL_OUTPUT_BUDGET_INVALID",
     "PROVIDER_REQUEST_ABORTED", "PROVIDER_REQUEST_TIMEOUT", "PROVIDER_NETWORK_ERROR",
     "PROVIDER_HTTP_ERROR", "PROVIDER_RESPONSE_BODY_MISSING", "PROVIDER_RESPONSE_TOO_LARGE",
     "PROVIDER_STREAM_BODY_MISSING", "PROVIDER_STREAM_EVENT_INVALID", "PROVIDER_STREAM_FAILED",
@@ -179,6 +157,7 @@ async function* mergeAsyncIterables(sources) {
 export function createModelGateway({
   providers,
   authenticate,
+  resolveInstructions,
   authorize,
   rateLimit,
   audit,
@@ -191,9 +170,11 @@ export function createModelGateway({
     (typeof providers[provider]?.respond !== "function" || typeof providers[provider]?.stream !== "function"))) {
     throw new TypeError("MODEL_PROVIDER_REGISTRY_INVALID");
   }
-  for (const callback of ["authenticate", "authorize", "rateLimit", "audit"]) {
-    if (typeof ({ authenticate, authorize, rateLimit, audit })[callback] !== "function") {
-      throw new TypeError("MODEL_GATEWAY_" + callback.toUpperCase() + "_REQUIRED");
+  for (const [name, callback] of Object.entries({
+    authenticate, resolveInstructions, authorize, rateLimit, audit,
+  })) {
+    if (typeof callback !== "function") {
+      throw new TypeError("MODEL_GATEWAY_" + name.toUpperCase() + "_REQUIRED");
     }
   }
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024 || maxBodyBytes > 1_000_000 ||
@@ -202,6 +183,17 @@ export function createModelGateway({
   }
 
   async function prepare(request) {
+    const origin = request.headers.get("origin");
+    if (origin) {
+      let parsedOrigin;
+      try { parsedOrigin = new URL(origin).origin; } catch {
+        throw new GatewayError(403, "ORIGIN_NOT_ALLOWED");
+      }
+      if (parsedOrigin !== new URL(request.url).origin) {
+        throw new GatewayError(403, "ORIGIN_NOT_ALLOWED");
+      }
+    }
+
     let principal;
     try { principal = await authenticate(request); } catch {
       throw new GatewayError(401, "AUTHENTICATION_REQUIRED");
@@ -215,12 +207,25 @@ export function createModelGateway({
     if (missing.length) throw new GatewayError(503, "MODEL_PROVIDER_NOT_CONFIGURED");
 
     const correlationId = randomUUID();
-    const inputDigest = digest({
-      input: plan.input,
-      instructions: plan.instructions,
-      agentId: plan.agentId,
-    });
+    const inputDigest = digest({ input: plan.input, agentId: plan.agentId });
     for (const provider of plan.providerIds) {
+      let instructions;
+      try {
+        instructions = await resolveInstructions(Object.freeze({
+          principal,
+          agentId: plan.agentId,
+          provider,
+          model: plan.models[provider],
+        }));
+      } catch {
+        throw new GatewayError(503, "TRUSTED_AGENT_INSTRUCTIONS_UNAVAILABLE");
+      }
+      if (typeof instructions !== "string" || !instructions.trim() || instructions.length > 20_000) {
+        throw new GatewayError(503, "TRUSTED_AGENT_INSTRUCTIONS_UNAVAILABLE");
+      }
+      plan.instructions[provider] = instructions;
+      plan.instructionDigests[provider] = digest(instructions);
+
       const binding = Object.freeze({
         principalId: principal.id,
         agentId: plan.agentId,
@@ -228,6 +233,7 @@ export function createModelGateway({
         model: plan.models[provider],
         operation: "model.invoke",
         inputDigest,
+        instructionDigest: plan.instructionDigests[provider],
         maxOutputTokens: plan.maxOutputTokens,
         correlationId,
       });
@@ -252,6 +258,7 @@ export function createModelGateway({
           provider,
           model: plan.models[provider],
           inputDigest,
+          instructionDigest: plan.instructionDigests[provider],
           maxOutputTokens: plan.maxOutputTokens,
         }) === true;
       } catch {
@@ -272,7 +279,6 @@ export function createModelGateway({
           input: plan.input,
           instructions: plan.instructions[provider],
           maxOutputTokens: plan.maxOutputTokens,
-          previousResponseId: plan.previousResponseId,
           signal: request.signal,
         });
         const outputDigest = digest(response.outputText);
@@ -285,6 +291,7 @@ export function createModelGateway({
           provider,
           model: plan.models[provider],
           inputDigest,
+          instructionDigest: plan.instructionDigests[provider],
           outputDigest,
           usage: response.usage,
         });
@@ -307,6 +314,7 @@ export function createModelGateway({
             provider,
             model: plan.models[provider],
             inputDigest,
+            instructionDigest: plan.instructionDigests[provider],
             errorCode: safeProviderError(error),
           });
         } catch {}
@@ -335,7 +343,6 @@ export function createModelGateway({
           input: plan.input,
           instructions: plan.instructions[provider],
           maxOutputTokens: plan.maxOutputTokens,
-          previousResponseId: plan.previousResponseId,
           signal: abortController.signal,
         })) {
           if (event?.type === "text_delta" && typeof event.delta === "string") output += event.delta;
@@ -350,6 +357,7 @@ export function createModelGateway({
           provider,
           model: plan.models[provider],
           inputDigest,
+          instructionDigest: plan.instructionDigests[provider],
           outputDigest: digest(output),
         });
         if (audited !== true) throw new Error("DURABLE_AUDIT_UNAVAILABLE");
@@ -365,6 +373,7 @@ export function createModelGateway({
             provider,
             model: plan.models[provider],
             inputDigest,
+            instructionDigest: plan.instructionDigests[provider],
             errorCode: safeProviderError(error),
           });
         } catch {}

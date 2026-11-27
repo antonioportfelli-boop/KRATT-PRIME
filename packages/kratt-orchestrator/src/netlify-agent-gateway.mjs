@@ -20,6 +20,7 @@ export function createNetlifyAgentGateway({
   env = process.env,
   fetchImpl = globalThis.fetch,
   authenticate,
+  resolveInstructions,
   authorize,
   rateLimit,
   audit,
@@ -45,6 +46,7 @@ export function createNetlifyAgentGateway({
   return createModelGateway({
     providers,
     authenticate,
+    resolveInstructions,
     authorize,
     rateLimit,
     audit,

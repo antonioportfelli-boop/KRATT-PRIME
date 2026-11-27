@@ -13,14 +13,15 @@ The adapters use the OpenAI-compatible Responses API endpoint for each provider.
 
 ## Required host controls
 
-The gateway constructor refuses to start without all four host callbacks:
+The gateway constructor refuses to start without all five host callbacks:
 
 1. authenticate(request) must resolve the existing signed user/session. Do not trust a user ID from JSON.
-2. authorize(context) must check principal, agent ID, provider, model, operation, input digest and token budget against the existing KRATT policy and agent registry.
-3. rateLimit(context) must apply per-principal and per-agent concurrency, token and spend budgets.
-4. audit(record) must durably append the allow/dispatch/outcome record. It must return true only after the durable write succeeds.
+2. resolveInstructions(context) must fetch the trusted system instructions for the registered agent and provider from the server-side KRATT registry. Missing instructions fail closed.
+3. authorize(context) must check principal, agent ID, provider, model, operation, input digest, instruction digest and token budget against the existing KRATT policy and agent registry.
+4. rateLimit(context) must apply per-principal and per-agent concurrency, token and spend budgets.
+5. audit(record) must durably append the allow/dispatch/outcome record. It must return true only after the durable write succeeds.
 
-All of these are fail-closed. The gateway stores only a digest of the input in its audit record, never the prompt or API key. A missing or failed audit write prevents provider dispatch. Provider invocation itself is billable external data transfer and must be separately authorized.
+All of these are fail-closed. The browser may send only a user prompt; it cannot supply system/developer instructions, assistant history or a provider response ID. Trusted instructions are resolved from the server-side agent registry. Conversation history and response IDs must be loaded and bound to the authenticated session by a durable server-side session store before multi-turn support is added. The gateway stores only digests of the user input and trusted instructions in audit records, never the prompt or API key. A missing or failed audit write prevents provider dispatch. Provider invocation itself is billable external data transfer and must be separately authorized.
 
 ## Server-only environment
 
@@ -35,7 +36,7 @@ Configure these variables in the Netlify server/function runtime, not in client 
 
 Do not use VITE_OPENAI_API_KEY, VITE_XAI_API_KEY, NEXT_PUBLIC_*, or any browser-exposed setting. Do not paste credentials into source, commits, logs, prompts, or issue descriptions. Rotate any credential that has already been committed or exposed.
 
-The composition helper in packages/kratt-orchestrator/src/netlify-agent-gateway.mjs creates both provider adapters from server environment variables. It intentionally requires both provider keys and explicit model allowlists. The host must inject real authentication, policy, rate-limit and durable-audit callbacks. There is no preview identity, mock authorizer or in-memory audit fallback.
+The composition helper in packages/kratt-orchestrator/src/netlify-agent-gateway.mjs creates both provider adapters from server environment variables. It intentionally requires both provider keys and explicit model allowlists. The host must inject real authentication, trusted agent-instruction resolution, policy, rate-limit and durable-audit callbacks. There is no preview identity, mock authorizer or in-memory audit fallback.
 
 ## Netlify real-time deployment
 
