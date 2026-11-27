@@ -58,7 +58,7 @@ test("outbox worker records bounded provider failure and preserves retry behavio
   assert.equal(result.results[0].status, "RETRY_SCHEDULED");
   assert.equal(fixture.calls.retry.length, 1);
   assert.equal(events.some(event => event.name === "dispatch.failed" &&
-    event.reason === "PROVIDER_DISPATCH_FAILED" && event.correlationId === "task-outbox-1"), true);
+    event.reason === "PROVIDER_DISPATCH_FAILED" && event.correlationId === "corr-outbox-1"), true);
   assert.equal(JSON.stringify(events).includes("private provider error"), false);
 });
 
@@ -91,7 +91,7 @@ test("stale outbox lease emits fencing telemetry and never reports completion", 
   const result = await fixture.worker.runOnce();
   assert.equal(result.results[0].status, "LEASE_LOST");
   assert.equal(events.some(event => event.name === "lease.fenced" &&
-    event.reason === "OUTBOX_LEASE_LOST" && event.correlationId === "task-outbox-1"), true);
+    event.reason === "OUTBOX_LEASE_LOST" && event.correlationId === "corr-outbox-1"), true);
   assert.equal(events.some(event => event.name === "dispatch.completed"), false);
 });
 
