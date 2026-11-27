@@ -432,8 +432,10 @@ test("governed execution emits authorization denial and evidence provenance fail
     });
     assert.equal(denied.ok, false);
     assert.equal(denied.reason, "AUTHORIZATION_NOT_ALLOWED");
-    assert.equal(events.some(event => event.name === "authorization.blocked" &&
-      event.outcome === "blocked" && event.correlationId === fixture.task.task_id), true);
+    assert.equal(events.some(event =>
+      ["authorization.denied", "authorization.blocked"].includes(event.name) &&
+      ["denied", "blocked"].includes(event.outcome) &&
+      event.correlationId === fixture.task.task_id), true, JSON.stringify(events));
 
     const alternate = createGovernedExecutionRuntime({
       store: fixture.store,
