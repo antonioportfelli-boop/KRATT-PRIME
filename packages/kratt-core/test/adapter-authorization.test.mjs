@@ -304,3 +304,42 @@ test("missing registration and trusted context fail closed", async () => {
   });
   assert.equal((await runtime.authorize({ request: request(), approvalEnvelope: null })).code, "ADAPTER_NOT_REGISTERED");
 });
+
+test("rejects Proxy-backed authorization requests, trusted contexts and scope arrays", async () => {
+  const requestProxy = new Proxy(request(), {
+    get(target, key, receiver) {
+      if (key === "target") return "attacker/private-repository";
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const { runtime: requestRuntime } = setup();
+  const requestResult = await requestRuntime.authorize({
+    request: requestProxy,
+    approvalEnvelope: null,
+  });
+  assert.equal(requestResult.code, "AUTHORIZATION_REQUEST_INVALID");
+
+  const { runtime: contextRuntime } = setup({
+    context: new Proxy(trustedContext, {}),
+  });
+  const contextResult = await contextRuntime.authorize({
+    request: request(),
+    approvalEnvelope: null,
+  });
+  assert.equal(contextResult.code, "TRUSTED_AUTHORIZATION_CONTEXT_INVALID");
+
+  const scopeArray = new Proxy(trustedContext.principal.scopes.read, {});
+  const proxiedScopes = {
+    ...trustedContext,
+    principal: {
+      ...trustedContext.principal,
+      scopes: { read: scopeArray, write: [] },
+    },
+  };
+  const { runtime: scopeRuntime } = setup({ context: proxiedScopes });
+  const scopeResult = await scopeRuntime.authorize({
+    request: request(),
+    approvalEnvelope: null,
+  });
+  assert.equal(scopeResult.code, "TRUSTED_AUTHORIZATION_CONTEXT_INVALID");
+});
