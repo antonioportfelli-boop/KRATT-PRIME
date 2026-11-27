@@ -1,0 +1,38 @@
+name: Wave 12 — Outbox throughput validation
+
+on:
+  push:
+    branches:
+      - feature/wave12-bounded-outbox-throughput-2026-11-27
+  pull_request:
+    branches:
+      - feature/wp-04-5-proxy-boundary-hardening-2026-11-27
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wave12-outbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Node 22 tests, typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run KRATT core and orchestrator tests
+        run: node --test packages/kratt-core/test/*.test.mjs packages/kratt-orchestrator/test/*.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
