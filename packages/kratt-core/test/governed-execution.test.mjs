@@ -10,6 +10,7 @@ import { canonicalApprovalPayload, canonicalTaskDigest } from "../src/policy.mjs
 import { createTrustedAuthorizationRuntime } from "../src/trusted-runtime.mjs";
 import { DurableEvidenceRepository } from "../../kratt-runtime/src/durable-evidence.mjs";
 import { createGovernedExecutionRuntime } from "../../kratt-runtime/src/governed-execution.mjs";
+import { createWorkerLeaseCoordinator } from "../../kratt-runtime/src/worker-lease-coordinator.mjs";
 
 const at = "2026-11-26T12:00:00.000Z";
 const revision = "a".repeat(40);
@@ -318,4 +319,79 @@ test("expired worker lease prevents the workflow from entering RUNNING", async (
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, "WORKER_LEASE_NOT_CURRENT");
+}));
+
+
+test("running cancellation fails closed until the worker acknowledges it", async () => withRuntime(async fixture => {
+  const authorized = await fixture.runtime.authorizeAndClaim({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    approval: fixture.makeApproval("nonce-cancel-noack-123456")
+  });
+  assert.equal(authorized.ok, true);
+  const started = await fixture.runtime.start({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: authorized.record
+  });
+  assert.equal(started.ok, true);
+  const cancelled = await fixture.runtime.cancel({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: started.record, reason: "operator requested cancellation"
+  });
+  assert.equal(cancelled.ok, false);
+  assert.equal(cancelled.reason, "WORKER_CANCELLATION_NOT_ACKNOWLEDGED");
+  const recovered = await fixture.runtime.recover();
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.records[0].state, "RUNNING");
+  assert.equal((await fixture.runtime.status()).activeLeaseCount, 1);
+}));
+
+test("running cancellation is persisted only after worker acknowledgement", async () => withRuntime(async fixture => {
+  const authorized = await fixture.runtime.authorizeAndClaim({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    approval: fixture.makeApproval("nonce-cancel-ack-123456")
+  });
+  assert.equal(authorized.ok, true);
+  const started = await fixture.runtime.start({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: authorized.record
+  });
+  assert.equal(started.ok, true);
+  const cancelled = await fixture.runtime.cancel({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: started.record, reason: "operator requested cancellation"
+  });
+  assert.equal(cancelled.ok, true);
+  assert.equal(cancelled.state, "CANCELLED");
+  assert.equal(cancelled.lease_released, true);
+  const recovered = await fixture.runtime.recover();
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.records[0].state, "CANCELLED");
+  assert.equal((await fixture.runtime.status()).activeLeaseCount, 0);
+}, { cancelAcknowledged: true }));
+
+test("an old execution claim cannot start after a newer fencing generation takes over", async () => withRuntime(async fixture => {
+  const authorized = await fixture.runtime.authorizeAndClaim({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    approval: fixture.makeApproval("nonce-fence-old-123456")
+  });
+  assert.equal(authorized.ok, true);
+  fixture.setCurrentMs(Date.parse(at) + 61_000);
+
+  const takeover = createWorkerLeaseCoordinator({ store: fixture.store, now: fixture.nowIso });
+  const current = await takeover.acquire({
+    operationId: "takeover-after-expiry",
+    reservationKey: "reserve-" + authorized.record.execution_key,
+    taskDigest: authorized.record.task_digest,
+    ownerId: "replacement-worker",
+    ttlMs: 60_000
+  });
+  assert.equal(current.ok, true);
+  assert.equal(current.fencingToken, 2);
+
+  const oldWorker = await fixture.runtime.start({
+    principal, task: fixture.task, constructionTask: fixture.constructionTask,
+    record: authorized.record
+  });
+  assert.equal(oldWorker.ok, false);
+  assert.equal(oldWorker.reason, "WORKER_LEASE_NOT_CURRENT");
 }));
