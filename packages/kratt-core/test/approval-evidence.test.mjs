@@ -96,3 +96,10 @@ test("accepts versioned capability references in approval scopes", () => {
   }));
   assert.deepEqual(normalized.scopes, ["repository.write@1.0.0"]);
 });
+
+test("rejects Proxy-backed approval envelopes and scope arrays", () => {
+  assert.throws(() => normalizeApprovalEnvelope(new Proxy(envelope(), {})));
+  assert.throws(() => normalizeApprovalEnvelope(envelope({
+    scopes: new Proxy(["repo.write"], {}),
+  })));
+});
