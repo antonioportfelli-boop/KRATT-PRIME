@@ -14,14 +14,18 @@ const sample = Object.freeze({
   policy_version: "policy-2026-11",
   constraints: { branch: "feature/benchmark", path: "packages/kratt-core/src/policy.mjs" },
   evidence: Array.from({ length: 8 }, (_, index) => ({
-    evidence_id: `evidence-${index}`, result: "VERIFIED", digest: `sha256:${String(index).padStart(64, "0")}`,
+    evidence_id: `evidence-${index}`,
+    result: "VERIFIED",
+    digest: `sha256:${String(index).padStart(64, "0")}`,
   })),
 });
 
 const durations = [];
 let digestSink = "";
 const warmup = Math.min(2_000, Math.floor(iterations / 5));
-for (let index = 0; index < warmup; index += 1) digestSink = digestCanonicalRequest(sample).digest;
+for (let index = 0; index < warmup; index += 1) {
+  digestSink = digestCanonicalRequest(sample).digest;
+}
 for (let index = 0; index < iterations; index += 1) {
   const started = performance.now();
   digestSink = digestCanonicalRequest(sample).digest;
@@ -33,7 +37,10 @@ const totalMs = durations.reduce((sum, value) => sum + value, 0);
 const result = {
   benchmark: "kratt.canonical_request.sha256",
   iterations,
-  workload: { evidenceRecords: sample.evidence.length, payloadBytesApprox: Buffer.byteLength(JSON.stringify(sample)) },
+  workload: {
+    evidenceRecords: sample.evidence.length,
+    payloadBytesApprox: Buffer.byteLength(JSON.stringify(sample)),
+  },
   durationMs: {
     p50: percentile(0.50),
     p95: percentile(0.95),
