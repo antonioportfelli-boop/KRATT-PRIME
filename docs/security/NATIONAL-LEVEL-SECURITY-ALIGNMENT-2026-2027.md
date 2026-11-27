@@ -15,7 +15,7 @@
 | NIST SP 800-53 Rev. 5 | Final | Tailored control catalogue and assessment evidence, not a one-size-fits-all checklist |
 | NIST SP 800-218 SSDF 1.1 | Final | Secure development lifecycle practices |
 | NIST SP 800-218 Rev. 1 / SSDF 1.2 | Initial public draft dated 2025-12-17; comment period closed 2026-01-30 | Track as draft input; do not claim conformance to a final 1.2 publication |
-| SLSA Build Provenance v1.0 | Current specification | Verify builder identity, source revision, resolved dependencies, artifact subject and signed provenance |
+| SLSA specification v1.2 | Approved/current specification | Adopt both Build and Source tracks; verify builder identity, source revision, resolved dependencies, artifact subject and signed provenance |
 | OWASP API Security Top 10:2023 | Published project guidance | Specifically address object/function authorization, resource consumption, SSRF, inventory and unsafe API consumption |
 | OpenTelemetry messaging conventions | Messaging conventions are still marked Development in the consulted spec | Adopt with version pinning and semantic-convention migration controls |
 
@@ -36,7 +36,7 @@
 
 ### Supply-chain integrity
 - Pin source repository, immutable commit, file path and artifact digest.
-- Require signed build provenance and verify it against an explicit trusted-builder policy; provenance alone is not proof that the artifact is safe.
+- Require signed SLSA v1.2 build provenance and verify it against an explicit trusted-builder policy. Add Source Track controls for source provenance, protected review/change management and verified source history; provenance alone is not proof that the artifact is safe.
 - Generate SBOMs, scan dependencies and containers, sign release artifacts, and retain attestations with the release evidence.
 - Prefer isolated reusable CI workflows and least-privilege job permissions; separate source build authority from release/promotion authority.
 
@@ -106,7 +106,7 @@ The following are the authoritative publication pages used for this alignment. V
 - NIST SP 800-53 Rev. 5: https://csrc.nist.gov/pubs/sp/800/53/r5/final
 - NIST SP 800-218 / SSDF 1.1: https://csrc.nist.gov/pubs/sp/800/218/final
 - NIST SP 800-218 Rev. 1 / SSDF 1.2 Initial Public Draft: https://csrc.nist.gov/pubs/sp/800/218/r1/ipd
-- SLSA Provenance v1.0: https://slsa.dev/spec/v1.0/provenance
+- SLSA specification v1.2 (approved): https://slsa.dev/spec/v1.2/\n- SLSA v1.2 Build Provenance: https://slsa.dev/spec/v1.2/build-provenance\n- SLSA v1.2 Source Track: https://slsa.dev/spec/v1.2/source
 - GitHub artifact attestations: https://docs.github.com/en/actions/concepts/security/artifact-attestations
 - OWASP API Security Project / API Security Top 10: https://owasp.org/projects/api-security-project
 - OpenTelemetry messaging metrics semantic conventions: https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/
