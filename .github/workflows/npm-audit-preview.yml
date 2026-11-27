@@ -62,7 +62,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-remediation-preview-\${{ github.sha }}
+          name: dependency-remediation-preview-${{ github.sha }}
           path: |
             package.json
             package-lock.json
