@@ -476,6 +476,7 @@ async function executeScenario(evidenceCount, concurrency) {
         cpu_milliseconds_per_successful_operation: measured.successes > 0
           ? (cpu.user + cpu.system) / 1000 / measured.successes : null,
         event_loop_delay_ms: {
+          sample_count: eventLoopDelay.count,
           p50: Number.isFinite(eventLoopDelay.percentile(50)) ? eventLoopDelay.percentile(50) / 1e6 : null,
           p95: Number.isFinite(eventLoopDelay.percentile(95)) ? eventLoopDelay.percentile(95) / 1e6 : null,
           p99: Number.isFinite(eventLoopDelay.percentile(99)) ? eventLoopDelay.percentile(99) / 1e6 : null,

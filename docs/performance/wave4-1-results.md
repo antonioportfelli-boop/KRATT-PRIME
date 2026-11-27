@@ -3,9 +3,9 @@
 Date: 2026-11-27  
 Repository: `antonioportfelli-boop/KRATT-PRIME`  
 Feature branch: `feature/wave4-performance-security-hardening-2026-11-27`  
-Workflow run: [46021742880](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/46021742880)  
-Workflow artifact: `kratt-wave4-1-benchmark-663cac4c3a500812b5b6d096fccb398caad7a7da`  
-Artifact SHA-256: `7646ead2dd083dbd167f4ad9fbebd12d26156dfdd448d5a1e72bb8f344fb1150`
+Workflow run: [46022439191](https://github.com/antonioportfelli-boop/KRATT-PRIME/actions/runs/46022439191)  
+Workflow artifact: `kratt-wave4-1-benchmark-e88e4976c1de5d34f5d3368bea1b215dcd759df1`  
+Artifact SHA-256: `f40318c85bfc49819f9c68a78f8173fb6cc5806cf521cc85f25c2a4718310791`
 
 ## Environment and test definition
 
@@ -16,53 +16,63 @@ Artifact SHA-256: `7646ead2dd083dbd167f4ad9fbebd12d26156dfdd448d5a1e72bb8f344fb1
 - Temporary local SQLite file; WAL mode; `synchronous=FULL`
 - Real KRATT task/policy/approval path and ephemeral Ed25519 approval/evidence signatures
 - Mock provider only; no network or external write
+- JSON `commit_sha` matches the exact feature-branch head `e88e4976c1de5d34f5d3368bea1b215dcd759df1`
 
 Every one of the 16 profiles completed 75/75 dispatches successfully, reported 0 runtime errors, and passed the SQLite audit-chain verification.
 
 ## Results
 
-Throughput is the arithmetic mean of the three per-round successful-operation rates. Latency percentiles are calculated from the 75 measured task latencies combined. CV is coefficient of variation of the three round-throughput values.
+Throughput is the arithmetic mean of the three per-round successful-operation rates. Latency percentiles are calculated from the 75 measured task latencies combined. CV is the coefficient of variation of the three round-throughput values.
 
 | Evidence records | Concurrency | Mean round ops/s | p50 ms | p95 ms | p99 ms | Throughput CV |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1 | 1 | 199.37 | 2.09 | 27.81 | 308.18 | 57.37% |
-| 1 | 4 | 422.14 | 7.19 | 13.39 | 51.66 | 27.62% |
-| 1 | 16 | 337.88 | 28.57 | 371.52 | 371.53 | 57.47% |
-| 1 | 64 | 425.25 | 57.79 | 96.40 | 96.41 | 31.22% |
-| 8 | 1 | 208.24 | 2.57 | 19.07 | 63.18 | 12.79% |
-| 8 | 4 | 240.44 | 10.55 | 109.62 | 109.62 | 40.39% |
-| 8 | 16 | 320.54 | 41.68 | 58.40 | 58.40 | 16.72% |
-| 8 | 64 | 265.05 | 109.53 | 131.77 | 131.78 | 30.52% |
-| 32 | 1 | 135.32 | 5.72 | 18.15 | 32.28 | 14.52% |
-| 32 | 4 | 165.71 | 22.12 | 38.14 | 38.14 | 2.92% |
-| 32 | 16 | 164.59 | 85.01 | 113.29 | 113.29 | 7.70% |
-| 32 | 64 | 118.47 | 153.31 | 1231.69 | 1231.70 | 58.68% |
-| 128 | 1 | 27.47 | 17.62 | 173.60 | 201.45 | 14.46% |
-| 128 | 4 | 50.21 | 72.13 | 118.37 | 118.38 | 5.01% |
-| 128 | 16 | 47.78 | 324.41 | 372.17 | 372.17 | 3.78% |
-| 128 | 64 | 46.68 | 560.38 | 577.62 | 577.63 | 8.38% |
+| 1 | 1 | 391.58 | 2.56 | 3.83 | 5.92 | 9.49% |
+| 1 | 4 | 487.34 | 8.27 | 10.40 | 10.44 | 6.86% |
+| 1 | 16 | 486.43 | 33.44 | 33.60 | 33.60 | 3.38% |
+| 1 | 64 | 508.16 | 49.65 | 53.67 | 53.68 | 7.28% |
+| 8 | 1 | 315.49 | 3.10 | 3.94 | 4.56 | 2.37% |
+| 8 | 4 | 318.14 | 12.66 | 15.62 | 15.62 | 3.91% |
+| 8 | 16 | 311.24 | 51.53 | 55.51 | 55.51 | 2.28% |
+| 8 | 64 | 332.77 | 77.92 | 79.80 | 79.81 | 6.79% |
+| 32 | 1 | 153.13 | 6.48 | 7.30 | 7.60 | 1.63% |
+| 32 | 4 | 153.57 | 26.07 | 27.00 | 27.00 | 0.45% |
+| 32 | 16 | 154.66 | 102.90 | 105.45 | 105.45 | 1.22% |
+| 32 | 64 | 156.92 | 159.71 | 161.76 | 161.76 | 1.37% |
+| 128 | 1 | 46.07 | 21.06 | 26.47 | 27.50 | 2.02% |
+| 128 | 4 | 45.81 | 84.30 | 106.18 | 106.19 | 3.55% |
+| 128 | 16 | 47.86 | 334.47 | 338.31 | 338.31 | 0.74% |
+| 128 | 64 | 48.12 | 518.36 | 523.09 | 523.10 | 0.49% |
 
 ## Stage observations
 
 For the 128-evidence / concurrency-1 profile:
 
-- Evidence signature verifier: 9,600 observations, mean 0.1127 ms per record.
-- Full authorization-policy evaluation wrapper: 75 observations, mean 27.09 ms, p50 16.22 ms, p95 118.70 ms.
-- Canonical request serialization: mean 0.0093 ms.
-- Canonical task digest: mean 0.0180 ms.
-- Task envelope validation: mean 0.0115 ms.
-- Mock provider execution: mean 0.0006 ms.
+- Evidence signature verifier: 9,600 observations, mean 0.1402 ms per record.
+- Full authorization-policy evaluation wrapper: 75 observations, mean 20.46 ms, p50 19.87 ms, p95 25.16 ms.
+- Canonical request serialization: mean 0.0138 ms.
+- Canonical task digest: mean 0.0359 ms.
+- Task envelope validation: mean 0.0188 ms.
+- SQLite intent persistence: mean 0.5219 ms.
+- SQLite outcome persistence: mean 0.4516 ms.
+- Mock provider execution: mean 0.0005 ms.
 
-The authorization-policy wrapper includes more than raw signature verification; its duration must not be attributed solely to Ed25519. These are instrumented stage observations, not isolated microbenchmarks.
+The policy-evaluation wrapper includes more than raw signature verification; its duration must not be attributed solely to Ed25519. Stage measurements are nested observations, not additive exclusive buckets.
+
+For the same 128-evidence / concurrency-1 profile, CPU was approximately 21.49 ms per successful operation. This is a single-run host-level cost measure, not a cross-machine estimate.
 
 ## Interpretation and limitations
 
-1. This is an initial CI-hosted engineering baseline, not a controlled hardware performance certification.
-2. Three rounds × 25 tasks are insufficient for stable tail latency claims. CV reaches 58.68% in one profile and exceeds 25% in several low-evidence profiles. The high p95/p99 values and run-to-run variation show that the runner is noisy.
-3. Logical concurrency values are in-process overlapping async dispatch calls. They are not worker threads, processes, machines, or cross-host concurrency.
-4. The benchmark measures local SQLite, not the PostgreSQL outbox. It does not measure queue admission/wait, worker leases, distributed fencing, cancellation, crash recovery, retry/dead-letter, or real provider latency.
-5. No before/after optimization comparison exists yet. No performance improvement is claimed.
-6. The PR-triggered workflow's first artifact JSON recorded GitHub's synthetic pull-request merge SHA (`663cac4c...`) in `commit_sha`, although the run's actual branch head was `a14c047c8f59411a25a8d8b23f0fde5cda0a3c8b`. This provenance defect is fixed in the next benchmark change by passing the pull-request head SHA explicitly as `KRATT_COMMIT_SHA`. Do not treat the JSON's synthetic SHA as the feature branch SHA.
+1. This is a repeatable engineering baseline on a GitHub-hosted runner, not controlled hardware performance certification. A fixed dedicated runner and longer runs are still required for release-grade comparisons.
+2. Three rounds × 25 tasks provide 75 latency observations per profile. Throughput CV ranged from 0.45% to 9.49% in this run; those values are more stable than the previous run but do not establish a sustained production distribution.
+3. The evidence count increases policy work and reduces aggregate throughput in this workload. At 128 records, measured evidence verification and policy evaluation are material. This identifies a profiling target, not proof that an index or cache is safe or beneficial.
+4. Logical concurrency values are in-process overlapping async dispatch calls. They are not worker threads, processes, machines, or cross-host concurrency.
+5. The monitorEventLoopDelay histogram initially lacked a sample-count field. A subsequent benchmark revision records sample_count; event-loop percentiles from this artifact must therefore be treated as diagnostic only and not used as a statistically valid tail estimate.
+6. The benchmark does not measure PostgreSQL outbox throughput, queue admission/wait, worker leases, distributed fencing, cancellation, crash recovery, retry/dead-letter, or real provider latency.
+7. No before/after optimization comparison exists yet. No performance improvement is claimed.
+
+## Provenance correction
+
+The first three-round artifact from the earlier PR run recorded GitHub's synthetic pull-request merge SHA instead of the feature-branch HEAD. The benchmark now prefers the explicit `KRATT_COMMIT_SHA` passed by the workflow. This artifact's JSON commit SHA matches the feature branch head used for the workflow run.
 
 ## Next measurement gate
 
